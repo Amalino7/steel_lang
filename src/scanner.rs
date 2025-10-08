@@ -284,4 +284,39 @@ mod tests {
         let mut scanner = Scanner::new(input);
         assert_eq!(scanner.next_token(), Token::new(TokenType::String, 1, r#""😏😏fdj12æœɨʲεɣεþəɣðʃɣʲ""#));
     }
+
+    #[test]
+    fn test_block_comment() {
+        let input = "8/* Hello World!
+        gfj
+        ggf
+        */ + 5";
+        let mut scanner = Scanner::new(input);
+        assert_eq!(scanner.next_token(), Token::new(TokenType::Number, 1, "8"));
+        assert_eq!(scanner.next_token(), Token::new(TokenType::Plus, 4, "+"));
+        assert_eq!(scanner.next_token(), Token::new(TokenType::Number, 4, "5"));
+        assert_eq!(scanner.next_token(), Token::new(TokenType::EOF, 4, "end"));
+    }
+    #[test]
+    fn test_nested_block_comment() {
+        let input = "8 /* Hello World!
+            /*
+              nested comment
+            */
+            485
+        */ + 6";
+        let mut scanner = Scanner::new(input);
+        assert_eq!(scanner.next_token(), Token::new(TokenType::Number, 1, "8"));
+        assert_eq!(scanner.next_token(), Token::new(TokenType::Plus, 6, "+"));
+        assert_eq!(scanner.next_token(), Token::new(TokenType::Number, 6, "6"));
+        assert_eq!(scanner.next_token(), Token::new(TokenType::EOF, 6, "end"));
+    }
+    #[test]
+    fn test_multiline_string() {
+        let input = "\"Hello World!\ngfj\nggf\n\"";
+        let mut scanner = Scanner::new(input);
+        assert_eq!(scanner.next_token(),
+                   Token::new(TokenType::String, 4, "\"Hello World!\ngfj\nggf\n\""));
+        assert_eq!(scanner.next_token(), Token::new(TokenType::EOF, 4, "end"));
+    }
 }
