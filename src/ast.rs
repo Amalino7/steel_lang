@@ -1,6 +1,6 @@
 use crate::token::Token;
 
-#[derive(Debug, PartialEq,Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Literal {
     Number(f64),
     String(String),
@@ -21,7 +21,6 @@ pub enum Type {
     Error,
 }
 
-
 #[derive(Clone, Debug, PartialEq)]
 pub enum Expr<'src> {
     Unary {
@@ -37,8 +36,8 @@ pub enum Expr<'src> {
     Grouping {
         expression: Box<Expr<'src>>,
     },
-    Literal{
-      literal: Literal,
+    Literal {
+        literal: Literal,
         source: Token<'src>,
     },
     Assignment {
@@ -53,7 +52,7 @@ pub enum Expr<'src> {
     Call {
         callee: Box<Expr<'src>>,
         arguments: Vec<Expr<'src>>,
-    }
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -73,11 +72,10 @@ pub enum Stmt<'src> {
         condition: Expr<'src>,
         body: Box<Stmt<'src>>,
     },
-    Function{
+    Function {
         name: Token<'src>,
         params: Vec<Token<'src>>,
         body: Vec<Stmt<'src>>,
     },
     Return(Expr<'src>),
 }
-

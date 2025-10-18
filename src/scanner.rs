@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use crate::token::{Token, TokenType};
+use std::collections::HashMap;
 
 pub struct Scanner<'src> {
     src: &'src str,
@@ -20,7 +20,7 @@ impl<'src> Scanner<'src> {
         }
     }
     pub fn next_token(&mut self) -> Token<'src> {
-        let error =self.skip_whitespace();
+        let error = self.skip_whitespace();
         if let Some(token) = error {
             return token;
         }
@@ -130,7 +130,7 @@ impl<'src> Scanner<'src> {
                         self.advance();
                     }
                     if depth > 0 {
-                        return  Some(self.error("Unterminated block comment."));
+                        return Some(self.error("Unterminated block comment."));
                     }
                 }
                 '/' if self.peek_next_char() == '/' => {
@@ -220,69 +220,132 @@ mod tests {
         };";
         let mut scanner = Scanner::new(input);
         assert_eq!(scanner.next_token(), Token::new(TokenType::Let, 1, "let"));
-        assert_eq!(scanner.next_token(), Token::new(TokenType::Identifier, 1, "five"));
+        assert_eq!(
+            scanner.next_token(),
+            Token::new(TokenType::Identifier, 1, "five")
+        );
         assert_eq!(scanner.next_token(), Token::new(TokenType::Equal, 1, "="));
         assert_eq!(scanner.next_token(), Token::new(TokenType::Number, 1, "5"));
-        assert_eq!(scanner.next_token(), Token::new(TokenType::Semicolon, 1, ";"));
+        assert_eq!(
+            scanner.next_token(),
+            Token::new(TokenType::Semicolon, 1, ";")
+        );
         assert_eq!(scanner.next_token(), Token::new(TokenType::Let, 2, "let"));
-        assert_eq!(scanner.next_token(), Token::new(TokenType::Identifier, 2, "ten"));
+        assert_eq!(
+            scanner.next_token(),
+            Token::new(TokenType::Identifier, 2, "ten")
+        );
         assert_eq!(scanner.next_token(), Token::new(TokenType::Equal, 2, "="));
         assert_eq!(scanner.next_token(), Token::new(TokenType::Number, 2, "10"));
-        assert_eq!(scanner.next_token(), Token::new(TokenType::Semicolon, 2, ";"));
+        assert_eq!(
+            scanner.next_token(),
+            Token::new(TokenType::Semicolon, 2, ";")
+        );
         assert_eq!(scanner.next_token(), Token::new(TokenType::Let, 3, "let"));
-        assert_eq!(scanner.next_token(), Token::new(TokenType::Identifier, 3, "add"));
+        assert_eq!(
+            scanner.next_token(),
+            Token::new(TokenType::Identifier, 3, "add")
+        );
         assert_eq!(scanner.next_token(), Token::new(TokenType::Equal, 3, "="));
         assert_eq!(scanner.next_token(), Token::new(TokenType::Func, 3, "func"));
-        assert_eq!(scanner.next_token(), Token::new(TokenType::LeftParen, 3, "("));
-        assert_eq!(scanner.next_token(), Token::new(TokenType::Identifier, 3, "x"));
+        assert_eq!(
+            scanner.next_token(),
+            Token::new(TokenType::LeftParen, 3, "(")
+        );
+        assert_eq!(
+            scanner.next_token(),
+            Token::new(TokenType::Identifier, 3, "x")
+        );
         assert_eq!(scanner.next_token(), Token::new(TokenType::Comma, 3, ","));
-        assert_eq!(scanner.next_token(), Token::new(TokenType::Identifier, 3, "y"));
-        assert_eq!(scanner.next_token(), Token::new(TokenType::RightParen, 3, ")"));
-        assert_eq!(scanner.next_token(), Token::new(TokenType::LeftBrace, 3, "{"));
-        assert_eq!(scanner.next_token(), Token::new(TokenType::Identifier, 4, "x"));
+        assert_eq!(
+            scanner.next_token(),
+            Token::new(TokenType::Identifier, 3, "y")
+        );
+        assert_eq!(
+            scanner.next_token(),
+            Token::new(TokenType::RightParen, 3, ")")
+        );
+        assert_eq!(
+            scanner.next_token(),
+            Token::new(TokenType::LeftBrace, 3, "{")
+        );
+        assert_eq!(
+            scanner.next_token(),
+            Token::new(TokenType::Identifier, 4, "x")
+        );
         assert_eq!(scanner.next_token(), Token::new(TokenType::Plus, 4, "+"));
-        assert_eq!(scanner.next_token(), Token::new(TokenType::Identifier, 4, "y"));
-        assert_eq!(scanner.next_token(), Token::new(TokenType::Semicolon, 4, ";"));
-        assert_eq!(scanner.next_token(), Token::new(TokenType::RightBrace, 5, "}"));
-        assert_eq!(scanner.next_token(), Token::new(TokenType::Semicolon, 5, ";"));
+        assert_eq!(
+            scanner.next_token(),
+            Token::new(TokenType::Identifier, 4, "y")
+        );
+        assert_eq!(
+            scanner.next_token(),
+            Token::new(TokenType::Semicolon, 4, ";")
+        );
+        assert_eq!(
+            scanner.next_token(),
+            Token::new(TokenType::RightBrace, 5, "}")
+        );
+        assert_eq!(
+            scanner.next_token(),
+            Token::new(TokenType::Semicolon, 5, ";")
+        );
         assert_eq!(scanner.next_token(), Token::new(TokenType::EOF, 5, "end"));
     }
     #[test]
     fn test_unterminated_string() {
         let input = "\"Hello World!";
         let mut scanner = Scanner::new(input);
-        assert_eq!(scanner.next_token(), Token::new(TokenType::Error, 1, "Unterminated string."));
+        assert_eq!(
+            scanner.next_token(),
+            Token::new(TokenType::Error, 1, "Unterminated string.")
+        );
     }
     #[test]
     fn test_unterminated_comment() {
         let input = "/* Hello World!";
         let mut scanner = Scanner::new(input);
-        assert_eq!(scanner.next_token(), Token::new(TokenType::Error, 1, "Unterminated block comment."));
+        assert_eq!(
+            scanner.next_token(),
+            Token::new(TokenType::Error, 1, "Unterminated block comment.")
+        );
     }
     #[test]
     fn test_error_token() {
         let input = "?";
         let mut scanner = Scanner::new(input);
-        assert_eq!(scanner.next_token(), Token::new(TokenType::Error, 1, "Unexpected character."));
+        assert_eq!(
+            scanner.next_token(),
+            Token::new(TokenType::Error, 1, "Unexpected character.")
+        );
     }
     #[test]
-    fn test_utf8_identifier()  {
+    fn test_utf8_identifier() {
         let input = "ʃɨðœεæɔ";
         let mut scanner = Scanner::new(input);
-        assert_eq!(scanner.next_token(), Token::new(TokenType::Identifier, 1, "ʃɨðœεæɔ"));
+        assert_eq!(
+            scanner.next_token(),
+            Token::new(TokenType::Identifier, 1, "ʃɨðœεæɔ")
+        );
     }
     #[test]
-    fn test_emoji_identifier()  {
+    fn test_emoji_identifier() {
         let input = "😏";
         let mut scanner = Scanner::new(input);
         // emojis not yet supported
-        assert_eq!(scanner.next_token(), Token::new(TokenType::Error, 1, "Unexpected character."));
+        assert_eq!(
+            scanner.next_token(),
+            Token::new(TokenType::Error, 1, "Unexpected character.")
+        );
     }
     #[test]
-    fn test_utf8_string()  {
+    fn test_utf8_string() {
         let input = r#""😏😏fdj12æœɨʲεɣεþəɣðʃɣʲ""#;
         let mut scanner = Scanner::new(input);
-        assert_eq!(scanner.next_token(), Token::new(TokenType::String, 1, r#""😏😏fdj12æœɨʲεɣεþəɣðʃɣʲ""#));
+        assert_eq!(
+            scanner.next_token(),
+            Token::new(TokenType::String, 1, r#""😏😏fdj12æœɨʲεɣεþəɣðʃɣʲ""#)
+        );
     }
 
     #[test]
@@ -315,8 +378,10 @@ mod tests {
     fn test_multiline_string() {
         let input = "\"Hello World!\ngfj\nggf\n\"";
         let mut scanner = Scanner::new(input);
-        assert_eq!(scanner.next_token(),
-                   Token::new(TokenType::String, 4, "\"Hello World!\ngfj\nggf\n\""));
+        assert_eq!(
+            scanner.next_token(),
+            Token::new(TokenType::String, 4, "\"Hello World!\ngfj\nggf\n\"")
+        );
         assert_eq!(scanner.next_token(), Token::new(TokenType::EOF, 4, "end"));
     }
 }
