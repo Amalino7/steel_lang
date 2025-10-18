@@ -76,7 +76,7 @@ impl<'src> Scanner<'src> {
             false
         }
     }
-    fn is_at_end(&self) -> bool {
+    pub fn is_at_end(&self) -> bool {
         self.current >= self.src.len()
     }
     fn error(&self, message: &'static str) -> Token<'src> {
