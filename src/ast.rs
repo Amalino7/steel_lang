@@ -5,6 +5,7 @@ pub enum Literal {
     Number(f64),
     String(String),
     Boolean(bool),
+    Void,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -36,10 +37,7 @@ pub enum Expr<'src> {
     Grouping {
         expression: Box<Expr<'src>>,
     },
-    Literal {
-        literal: Literal,
-        source: Token<'src>,
-    },
+    Literal(Literal),
     Assignment {
         identifier: Token<'src>,
         value: Box<Expr<'src>>,
@@ -76,6 +74,24 @@ pub enum Stmt<'src> {
         name: Token<'src>,
         params: Vec<Token<'src>>,
         body: Vec<Stmt<'src>>,
+        type_: Type,
     },
     Return(Expr<'src>),
+}
+
+impl Type {
+    pub fn from_identifier(identifier: Token) -> Option<Type> {
+        let name = identifier.lexeme;
+        if name == "number" {
+            Some(Type::Number)
+        } else if name == "string" {
+            Some(Type::String)
+        } else if name == "boolean" {
+            Some(Type::Boolean)
+        } else if name == "void" {
+            Some(Type::Void)
+        } else {
+            None
+        }
+    }
 }

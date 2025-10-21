@@ -1,5 +1,4 @@
-#[derive(Debug, Clone)]
-#[derive(PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Token<'src> {
     pub token_type: TokenType,
     pub line: usize,
@@ -18,15 +17,16 @@ impl<'src> Token<'src> {
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub enum TokenType {
-    LeftParen, // (
-    RightParen, // )
-    LeftBrace, // {
-    RightBrace, // }
-    LeftBracket, // [
+    LeftParen,    // (
+    RightParen,   // )
+    LeftBrace,    // {
+    RightBrace,   // }
+    LeftBracket,  // [
     RightBracket, // ]
     Comma,
     Dot,
     Semicolon,
+    Colon,
     Minus,
     Plus,
     Slash,

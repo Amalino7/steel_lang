@@ -39,6 +39,7 @@ impl<'src> Scanner<'src> {
             '[' => self.make_token(TokenType::LeftBracket),
             ']' => self.make_token(TokenType::RightBracket),
             ',' => self.make_token(TokenType::Comma),
+            ':' => self.make_token(TokenType::Colon),
             ';' => self.make_token(TokenType::Semicolon),
             '+' => self.make_token(TokenType::Plus),
             '*' => self.make_token(TokenType::Star),

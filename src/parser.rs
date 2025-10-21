@@ -1,4 +1,4 @@
-use crate::ast::{Expr, Literal, Stmt};
+use crate::ast::{Expr, Literal, Stmt, Type};
 use crate::scanner::Scanner;
 use crate::token::{Token, TokenType};
 use TokenType as TokT;
@@ -60,7 +60,7 @@ impl Display for ParserError<'_> {
             } => {
                 write!(
                     f,
-                    "[line {}] Error at {}. Expected {:?} but found {:?} instead. {}",
+                    "[line {}] Error at '{}'. Expected {:?} but found {:?} instead. {}",
                     found.line, found.lexeme, expected, found.token_type, message
                 )
             }
@@ -71,14 +71,14 @@ impl Display for ParserError<'_> {
             } => {
                 write!(
                     f,
-                    "[line {}] Error at {}. Missing {:?} but found {:?} instead. {}",
+                    "[line {}] Error at '{}'. Missing {:?} but found {:?} instead. {}",
                     after_token.line, after_token.lexeme, expected, after_token.token_type, message
                 )
             }
             ParserError::ParseError { token, message } => {
                 write!(
                     f,
-                    "[line {}] Error at {}. {}",
+                    "[line {}] Error at '{}'. {}",
                     token.line, token.lexeme, message
                 )
             }
@@ -159,7 +159,14 @@ impl<'src> Parser<'src> {
             if self.previous_token.token_type == TokT::Semicolon {
                 return;
             }
-            if check_token_type!(self, TokT::Func, TokT::Let, TokT::If, TokT::While) {
+            if check_token_type!(
+                self,
+                TokT::Func,
+                TokT::Let,
+                TokT::If,
+                TokT::While,
+                TokT::Return
+            ) {
                 return;
             }
             let _ = self.advance();
@@ -167,10 +174,157 @@ impl<'src> Parser<'src> {
     }
 
     fn declaration(&mut self) -> Result<Stmt<'src>, ParserError<'src>> {
-        let expr = self.expression()?;
-        self.consume(TokT::Semicolon, "Expect ';' after expression.")?;
-        Ok(Stmt::Expression(expr))
-        // TODO Declarations and statements")
+        if match_token_type!(self, TokT::Let) {
+            self.let_declaration()
+        } else if match_token_type!(self, TokT::Func) {
+            self.func_declaration()
+        } else {
+            self.statement()
+        }
+    }
+    fn let_declaration(&mut self) -> Result<Stmt<'src>, ParserError<'src>> {
+        if !match_token_type!(self, TokT::Identifier) {
+            Err(self.error_current("Expected variable name."))
+        } else {
+            let name = self.previous_token.clone();
+
+            self.consume(TokT::Equal, "Expected '=' after variable name.")?;
+            let expr = self.expression()?;
+            self.consume(TokT::Semicolon, "Expected ';' after variable declaration.'")?;
+            Ok(Stmt::Let {
+                identifier: name,
+                value: expr,
+            })
+        }
+    }
+
+    // TODO rethink how to refactor this function
+    fn func_declaration(&mut self) -> Result<Stmt<'src>, ParserError<'src>> {
+        if !match_token_type!(self, TokT::Identifier) {
+            Err(self.error_current("Expected function name."))
+        } else {
+            let name = self.previous_token.clone();
+            self.consume(TokT::LeftParen, "Expected '(' after function name.")?;
+            let mut params = vec![];
+            let mut param_types = vec![];
+
+            if !check_token_type!(self, TokT::RightParen) {
+                loop {
+                    self.consume(
+                        TokT::Identifier,
+                        "Expected the name of the function parameter.",
+                    )?;
+                    params.push(self.previous_token.clone());
+                    self.consume(
+                        TokT::Colon,
+                        "Expected ':' after parameter name. Syntax: 'name: type",
+                    )?;
+                    self.consume(
+                        TokT::Identifier,
+                        "Expected the type after the function parameter name. Syntax: 'name: type'.",
+                    )?;
+
+                    if let Some(t) = Type::from_identifier(self.previous_token.clone()) {
+                        param_types.push(t);
+                    } else {
+                        self.error_previous(
+                            "Expected valid type identifier. Example: 'number, string, void'.",
+                        );
+                    }
+
+                    if !match_token_type!(self, TokT::Comma) {
+                        break;
+                    }
+                }
+            }
+
+            self.consume(TokT::RightParen, "Expected ')' after parameters.")?;
+
+            let return_type = if match_token_type!(self, TokT::Colon) {
+                self.consume(
+                    TokT::Identifier,
+                    "Expected the name of the return type of the function.",
+                )?;
+                if let Some(t) = Type::from_identifier(self.previous_token.clone()) {
+                    t
+                } else {
+                    return Err(self.error_previous("Expected valid type identifier"));
+                }
+            } else {
+                Type::Void
+            };
+
+            self.consume(TokT::LeftBrace, "Expected '{' before function body.")?;
+            let mut body = vec![];
+
+            while !match_token_type!(self, TokT::RightBrace) {
+                body.push(self.declaration()?);
+            }
+
+            Ok(Stmt::Function {
+                type_: Type::Function {
+                    param_types,
+                    return_type: Box::new(return_type),
+                },
+                name,
+                params,
+                body,
+            })
+        }
+    }
+    fn statement(&mut self) -> Result<Stmt<'src>, ParserError<'src>> {
+        if check_token_type!(self, TokT::LeftBrace) {
+            println!("{:?}", self.current_token);
+            self.block()
+        } else if match_token_type!(self, TokT::If) {
+            self.if_statement()
+        } else if match_token_type!(self, TokT::While) {
+            self.while_statement()
+        } else if match_token_type!(self, TokT::Return) {
+            let val = if !match_token_type!(self, TokT::Semicolon) {
+                let expr = self.expression()?;
+                self.consume(TokT::Semicolon, "Expect ';' after return value.")?;
+                expr
+            } else {
+                Expr::Literal(Literal::Void)
+            };
+            Ok(Stmt::Return(val))
+        } else {
+            let expr = self.expression()?;
+            self.consume(TokT::Semicolon, "Expect ';' after expression.")?;
+            Ok(Stmt::Expression(expr))
+        }
+    }
+    fn block(&mut self) -> Result<Stmt<'src>, ParserError<'src>> {
+        self.consume(TokT::LeftBrace, "Expected '{' before block.")?;
+        let mut statements = vec![];
+        while !check_token_type!(self, TokT::RightBrace) {
+            statements.push(self.declaration()?);
+        }
+
+        self.consume(TokT::RightBrace, "Expected '}' after block.")?;
+        Ok(Stmt::Block(statements))
+    }
+    fn if_statement(&mut self) -> Result<Stmt<'src>, ParserError<'src>> {
+        let condition = self.expression()?;
+        let then_branch = self.block()?;
+        let mut else_branch = None;
+        if match_token_type!(self, TokT::Else) {
+            else_branch = Some(self.block()?);
+        }
+        Ok(Stmt::If {
+            condition,
+            then_branch: Box::new(then_branch),
+            else_branch: else_branch.map(|e| Box::new(e)),
+        })
+    }
+    fn while_statement(&mut self) -> Result<Stmt<'src>, ParserError<'src>> {
+        let condition = self.expression()?;
+        let body = self.block()?;
+        Ok(Stmt::While {
+            condition,
+            body: Box::new(body),
+        })
     }
 
     fn expression(&mut self) -> Result<Expr<'src>, ParserError<'src>> {
@@ -268,11 +422,31 @@ impl<'src> Parser<'src> {
     }
 
     fn call(&mut self) -> Result<Expr<'src>, ParserError<'src>> {
-        let expr = self.primary()?;
+        let mut expr = self.primary()?;
         if match_token_type!(self, TokT::LeftParen) {
-            todo!()
+            let args = self.arguments()?;
+            expr = Expr::Call {
+                callee: Box::new(expr),
+                arguments: args,
+            }
         }
         Ok(expr)
+    }
+    fn arguments(&mut self) -> Result<Vec<Expr<'src>>, ParserError<'src>> {
+        let mut args = vec![];
+        if !check_token_type!(self, TokT::RightParen) {
+            args.push(self.expression()?);
+        }
+        while match_token_type!(self, TokT::Comma) {
+            args.push(self.expression()?);
+        }
+
+        self.consume(
+            TokT::RightParen,
+            "Expected ')' after function call arguments.",
+        )?;
+
+        Ok(args)
     }
     fn primary(&mut self) -> Result<Expr<'src>, ParserError<'src>> {
         self.advance()?;
@@ -302,10 +476,7 @@ impl<'src> Parser<'src> {
         }
     }
     fn literal(&mut self, literal: Literal) -> Result<Expr<'src>, ParserError<'src>> {
-        Ok(Expr::Literal {
-            literal,
-            source: self.previous_token.clone(),
-        })
+        Ok(Expr::Literal(literal))
     }
 }
 #[cfg(test)]
@@ -323,14 +494,8 @@ mod tests {
         let res = parser.parse().expect("Failed to parse.").pop().unwrap();
         let expected = Expr::Binary {
             operator: Token::new(TokenType::Minus, 1, "-"),
-            left: Box::from(Expr::Literal {
-                literal: Literal::Number(4.0),
-                source: Token::new(TokenType::Number, 1, "4"),
-            }),
-            right: Box::from(Expr::Literal {
-                literal: Literal::Number(5.0),
-                source: Token::new(TokenType::Number, 1, "5"),
-            }),
+            left: Box::from(Expr::Literal(Literal::Number(4.0))),
+            right: Box::from(Expr::Literal(Literal::Number(5.0))),
         };
         println!("{:?}", res);
         let expected = Stmt::Expression(expected);
@@ -339,24 +504,36 @@ mod tests {
     }
     #[test]
     fn test_string_literals() {
-        let source = r#" "hello world" == "hello world";"#;
+        let source = r#" "hello world"
+        == "hello world";"#;
         let scanner = Scanner::new(source);
         let mut parser = Parser::new(scanner);
         let res = parser.parse().expect("Failed to parse.").pop().unwrap();
         println!("{:?}", res);
 
         let expected = Stmt::Expression(Expr::Binary {
-            operator: Token::new(TokenType::EqualEqual, 1, "=="),
-            left: Box::from(Expr::Literal {
-                literal: Literal::String(String::from("hello world")),
-                source: Token::new(TokenType::String, 1, r#""hello world""#),
-            }),
-            right: Box::from(Expr::Literal {
-                literal: Literal::String(String::from("hello world")),
-                source: Token::new(TokenType::String, 1, r#""hello world""#),
-            }),
+            operator: Token::new(TokenType::EqualEqual, 2, "=="),
+            left: Box::from(Expr::Literal(Literal::String(String::from("hello world")))),
+            right: Box::from(Expr::Literal(Literal::String(String::from("hello world")))),
         });
 
         assert_eq!(res, expected);
+    }
+    #[test]
+    fn test_if_statement() {
+        let source = r#"
+
+        func main(a: number, b: string):void {
+            return 2;
+        }
+
+        while (true) {
+        return 2;
+        }
+
+        "#;
+        let scanner = Scanner::new(source);
+        let mut parser = Parser::new(scanner);
+        println!("{:#?}", parser.parse().expect("Failed to parse."));
     }
 }
