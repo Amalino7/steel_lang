@@ -1,3 +1,4 @@
+use crate::ast::Type::Unknown;
 use crate::ast::{Expr, Literal, Stmt, Type};
 use crate::scanner::Scanner;
 use crate::token::{Token, TokenType};
@@ -187,6 +188,19 @@ impl<'src> Parser<'src> {
             Err(self.error_current("Expected variable name."))
         } else {
             let name = self.previous_token.clone();
+            let type_info = if match_token_type!(self, TokT::Colon) {
+                self.consume(
+                    TokT::Identifier,
+                    "Expected the name of the variable type. Syntax: 'name: type'.",
+                )?;
+                if let Some(t) = Type::from_identifier(self.previous_token.clone()) {
+                    t
+                } else {
+                    return Err(self.error_previous("Expected valid type identifier."));
+                }
+            } else {
+                Unknown // The type will be inferred by the compiler later on.
+            };
 
             self.consume(TokT::Equal, "Expected '=' after variable name.")?;
             let expr = self.expression()?;
@@ -194,6 +208,7 @@ impl<'src> Parser<'src> {
             Ok(Stmt::Let {
                 identifier: name,
                 value: expr,
+                type_info,
             })
         }
     }
@@ -328,7 +343,35 @@ impl<'src> Parser<'src> {
     }
 
     fn expression(&mut self) -> Result<Expr<'src>, ParserError<'src>> {
-        self.assignment()
+        self.logical_or()
+    }
+
+    fn logical_or(&mut self) -> Result<Expr<'src>, ParserError<'src>> {
+        let mut left = self.logical_and()?;
+
+        while match_token_type!(self, TokT::Or) {
+            let operator = self.previous_token.clone();
+            let right = self.logical_and()?;
+            left = Expr::Logical {
+                left: Box::new(left),
+                operator,
+                right: Box::new(right),
+            };
+        }
+        Ok(left)
+    }
+    fn logical_and(&mut self) -> Result<Expr<'src>, ParserError<'src>> {
+        let mut left = self.assignment()?;
+        while match_token_type!(self, TokT::And) {
+            let operator = self.previous_token.clone();
+            let right = self.assignment()?;
+            left = Expr::Logical {
+                left: Box::new(left),
+                operator,
+                right: Box::new(right),
+            };
+        }
+        Ok(left)
     }
 
     fn assignment(&mut self) -> Result<Expr<'src>, ParserError<'src>> {
@@ -336,7 +379,7 @@ impl<'src> Parser<'src> {
 
         if match_token_type!(self, TokenType::Equal) {
             let value = self.assignment()?;
-            if let Expr::Identifier(name) = expr {
+            if let Expr::Variable { name, .. } = expr {
                 return Ok(Expr::Assignment {
                     identifier: name,
                     value: Box::new(value),
@@ -464,7 +507,11 @@ impl<'src> Parser<'src> {
             TokT::String => self.literal(Literal::String(String::from(
                 &self.previous_token.lexeme[1..self.previous_token.lexeme.len() - 1],
             ))), // TODO Add string parsing
-            TokT::Identifier => Ok(Expr::Identifier(self.previous_token.clone())),
+            TokT::Identifier => Ok(Expr::Variable {
+                name: self.previous_token.clone(),
+                scope: None,
+                index: None,
+            }),
             TokT::LeftParen => {
                 let expr = self.expression()?;
                 self.consume(TokT::RightParen, "Expect ')' after expression.")?;
@@ -486,16 +533,26 @@ mod tests {
     use crate::scanner::Scanner;
     use crate::token::{Token, TokenType};
 
+    fn string(str: &str) -> Box<Expr> {
+        Box::new(Expr::Literal(Literal::String(String::from(str))))
+    }
+    fn number(num: f64) -> Box<Expr<'static>> {
+        Box::new(Expr::Literal(Literal::Number(num)))
+    }
+    fn boolean(b: bool) -> Box<Expr<'static>> {
+        Box::new(Expr::Literal(Literal::Boolean(b)))
+    }
+
     #[test]
     fn test_basic_expressions() {
-        let source = "4 -5;";
+        let source = "4 - 5;";
         let scanner = Scanner::new(source);
         let mut parser = Parser::new(scanner);
         let res = parser.parse().expect("Failed to parse.").pop().unwrap();
         let expected = Expr::Binary {
             operator: Token::new(TokenType::Minus, 1, "-"),
-            left: Box::from(Expr::Literal(Literal::Number(4.0))),
-            right: Box::from(Expr::Literal(Literal::Number(5.0))),
+            left: number(4.0),
+            right: number(5.0),
         };
         println!("{:?}", res);
         let expected = Stmt::Expression(expected);
@@ -513,8 +570,8 @@ mod tests {
 
         let expected = Stmt::Expression(Expr::Binary {
             operator: Token::new(TokenType::EqualEqual, 2, "=="),
-            left: Box::from(Expr::Literal(Literal::String(String::from("hello world")))),
-            right: Box::from(Expr::Literal(Literal::String(String::from("hello world")))),
+            left: string("hello world"),
+            right: string("hello world"),
         });
 
         assert_eq!(res, expected);
@@ -522,18 +579,45 @@ mod tests {
     #[test]
     fn test_if_statement() {
         let source = r#"
-
         func main(a: number, b: string):void {
-            return 2;
+            return;
         }
+
+        let a = 10;
 
         while (true) {
-        return 2;
+            let b = a;
+            return b;
         }
 
+        {
+            let a = 10;
+            {
+                let a = 20;
+                println(a);
+            }
+            println(a);
+        }
         "#;
         let scanner = Scanner::new(source);
         let mut parser = Parser::new(scanner);
-        println!("{:#?}", parser.parse().expect("Failed to parse."));
+        let res = parser.parse().expect("Failed to parse.");
+        println!("{:#?}", res);
+        res.iter().for_each(|stmt| println!("{}", stmt));
+    }
+
+    #[test]
+    fn test_logical_operators() {
+        let source = r#"
+        let a:number = 10;
+        while a > 0 and a < 20 {
+            a=a+1;
+        }
+        "#;
+        let scanner = Scanner::new(source);
+        let mut parser = Parser::new(scanner);
+        let res = parser.parse().expect("Failed to parse.");
+        println!("{:#?}", res);
+        res.iter().for_each(|stmt| println!("{}", stmt));
     }
 }

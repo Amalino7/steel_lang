@@ -1,4 +1,7 @@
+use crate::ast::Stmt::Function;
 use crate::token::Token;
+use std::fmt;
+use std::fmt::{Display, Formatter, write};
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Literal {
@@ -33,7 +36,13 @@ pub enum Expr<'src> {
         left: Box<Expr<'src>>,
         right: Box<Expr<'src>>,
     },
-    Identifier(Token<'src>),
+    Variable {
+        // the scope depth and index will be set in the type checker.
+        // TODO test if this is enough information. Potential problems closures.
+        name: Token<'src>,
+        scope: Option<usize>,
+        index: Option<usize>,
+    },
     Grouping {
         expression: Box<Expr<'src>>,
     },
@@ -59,6 +68,7 @@ pub enum Stmt<'src> {
     Let {
         identifier: Token<'src>,
         value: Expr<'src>,
+        type_info: Type,
     },
     Block(Vec<Stmt<'src>>),
     If {
@@ -92,6 +102,153 @@ impl Type {
             Some(Type::Void)
         } else {
             None
+        }
+    }
+}
+
+impl Display for Type {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Type::Number => write!(f, "Number"),
+            Type::Boolean => write!(f, "Bool"),
+            Type::String => write!(f, "String"),
+            Type::Void => write!(f, "Void"),
+            Type::Function {
+                param_types,
+                return_type,
+            } => {
+                write!(
+                    f,
+                    "fn({}) -> {}",
+                    param_types
+                        .iter()
+                        .map(|t| format!("{}", t))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    return_type
+                )
+            }
+            Type::Unknown => write!(f, "Unknown"),
+            Type::Error => write!(f, "Error"),
+        }
+    }
+}
+
+impl Display for Literal {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Literal::Number(n) => write!(f, "{}", n),
+            Literal::String(s) => write!(f, "{}", s),
+            Literal::Boolean(b) => write!(f, "{}", b),
+            Literal::Void => write!(f, "void"),
+        }
+    }
+}
+
+impl Display for Expr<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Expr::Unary {
+                operator,
+                expression,
+            } => {
+                write!(f, "({} {})", operator.lexeme, expression)
+            }
+            Expr::Binary {
+                operator,
+                left,
+                right,
+            } => {
+                write!(f, "({} {} {})", operator.lexeme, left, right)
+            }
+            Expr::Grouping { expression } => {
+                write!(f, "(group {})", expression)
+            }
+            Expr::Literal(literal) => {
+                write!(f, "{}", literal)
+            }
+            Expr::Variable { name, .. } => write!(f, "{}", name.lexeme),
+            Expr::Assignment { identifier, value } => {
+                write!(f, "{} = {}", identifier.lexeme, value)
+            }
+            Expr::Logical {
+                left,
+                operator,
+                right,
+            } => {
+                write!(f, "({} {} {})", operator.lexeme, left, right)
+            }
+            Expr::Call { callee, arguments } => {
+                write!(
+                    f,
+                    "{}({})",
+                    callee,
+                    arguments
+                        .iter()
+                        .map(|e| e.to_string())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                )
+            }
+        }
+    }
+}
+
+impl Display for Stmt<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Stmt::Expression(expr) => write!(f, "{}", expr),
+            Stmt::Let {
+                identifier,
+                value,
+                type_info,
+            } => write!(f, "let {}: {} = {}", identifier.lexeme, type_info, value),
+            Stmt::Block(statements) => {
+                write!(f, "do\n")?;
+                for statement in statements {
+                    write!(f, " {}\n", statement)?;
+                }
+                write!(f, "end")
+            }
+            Stmt::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                if let Some(else_branch) = else_branch {
+                    write!(
+                        f,
+                        "if {} then {} else {}",
+                        condition, then_branch, else_branch
+                    )
+                } else {
+                    write!(f, "if {} then {}", condition, then_branch)
+                }
+            }
+            Stmt::While { condition, body } => write!(f, "while {} then {}", condition, body),
+            Stmt::Function {
+                name,
+                params,
+                body,
+                type_,
+            } => {
+                write!(
+                    f,
+                    "func {}({}) = {} do {} end",
+                    name.lexeme,
+                    params
+                        .iter()
+                        .map(|e| e.lexeme)
+                        .collect::<Vec<_>>()
+                        .join(","),
+                    type_,
+                    body.iter()
+                        .map(|e| e.to_string())
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                )
+            }
+            Stmt::Return(expr) => write!(f, "return {}", expr),
         }
     }
 }

@@ -1,3 +1,5 @@
+use std::fmt::{Display, Formatter};
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Token<'src> {
     pub token_type: TokenType,
