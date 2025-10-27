@@ -2,8 +2,8 @@ use crate::ast::Type::Unknown;
 use crate::ast::{Expr, Literal, Stmt, Type};
 use crate::scanner::Scanner;
 use crate::token::{Token, TokenType};
-use TokenType as TokT;
 use std::fmt::{Display, Formatter};
+use TokenType as TokT;
 
 pub struct Parser<'src> {
     scanner: Scanner<'src>,
@@ -102,7 +102,13 @@ impl<'src> Parser<'src> {
         self.previous_token = self.current_token.clone();
         self.current_token = self.scanner.next_token();
         if self.current_token.token_type == TokenType::Error {
-            Err(self.error_current("Unexpected token."))
+            self.panic_mode = true;
+            self.had_error = true;
+            Err(ParserError::UnexpectedToken {
+                expected: None,
+                found: self.current_token.clone(),
+                message: "Unexpected token.",
+            })
         } else {
             Ok(())
         }
@@ -116,7 +122,13 @@ impl<'src> Parser<'src> {
         if self.current_token.token_type == token_type {
             self.advance()
         } else {
-            Err(self.error_current(message))
+            self.panic_mode = true;
+            self.had_error = true;
+            Err(ParserError::MissingToken {
+                expected: token_type,
+                after_token: self.previous_token.clone(),
+                message,
+            })
         }
     }
 
@@ -242,9 +254,9 @@ impl<'src> Parser<'src> {
                     if let Some(t) = Type::from_identifier(self.previous_token.clone()) {
                         param_types.push(t);
                     } else {
-                        self.error_previous(
+                        return Err(self.error_previous(
                             "Expected valid type identifier. Example: 'number, string, void'.",
-                        );
+                        ));
                     }
 
                     if !match_token_type!(self, TokT::Comma) {
@@ -619,5 +631,38 @@ mod tests {
         let res = parser.parse().expect("Failed to parse.");
         println!("{:#?}", res);
         res.iter().for_each(|stmt| println!("{}", stmt));
+    }
+
+    #[test]
+    fn test_parser_error_missing_semicolon() {
+        let source = "let a = 10";
+        let scanner = Scanner::new(source);
+        let mut parser = Parser::new(scanner);
+        assert!(
+            parser.parse().is_err(),
+            "Parser should error on missing semicolon"
+        );
+    }
+
+    #[test]
+    fn test_parser_error_invalid_type_identifier() {
+        let source = "let a: foo = 10;";
+        let scanner = Scanner::new(source);
+        let mut parser = Parser::new(scanner);
+        assert!(
+            parser.parse().is_err(),
+            "Parser should error on invalid type identifier"
+        );
+    }
+
+    #[test]
+    fn test_parser_error_missing_right_paren() {
+        let source = "let a = (10 + 2;";
+        let scanner = Scanner::new(source);
+        let mut parser = Parser::new(scanner);
+        assert!(
+            parser.parse().is_err(),
+            "Parser should error on missing right parenthesis"
+        );
     }
 }

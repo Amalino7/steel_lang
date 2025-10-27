@@ -1,7 +1,6 @@
-use crate::ast::Stmt::Function;
 use crate::token::Token;
 use std::fmt;
-use std::fmt::{Display, Formatter, write};
+use std::fmt::{Display, Formatter};
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Literal {

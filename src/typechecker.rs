@@ -423,7 +423,12 @@ impl<'src> TypeChecker<'src> {
                 } else if left_type == Type::String && right_type == Type::String {
                     Ok(Type::String)
                 } else {
-                    todo!()
+                    Err(TypeCheckerError::TypeMismatch {
+                        expected: left_type,
+                        found: right_type,
+                        line: operator.line,
+                        message: "Operands to '+' must be both numbers or both strings.",
+                    })
                 }
             }
             TokenType::Greater
@@ -529,5 +534,98 @@ mod tests {
                 .collect::<Vec<String>>()
                 .join("\n")
         );
+    }
+
+    #[test]
+    fn test_tc_undefined_variable() {
+        let source = "let a = b;";
+        let scanner = Scanner::new(source);
+        let mut parser = Parser::new(scanner);
+        let mut ast = parser.parse().unwrap();
+        let mut checker = TypeChecker::new();
+        let res = checker.check(ast.as_mut_slice());
+        match res {
+            Err(TypeCheckerError::UndefinedVariable { .. }) => {}
+            other => panic!("Expected UndefinedVariable, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_tc_callee_not_function() {
+        let source = r#"
+            let a = 10;
+            a(1);
+        "#;
+        let scanner = Scanner::new(source);
+        let mut parser = Parser::new(scanner);
+        let mut ast = parser.parse().unwrap();
+        let mut checker = TypeChecker::new();
+        let res = checker.check(ast.as_mut_slice());
+        match res {
+            Err(TypeCheckerError::CalleeIsNotAFunction { .. }) => {}
+            other => panic!("Expected CalleeIsNotAFunction, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_tc_arity_mismatch() {
+        let source = r#"
+            func f(a:number): number { return a; }
+            let x = f();
+        "#;
+        let scanner = Scanner::new(source);
+        let mut parser = Parser::new(scanner);
+        let mut ast = parser.parse().unwrap();
+        let mut checker = TypeChecker::new();
+        let res = checker.check(ast.as_mut_slice());
+        match res {
+            Err(TypeCheckerError::IncorrectArity { .. }) => {}
+            other => panic!("Expected IncorrectArity, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_tc_type_mismatch_in_let() {
+        let source = "let a: number = true;";
+        let scanner = Scanner::new(source);
+        let mut parser = Parser::new(scanner);
+        let mut ast = parser.parse().unwrap();
+        let mut checker = TypeChecker::new();
+        let res = checker.check(ast.as_mut_slice());
+        match res {
+            Err(TypeCheckerError::TypeMismatch { .. }) => {}
+            other => panic!("Expected TypeMismatch, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_tc_invalid_return_outside_function() {
+        let source = "return 5;";
+        let scanner = Scanner::new(source);
+        let mut parser = Parser::new(scanner);
+        let mut ast = parser.parse().unwrap();
+        let mut checker = TypeChecker::new();
+        let res = checker.check(ast.as_mut_slice());
+        match res {
+            Err(TypeCheckerError::InvalidReturnOutsideFunction { .. }) => {}
+            other => panic!("Expected InvalidReturnOutsideFunction, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_tc_param_type_mismatch() {
+        let source = r#"
+            func add(a:number, b:number): number { return a + b; }
+            let x = add(1, true);
+        "#;
+        let scanner = Scanner::new(source);
+        let mut parser = Parser::new(scanner);
+        let mut ast = parser.parse().unwrap();
+        let mut checker = TypeChecker::new();
+        let res = checker.check(ast.as_mut_slice());
+        match res {
+            Err(TypeCheckerError::FunctionParameterTypeMismatch { .. }) => {}
+            other => panic!("Expected FunctionParameterTypeMismatch, got {:?}", other),
+        }
     }
 }
