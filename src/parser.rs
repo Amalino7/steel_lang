@@ -33,8 +33,10 @@ macro_rules! match_token_type {
 
 #[derive(Debug, Clone)]
 pub enum ParserError<'src> {
+    ScannerError {
+        token: Token<'src>,
+    },
     UnexpectedToken {
-        expected: TokenType,
         found: Token<'src>,
         message: &'static str,
     },
@@ -52,15 +54,11 @@ pub enum ParserError<'src> {
 impl Display for ParserError<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            ParserError::UnexpectedToken {
-                expected,
-                found,
-                message,
-            } => {
+            ParserError::UnexpectedToken { found, message } => {
                 write!(
                     f,
-                    "[line {}] Error at '{}'. Expected '{}' but found '{}' instead. {}",
-                    found.line, found.lexeme, expected, found.token_type, message
+                    "[line {}] Error at '{}'.\n{}\n",
+                    found.line, found.lexeme, message
                 )
             }
             ParserError::MissingToken {
@@ -70,7 +68,7 @@ impl Display for ParserError<'_> {
             } => {
                 write!(
                     f,
-                    "[line {}] Error at '{}'. Missing '{}' but found '{}' instead. {}",
+                    "[line {}] Error at '{}'. Missing '{}' but found '{}' instead.\nNote: {}",
                     after_token.line, after_token.lexeme, expected, after_token.token_type, message
                 )
             }
@@ -80,6 +78,9 @@ impl Display for ParserError<'_> {
                     "[line {}] Error at '{}'. {}",
                     token.line, token.lexeme, message
                 )
+            }
+            ParserError::ScannerError { token } => {
+                write!(f, "[line {}] Error: {}", token.line, token.lexeme)
             }
         }
     }
@@ -97,10 +98,14 @@ impl<'src> Parser<'src> {
     fn advance(&mut self) -> Result<(), ParserError<'src>> {
         self.previous_token = self.current_token.clone();
         self.current_token = self.scanner.next_token();
-        if self.current_token.token_type == TokenType::Error {
-            Err(ParserError::ParseError {
+        if self.current_token.token_type == TokenType::UnexpectedSymbolError {
+            Err(ParserError::UnexpectedToken {
+                found: self.current_token.clone(),
+                message: "Invalid token.",
+            })
+        } else if self.current_token.token_type == TokenType::Error {
+            Err(ParserError::ScannerError {
                 token: self.current_token.clone(),
-                message: "Unexpected error token.",
             })
         } else {
             Ok(())
@@ -115,10 +120,10 @@ impl<'src> Parser<'src> {
         if self.current_token.token_type == token_type {
             self.advance()
         } else {
-            Err(ParserError::UnexpectedToken {
+            Err(ParserError::MissingToken {
                 expected: token_type,
-                found: self.current_token.clone(),
                 message,
+                after_token: self.current_token.clone(),
             })
         }
     }
@@ -203,7 +208,7 @@ impl<'src> Parser<'src> {
 
             self.consume(TokT::Equal, "Expected '=' after variable name.")?;
             let expr = self.expression()?;
-            self.consume(TokT::Semicolon, "Expected ';' after variable declaration.'")?;
+            self.consume(TokT::Semicolon, "Expected ';' after variable declaration.")?;
             Ok(Stmt::Let {
                 identifier: name,
                 value: expr,

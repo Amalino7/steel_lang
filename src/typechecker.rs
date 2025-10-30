@@ -10,7 +10,6 @@ pub enum TypeCheckerError {
     },
     CalleeIsNotAFunction {
         found: Type,
-        message: &'static str,
         line: usize,
     },
     TypeMismatch {
@@ -41,15 +40,11 @@ impl std::fmt::Display for TypeCheckerError {
             TypeCheckerError::UndefinedVariable { name, line } => {
                 write!(f, "[line {}] Error: Undefined variable '{}'.", line, name)
             }
-            TypeCheckerError::CalleeIsNotAFunction {
-                found,
-                line,
-                message,
-            } => {
+            TypeCheckerError::CalleeIsNotAFunction { found, line } => {
                 write!(
                     f,
-                    "[line {}] Error: {}. Found type '{}' where a function was expected.",
-                    line, message, found
+                    "[line {}] Error: Cannot call type different from function.\n Found type '{}' where a function was expected.",
+                    line, found
                 )
             }
             TypeCheckerError::TypeMismatch {
@@ -60,7 +55,7 @@ impl std::fmt::Display for TypeCheckerError {
             } => {
                 write!(
                     f,
-                    "[line {}] Error: {}. Expected '{}' but found '{}'.",
+                    "[line {}] Error: {}.\n Note: Expected '{}' but found '{}'.",
                     line, message, expected, found
                 )
             }
@@ -463,7 +458,6 @@ impl<'src> TypeChecker<'src> {
                 } else {
                     return Err(TypeCheckerError::CalleeIsNotAFunction {
                         found: func_type,
-                        message: "Expected a function but found something else.",
                         line: callee.get_line(),
                     });
                 }
@@ -750,6 +744,8 @@ mod tests {
                 b(1);                     // Error 2: Undefined variable 'b'
                 return 10;                // Error 3: Return outside function
                 let c = 5 + "str";        // Error 4: Binary op type mismatch
+                let c = 4;
+                c();                      // Error 5: Callee is not a function
             "#;
         let scanner = Scanner::new(source);
         let mut parser = Parser::new(scanner);
@@ -758,8 +754,8 @@ mod tests {
         let errors = checker.check(ast.as_mut_slice()).unwrap_err();
 
         assert!(
-            errors.len() >= 4,
-            "Expected at least 4 errors, got {}",
+            errors.len() >= 5,
+            "Expected at least 5 errors, got {}",
             errors.len()
         );
 
@@ -771,6 +767,7 @@ mod tests {
         let mut found_type_mismatch = false;
         let mut found_undefined_variable = false;
         let mut found_invalid_return = false;
+        let mut found_callee_is_not_function = false;
 
         for error in errors {
             match error {
@@ -778,6 +775,9 @@ mod tests {
                 TypeCheckerError::UndefinedVariable { .. } => found_undefined_variable = true,
                 TypeCheckerError::InvalidReturnOutsideFunction { .. } => {
                     found_invalid_return = true
+                }
+                TypeCheckerError::CalleeIsNotAFunction { .. } => {
+                    found_callee_is_not_function = true;
                 }
                 _ => {}
             }
@@ -787,6 +787,10 @@ mod tests {
         assert!(
             found_invalid_return,
             "Expected InvalidReturnOutsideFunction error"
+        );
+        assert!(
+            found_callee_is_not_function,
+            "Expected CalleeIsNotAFunction error"
         );
     }
 }

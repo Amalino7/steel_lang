@@ -1,4 +1,4 @@
-use std::fmt::{Display, Formatter, Write};
+use std::fmt::{Display, Formatter};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Token<'src> {
@@ -63,6 +63,7 @@ pub enum TokenType {
 
     // Reports errors.
     Error,
+    UnexpectedSymbolError,
 
     EOF,
 }
@@ -106,7 +107,8 @@ impl Display for TokenType {
             TokenType::Let => f.write_str("let"),
             TokenType::While => f.write_str("while"),
             TokenType::Error => f.write_str("error"),
-            TokenType::EOF => f.write_str("EOF"),
+            TokenType::UnexpectedSymbolError => f.write_str("unexpected symbol"),
+            TokenType::EOF => f.write_str("nothing"),
         }
     }
 }

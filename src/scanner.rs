@@ -63,7 +63,7 @@ impl<'src> Scanner<'src> {
             '"' => self.string(),
             '0'..='9' => self.number(),
             c if is_valid_identifier(c) => self.identifier(),
-            _ => Token::new(TokenType::Error, self.line, "Unexpected character."),
+            _ => self.make_token(TokenType::UnexpectedSymbolError),
         }
     }
     fn make_token(&self, token_type: TokenType) -> Token<'src> {
@@ -336,7 +336,7 @@ mod tests {
         // emojis not yet supported
         assert_eq!(
             scanner.next_token(),
-            Token::new(TokenType::Error, 1, "Unexpected character.")
+            Token::new(TokenType::UnexpectedSymbolError, 1, "😏")
         );
     }
     #[test]
