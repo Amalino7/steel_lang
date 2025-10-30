@@ -1,7 +1,7 @@
+use crate::typechecker::TypeChecker;
 use std::env::args;
 use std::fs;
 
-mod ast;
 mod parser;
 mod scanner;
 mod token;
@@ -23,6 +23,7 @@ fn main() {
         }
         return;
     }
+
     let mut parser = parser::Parser::new(scanner);
     let mut ast = parser.parse().expect("Failed to parse source file.");
 
@@ -31,7 +32,7 @@ fn main() {
         return;
     }
 
-    let mut type_checker = typechecker::TypeChecker::new();
+    let mut type_checker = TypeChecker::new();
     type_checker
         .check(ast.as_mut_slice())
         .expect("Failed to type check source file.");
