@@ -1,3 +1,5 @@
+use std::fmt::{Display, Formatter, Write};
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Token<'src> {
     pub token_type: TokenType,
@@ -63,4 +65,48 @@ pub enum TokenType {
     Error,
 
     EOF,
+}
+
+impl Display for TokenType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TokenType::LeftParen => f.write_str("("),
+            TokenType::RightParen => f.write_str(")"),
+            TokenType::LeftBrace => f.write_str("{"),
+            TokenType::RightBrace => f.write_str("}"),
+            TokenType::LeftBracket => f.write_str("["),
+            TokenType::RightBracket => f.write_str("]"),
+            TokenType::Comma => f.write_str(","),
+            TokenType::Dot => f.write_str("."),
+            TokenType::Semicolon => f.write_str(";"),
+            TokenType::Colon => f.write_str(":"),
+            TokenType::Minus => f.write_str("-"),
+            TokenType::Plus => f.write_str("+"),
+            TokenType::Slash => f.write_str("/"),
+            TokenType::Star => f.write_str("*"),
+            TokenType::Bang => f.write_str("!"),
+            TokenType::BangEqual => f.write_str("!="),
+            TokenType::Equal => f.write_str("="),
+            TokenType::EqualEqual => f.write_str("=="),
+            TokenType::Greater => f.write_str(">"),
+            TokenType::GreaterEqual => f.write_str(">="),
+            TokenType::Less => f.write_str("<"),
+            TokenType::LessEqual => f.write_str("<="),
+            TokenType::Identifier => f.write_str("identifier"),
+            TokenType::String => f.write_str("string"),
+            TokenType::Number => f.write_str("number"),
+            TokenType::And => f.write_str("and"),
+            TokenType::Or => f.write_str("or"),
+            TokenType::If => f.write_str("if"),
+            TokenType::Else => f.write_str("else"),
+            TokenType::Func => f.write_str("func"),
+            TokenType::Return => f.write_str("return"),
+            TokenType::True => f.write_str("true"),
+            TokenType::False => f.write_str("false"),
+            TokenType::Let => f.write_str("let"),
+            TokenType::While => f.write_str("while"),
+            TokenType::Error => f.write_str("error"),
+            TokenType::EOF => f.write_str("EOF"),
+        }
+    }
 }

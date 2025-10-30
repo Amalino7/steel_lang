@@ -1,16 +1,14 @@
-use crate::ast::Type::Unknown;
 use crate::ast::{Expr, Literal, Stmt, Type};
 use crate::scanner::Scanner;
 use crate::token::{Token, TokenType};
 use std::fmt::{Display, Formatter};
 use TokenType as TokT;
 
+//TODO rethink error printing
 pub struct Parser<'src> {
     scanner: Scanner<'src>,
     previous_token: Token<'src>,
     current_token: Token<'src>,
-    panic_mode: bool,
-    had_error: bool,
 }
 
 macro_rules! check_token_type {
@@ -36,7 +34,7 @@ macro_rules! match_token_type {
 #[derive(Debug, Clone)]
 pub enum ParserError<'src> {
     UnexpectedToken {
-        expected: Option<TokenType>,
+        expected: TokenType,
         found: Token<'src>,
         message: &'static str,
     },
@@ -61,7 +59,7 @@ impl Display for ParserError<'_> {
             } => {
                 write!(
                     f,
-                    "[line {}] Error at '{}'. Expected {:?} but found {:?} instead. {}",
+                    "[line {}] Error at '{}'. Expected '{}' but found '{}' instead. {}",
                     found.line, found.lexeme, expected, found.token_type, message
                 )
             }
@@ -72,7 +70,7 @@ impl Display for ParserError<'_> {
             } => {
                 write!(
                     f,
-                    "[line {}] Error at '{}'. Missing {:?} but found {:?} instead. {}",
+                    "[line {}] Error at '{}'. Missing '{}' but found '{}' instead. {}",
                     after_token.line, after_token.lexeme, expected, after_token.token_type, message
                 )
             }
@@ -94,20 +92,15 @@ impl<'src> Parser<'src> {
             scanner,
             previous_token: start_token.clone(),
             current_token: start_token,
-            panic_mode: false,
-            had_error: false,
         }
     }
     fn advance(&mut self) -> Result<(), ParserError<'src>> {
         self.previous_token = self.current_token.clone();
         self.current_token = self.scanner.next_token();
         if self.current_token.token_type == TokenType::Error {
-            self.panic_mode = true;
-            self.had_error = true;
-            Err(ParserError::UnexpectedToken {
-                expected: None,
-                found: self.current_token.clone(),
-                message: "Unexpected token.",
+            Err(ParserError::ParseError {
+                token: self.current_token.clone(),
+                message: "Unexpected error token.",
             })
         } else {
             Ok(())
@@ -122,52 +115,46 @@ impl<'src> Parser<'src> {
         if self.current_token.token_type == token_type {
             self.advance()
         } else {
-            self.panic_mode = true;
-            self.had_error = true;
-            Err(ParserError::MissingToken {
+            Err(ParserError::UnexpectedToken {
                 expected: token_type,
-                after_token: self.previous_token.clone(),
+                found: self.current_token.clone(),
                 message,
             })
         }
     }
 
     fn error_current(&mut self, message: &'static str) -> ParserError<'src> {
-        self.panic_mode = true;
-        self.had_error = true;
         ParserError::ParseError {
             token: self.current_token.clone(),
             message,
         }
     }
     fn error_previous(&mut self, message: &'static str) -> ParserError<'src> {
-        self.panic_mode = true;
-        self.had_error = true;
         ParserError::ParseError {
-            token: self.previous_token.clone(),
+            token: self.current_token.clone(),
             message,
         }
     }
-    pub fn parse(&mut self) -> Result<Vec<Stmt<'src>>, ()> {
+    pub fn parse(&mut self) -> Result<Vec<Stmt<'src>>, Vec<ParserError<'src>>> {
         let mut statements = vec![];
+        let mut errors = vec![];
         while !self.scanner.is_at_end() {
             match self.declaration() {
                 Ok(stmt) => statements.push(stmt),
                 Err(e) => {
-                    eprintln!("{}", e);
+                    errors.push(e);
                     self.synchronize();
                 }
             }
         }
-        if self.had_error {
-            Err(())
+        if !errors.is_empty() {
+            Err(errors.clone())
         } else {
             Ok(statements)
         }
     }
 
     fn synchronize(&mut self) {
-        self.panic_mode = false;
         while !self.scanner.is_at_end() {
             if self.previous_token.token_type == TokT::Semicolon {
                 return;
@@ -211,7 +198,7 @@ impl<'src> Parser<'src> {
                     return Err(self.error_previous("Expected valid type identifier."));
                 }
             } else {
-                Unknown // The type will be inferred by the compiler later on.
+                Type::Unknown // The type will be inferred by the compiler later on.
             };
 
             self.consume(TokT::Equal, "Expected '=' after variable name.")?;
@@ -301,7 +288,6 @@ impl<'src> Parser<'src> {
     }
     fn statement(&mut self) -> Result<Stmt<'src>, ParserError<'src>> {
         if check_token_type!(self, TokT::LeftBrace) {
-            println!("{:?}", self.current_token);
             self.block()
         } else if match_token_type!(self, TokT::If) {
             self.if_statement()
@@ -310,15 +296,18 @@ impl<'src> Parser<'src> {
         } else if match_token_type!(self, TokT::Return) {
             let val = if !match_token_type!(self, TokT::Semicolon) {
                 let expr = self.expression()?;
-                self.consume(TokT::Semicolon, "Expect ';' after return value.")?;
+                self.consume(TokT::Semicolon, "Expected ';' after return value.")?;
                 expr
             } else {
-                Expr::Literal(Literal::Void)
+                Expr::Literal {
+                    literal: Literal::Void,
+                    line: self.previous_token.line,
+                }
             };
             Ok(Stmt::Return(val))
         } else {
             let expr = self.expression()?;
-            self.consume(TokT::Semicolon, "Expect ';' after expression.")?;
+            self.consume(TokT::Semicolon, "Expected ';' after expression.")?;
             Ok(Stmt::Expression(expr))
         }
     }
@@ -535,7 +524,10 @@ impl<'src> Parser<'src> {
         }
     }
     fn literal(&mut self, literal: Literal) -> Result<Expr<'src>, ParserError<'src>> {
-        Ok(Expr::Literal(literal))
+        Ok(Expr::Literal {
+            literal,
+            line: self.previous_token.line,
+        })
     }
 }
 #[cfg(test)]
@@ -545,14 +537,23 @@ mod tests {
     use crate::scanner::Scanner;
     use crate::token::{Token, TokenType};
 
-    fn string(str: &str) -> Box<Expr> {
-        Box::new(Expr::Literal(Literal::String(String::from(str))))
+    fn string(str: &str, line: usize) -> Box<Expr> {
+        Box::new(Expr::Literal {
+            literal: Literal::String(String::from(str)),
+            line,
+        })
     }
-    fn number(num: f64) -> Box<Expr<'static>> {
-        Box::new(Expr::Literal(Literal::Number(num)))
+    fn number(num: f64, line: usize) -> Box<Expr<'static>> {
+        Box::new(Expr::Literal {
+            literal: Literal::Number(num),
+            line,
+        })
     }
-    fn boolean(b: bool) -> Box<Expr<'static>> {
-        Box::new(Expr::Literal(Literal::Boolean(b)))
+    fn boolean(b: bool, line: usize) -> Box<Expr<'static>> {
+        Box::new(Expr::Literal {
+            literal: Literal::Boolean(b),
+            line,
+        })
     }
 
     #[test]
@@ -563,8 +564,8 @@ mod tests {
         let res = parser.parse().expect("Failed to parse.").pop().unwrap();
         let expected = Expr::Binary {
             operator: Token::new(TokenType::Minus, 1, "-"),
-            left: number(4.0),
-            right: number(5.0),
+            left: number(4.0, 1),
+            right: number(5.0, 1),
         };
         println!("{:?}", res);
         let expected = Stmt::Expression(expected);
@@ -582,8 +583,8 @@ mod tests {
 
         let expected = Stmt::Expression(Expr::Binary {
             operator: Token::new(TokenType::EqualEqual, 2, "=="),
-            left: string("hello world"),
-            right: string("hello world"),
+            left: string("hello world", 1),
+            right: string("hello world", 2),
         });
 
         assert_eq!(res, expected);
@@ -638,10 +639,11 @@ mod tests {
         let source = "let a = 10";
         let scanner = Scanner::new(source);
         let mut parser = Parser::new(scanner);
-        assert!(
-            parser.parse().is_err(),
-            "Parser should error on missing semicolon"
-        );
+        let res = parser.parse();
+        assert!(res.is_err(), "Parser should error on missing semicolon");
+        if let Err(e) = res {
+            e.iter().for_each(|e| println!("{}", e));
+        }
     }
 
     #[test]

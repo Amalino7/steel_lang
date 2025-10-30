@@ -1,6 +1,5 @@
 use crate::ast::{Expr, Literal, Stmt, Type};
 use crate::token::{Token, TokenType};
-use crate::typechecker::TypeCheckerError::UndefinedVariable;
 use std::collections::HashMap;
 
 #[derive(Debug)]
@@ -12,6 +11,7 @@ pub enum TypeCheckerError {
     CalleeIsNotAFunction {
         found: Type,
         message: &'static str,
+        line: usize,
     },
     TypeMismatch {
         expected: Type,
@@ -19,14 +19,11 @@ pub enum TypeCheckerError {
         line: usize,
         message: &'static str,
     },
-    UndeclaredFunction {
-        name: String,
-        line: usize,
-    },
     IncorrectArity {
         callee_name: String,
         expected: usize,
         found: usize,
+        line: usize,
     },
     InvalidReturnOutsideFunction {
         line: usize,
@@ -34,7 +31,72 @@ pub enum TypeCheckerError {
     FunctionParameterTypeMismatch {
         expected: Type,
         found: Type,
+        param_index: usize,
+        line: usize,
     },
+}
+impl std::fmt::Display for TypeCheckerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TypeCheckerError::UndefinedVariable { name, line } => {
+                write!(f, "[line {}] Error: Undefined variable '{}'.", line, name)
+            }
+            TypeCheckerError::CalleeIsNotAFunction {
+                found,
+                line,
+                message,
+            } => {
+                write!(
+                    f,
+                    "[line {}] Error: {}. Found type '{}' where a function was expected.",
+                    line, message, found
+                )
+            }
+            TypeCheckerError::TypeMismatch {
+                expected,
+                found,
+                line,
+                message,
+            } => {
+                write!(
+                    f,
+                    "[line {}] Error: {}. Expected '{}' but found '{}'.",
+                    line, message, expected, found
+                )
+            }
+            TypeCheckerError::IncorrectArity {
+                callee_name,
+                expected,
+                found,
+                line,
+            } => {
+                write!(
+                    f,
+                    "[line {}] Error: Incorrect number of arguments for function '{}'. Expected {} but found {}.",
+                    line, callee_name, expected, found
+                )
+            }
+            TypeCheckerError::InvalidReturnOutsideFunction { line } => {
+                write!(
+                    f,
+                    "[line {}] Error: 'return' statement outside of a function body.",
+                    line
+                )
+            }
+            TypeCheckerError::FunctionParameterTypeMismatch {
+                expected,
+                found,
+                line,
+                param_index,
+            } => {
+                write!(
+                    f,
+                    "[line {}] Error: Function parameter type mismatch for parameter in position '{}'. Expected '{}' but found '{}'.",
+                    line, param_index, expected, found
+                )
+            }
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -72,15 +134,23 @@ impl<'src> TypeChecker<'src> {
             variable_scope: vec![],
         }
     }
-    pub fn check(&mut self, ast: &mut [Stmt<'src>]) -> Result<(), TypeCheckerError> {
+    pub fn check(&mut self, ast: &mut [Stmt<'src>]) -> Result<(), Vec<TypeCheckerError>> {
+        let mut errors = vec![];
         self.begin_scope();
-        self.declare_global_functions(ast)?; // First pass declare all global functions.
+        self.declare_global_functions(ast, &mut errors); // First pass declare all global functions.
 
         for stmt in ast.iter_mut() {
-            self.check_stmt(stmt)?;
+            if let Err(e) = self.check_stmt(stmt) {
+                errors.push(e);
+            }
         }
         self.end_scope();
-        Ok(())
+
+        if !errors.is_empty() {
+            Err(errors)
+        } else {
+            Ok(())
+        }
     }
     fn begin_scope(&mut self) {
         self.variable_scope.push(Scope {
@@ -114,7 +184,7 @@ impl<'src> TypeChecker<'src> {
         }
         None
     }
-    fn declare_global_functions(&mut self, ast: &[Stmt<'src>]) -> Result<(), TypeCheckerError> {
+    fn declare_global_functions(&mut self, ast: &[Stmt<'src>], errors: &mut Vec<TypeCheckerError>) {
         for stmt in ast.iter() {
             if let Stmt::Function {
                 name,
@@ -123,10 +193,12 @@ impl<'src> TypeChecker<'src> {
                 body: _,
             } = stmt
             {
-                self.declare_variable(name.lexeme, type_info.clone())?;
+                let res = self.declare_variable(name.lexeme, type_info.clone());
+                if let Err(e) = res {
+                    errors.push(e);
+                }
             }
         }
-        Ok(())
     }
 
     fn check_stmt(&mut self, stmt: &mut Stmt<'src>) -> Result<(), TypeCheckerError> {
@@ -175,7 +247,7 @@ impl<'src> TypeChecker<'src> {
                     return Err(TypeCheckerError::TypeMismatch {
                         expected: Type::Boolean,
                         found: cond_type,
-                        line: 0, // TODO
+                        line: condition.get_line(),
                         message: "If condition must be a boolean.",
                     });
                 }
@@ -187,7 +259,7 @@ impl<'src> TypeChecker<'src> {
                     return Err(TypeCheckerError::TypeMismatch {
                         expected: Type::Boolean,
                         found: cond_type,
-                        line: 0, // TODO
+                        line: condition.get_line(),
                         message: "If condition must be a boolean.",
                     });
                 }
@@ -232,13 +304,13 @@ impl<'src> TypeChecker<'src> {
                         return Err(TypeCheckerError::TypeMismatch {
                             expected: func_return_type.clone(),
                             found: return_type,
-                            line: 0, // TODO
+                            line: expr.get_line(),
                             message: "Mismatched return types. Expected a function that returns a different type than the function that is being called.",
                         });
                     }
                 } else {
                     return Err(TypeCheckerError::InvalidReturnOutsideFunction {
-                        line: 0, // TODO
+                        line: expr.get_line(),
                     });
                 }
             }
@@ -301,7 +373,7 @@ impl<'src> TypeChecker<'src> {
                 }
             }
             Expr::Grouping { expression } => self.infer_expression(expression)?,
-            Expr::Literal(literal) => match literal {
+            Expr::Literal { literal, line: _ } => match literal {
                 Literal::Number(_) => Type::Number,
                 Literal::String(_) => Type::String,
                 Literal::Boolean(_) => Type::Boolean,
@@ -322,7 +394,7 @@ impl<'src> TypeChecker<'src> {
                         value_type
                     }
                 } else {
-                    return Err(UndefinedVariable {
+                    return Err(TypeCheckerError::UndefinedVariable {
                         name: identifier.lexeme.to_string(),
                         line: identifier.line,
                     });
@@ -372,6 +444,7 @@ impl<'src> TypeChecker<'src> {
                             callee_name: callee.to_string(),
                             expected: param_types.len(),
                             found: arguments.len(),
+                            line: callee.get_line(),
                         });
                     }
 
@@ -381,6 +454,8 @@ impl<'src> TypeChecker<'src> {
                             return Err(TypeCheckerError::FunctionParameterTypeMismatch {
                                 expected: param_types[i].clone(),
                                 found: arg_type,
+                                param_index: i,
+                                line: arg.get_line(),
                             });
                         }
                     }
@@ -389,6 +464,7 @@ impl<'src> TypeChecker<'src> {
                     return Err(TypeCheckerError::CalleeIsNotAFunction {
                         found: func_type,
                         message: "Expected a function but found something else.",
+                        line: callee.get_line(),
                     });
                 }
             }
@@ -545,8 +621,14 @@ mod tests {
         let mut checker = TypeChecker::new();
         let res = checker.check(ast.as_mut_slice());
         match res {
-            Err(TypeCheckerError::UndefinedVariable { .. }) => {}
-            other => panic!("Expected UndefinedVariable, got {:?}", other),
+            Err(errors) => {
+                assert!(
+                    errors
+                        .iter()
+                        .any(|e| matches!(e, TypeCheckerError::UndefinedVariable { .. }))
+                );
+            }
+            _ => panic!("Expected UndefinedVariable error"),
         }
     }
 
@@ -562,8 +644,14 @@ mod tests {
         let mut checker = TypeChecker::new();
         let res = checker.check(ast.as_mut_slice());
         match res {
-            Err(TypeCheckerError::CalleeIsNotAFunction { .. }) => {}
-            other => panic!("Expected CalleeIsNotAFunction, got {:?}", other),
+            Err(errors) => {
+                assert!(
+                    errors
+                        .iter()
+                        .any(|e| matches!(e, TypeCheckerError::CalleeIsNotAFunction { .. }))
+                );
+            }
+            _ => panic!("Expected CalleeIsNotAFunction error"),
         }
     }
 
@@ -579,8 +667,14 @@ mod tests {
         let mut checker = TypeChecker::new();
         let res = checker.check(ast.as_mut_slice());
         match res {
-            Err(TypeCheckerError::IncorrectArity { .. }) => {}
-            other => panic!("Expected IncorrectArity, got {:?}", other),
+            Err(errors) => {
+                assert!(
+                    errors
+                        .iter()
+                        .any(|e| matches!(e, TypeCheckerError::IncorrectArity { .. }))
+                );
+            }
+            _ => panic!("Expected IncorrectArity error"),
         }
     }
 
@@ -593,8 +687,14 @@ mod tests {
         let mut checker = TypeChecker::new();
         let res = checker.check(ast.as_mut_slice());
         match res {
-            Err(TypeCheckerError::TypeMismatch { .. }) => {}
-            other => panic!("Expected TypeMismatch, got {:?}", other),
+            Err(errors) => {
+                assert!(
+                    errors
+                        .iter()
+                        .any(|e| matches!(e, TypeCheckerError::TypeMismatch { .. }))
+                );
+            }
+            _ => panic!("Expected TypeMismatch error"),
         }
     }
 
@@ -607,8 +707,15 @@ mod tests {
         let mut checker = TypeChecker::new();
         let res = checker.check(ast.as_mut_slice());
         match res {
-            Err(TypeCheckerError::InvalidReturnOutsideFunction { .. }) => {}
-            other => panic!("Expected InvalidReturnOutsideFunction, got {:?}", other),
+            Err(errors) => {
+                assert!(
+                    errors.iter().any(|e| matches!(
+                        e,
+                        TypeCheckerError::InvalidReturnOutsideFunction { .. }
+                    ))
+                );
+            }
+            _ => panic!("Expected InvalidReturnOutsideFunction error"),
         }
     }
 
@@ -624,8 +731,62 @@ mod tests {
         let mut checker = TypeChecker::new();
         let res = checker.check(ast.as_mut_slice());
         match res {
-            Err(TypeCheckerError::FunctionParameterTypeMismatch { .. }) => {}
-            other => panic!("Expected FunctionParameterTypeMismatch, got {:?}", other),
+            Err(errors) => {
+                assert!(
+                    errors.iter().any(|e| matches!(
+                        e,
+                        TypeCheckerError::FunctionParameterTypeMismatch { .. }
+                    ))
+                );
+            }
+            _ => panic!("Expected FunctionParameterTypeMismatch error"),
         }
+    }
+
+    #[test]
+    fn test_tc_multiple_errors() {
+        let source = r#"
+                let a: number = "hello"; // Error 1: Type mismatch
+                b(1);                     // Error 2: Undefined variable 'b'
+                return 10;                // Error 3: Return outside function
+                let c = 5 + "str";        // Error 4: Binary op type mismatch
+            "#;
+        let scanner = Scanner::new(source);
+        let mut parser = Parser::new(scanner);
+        let mut ast = parser.parse().expect("Parser failed.");
+        let mut checker = TypeChecker::new();
+        let errors = checker.check(ast.as_mut_slice()).unwrap_err();
+
+        assert!(
+            errors.len() >= 4,
+            "Expected at least 4 errors, got {}",
+            errors.len()
+        );
+
+        for err in &errors {
+            println!("{}", err);
+        }
+
+        // Check for specific error types
+        let mut found_type_mismatch = false;
+        let mut found_undefined_variable = false;
+        let mut found_invalid_return = false;
+
+        for error in errors {
+            match error {
+                TypeCheckerError::TypeMismatch { .. } => found_type_mismatch = true,
+                TypeCheckerError::UndefinedVariable { .. } => found_undefined_variable = true,
+                TypeCheckerError::InvalidReturnOutsideFunction { .. } => {
+                    found_invalid_return = true
+                }
+                _ => {}
+            }
+        }
+        assert!(found_type_mismatch, "Expected TypeMismatch error");
+        assert!(found_undefined_variable, "Expected UndefinedVariable error");
+        assert!(
+            found_invalid_return,
+            "Expected InvalidReturnOutsideFunction error"
+        );
     }
 }
