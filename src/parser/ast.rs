@@ -1,7 +1,6 @@
-use crate::ast::Stmt::Function;
 use crate::token::Token;
 use std::fmt;
-use std::fmt::{Display, Formatter, write};
+use std::fmt::{Display, Formatter};
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Literal {
@@ -22,7 +21,6 @@ pub enum Type {
         return_type: Box<Type>,
     },
     Unknown,
-    Error,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -46,7 +44,10 @@ pub enum Expr<'src> {
     Grouping {
         expression: Box<Expr<'src>>,
     },
-    Literal(Literal),
+    Literal {
+        literal: Literal,
+        line: usize,
+    },
     Assignment {
         identifier: Token<'src>,
         value: Box<Expr<'src>>,
@@ -129,7 +130,6 @@ impl Display for Type {
                 )
             }
             Type::Unknown => write!(f, "Unknown"),
-            Type::Error => write!(f, "Error"),
         }
     }
 }
@@ -164,7 +164,7 @@ impl Display for Expr<'_> {
             Expr::Grouping { expression } => {
                 write!(f, "(group {})", expression)
             }
-            Expr::Literal(literal) => {
+            Expr::Literal { literal, .. } => {
                 write!(f, "{}", literal)
             }
             Expr::Variable { name, .. } => write!(f, "{}", name.lexeme),
@@ -249,6 +249,41 @@ impl Display for Stmt<'_> {
                 )
             }
             Stmt::Return(expr) => write!(f, "return {}", expr),
+        }
+    }
+}
+
+impl Expr<'_> {
+    pub fn get_line(&self) -> usize {
+        match self {
+            Expr::Unary { operator, .. } => operator.line,
+            Expr::Binary { operator, .. } => operator.line,
+            Expr::Variable { name, .. } => name.line,
+            Expr::Grouping { expression } => expression.get_line(),
+            Expr::Literal { line, .. } => *line,
+            Expr::Assignment { identifier, .. } => identifier.line,
+            Expr::Logical { operator, .. } => operator.line,
+            Expr::Call { callee, .. } => callee.get_line(),
+        }
+    }
+}
+
+impl Stmt<'_> {
+    pub fn get_line(&self) -> usize {
+        match self {
+            Stmt::Expression(expr) => expr.get_line(),
+            Stmt::Let { identifier, .. } => identifier.line,
+            Stmt::Block(statements) => {
+                if let Some(first_stmt) = statements.first() {
+                    first_stmt.get_line()
+                } else {
+                    0 //might need to add an alternative for empty blocks.
+                }
+            }
+            Stmt::If { condition, .. } => condition.get_line(),
+            Stmt::While { condition, .. } => condition.get_line(),
+            Stmt::Function { name, .. } => name.line,
+            Stmt::Return(expr) => expr.get_line(),
         }
     }
 }
