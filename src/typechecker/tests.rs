@@ -22,14 +22,6 @@ mod tests {
         checker
             .check(ast.as_mut_slice())
             .expect("Type checker failed.");
-        println!("{:#?}", ast);
-        println!(
-            "{}",
-            ast.iter()
-                .map(|stmt| stmt.to_string())
-                .collect::<Vec<String>>()
-                .join("\n")
-        );
     }
     #[test]
     fn test_type_checker_function_call() {
@@ -58,14 +50,6 @@ mod tests {
         checker
             .check(ast.as_mut_slice())
             .expect("Type checker failed.");
-        println!("{:#?}", ast);
-        println!(
-            "{}",
-            ast.iter()
-                .map(|stmt| stmt.to_string())
-                .collect::<Vec<String>>()
-                .join("\n")
-        );
     }
 
     #[test]
@@ -221,10 +205,6 @@ mod tests {
             errors.len()
         );
 
-        for err in &errors {
-            println!("{}", err);
-        }
-
         // Check for specific error types
         let mut found_type_mismatch = false;
         let mut found_undefined_variable = false;
@@ -254,5 +234,133 @@ mod tests {
             found_callee_is_not_function,
             "Expected CalleeIsNotAFunction error"
         );
+    }
+
+    #[test]
+    fn test_tc_function_return_missing() {
+        let source = r#"
+            func add(a:number, b:number): number {
+            // Missing return statement
+            }
+        "#;
+        let scanner = Scanner::new(source);
+        let mut parser = Parser::new(scanner);
+        let mut ast = parser.parse().expect("Parser failed.");
+        let mut checker = TypeChecker::new();
+        let errors = checker
+            .check(ast.as_mut_slice())
+            .expect_err("Should have failed.");
+        assert_eq!(errors.len(), 1, "Expected 1 error, got {}", errors.len());
+        assert!(matches!(
+            errors[0],
+            TypeCheckerError::MissingReturnStatement { .. }
+        ))
+    }
+
+    #[test]
+    fn test_tc_function_unreachable_code() {
+        let source = r#"
+            func add(a:number, b:number): number {
+                return 12;
+                a + b;
+            }
+        "#;
+        let scanner = Scanner::new(source);
+        let mut parser = Parser::new(scanner);
+        let mut ast = parser.parse().expect("Parser failed.");
+        let mut checker = TypeChecker::new();
+        let errors = checker
+            .check(ast.as_mut_slice())
+            .expect_err("Should have failed.");
+        assert_eq!(errors.len(), 1, "Expected 1 error, got {}", errors.len());
+        assert!(matches!(
+            errors[0],
+            TypeCheckerError::UnreachableCode { .. }
+        ))
+    }
+    #[test]
+    fn test_tc_function_correct_return() {
+        let source = r#"
+            func add(a:number, b:number): number {
+                if a > b {
+                    a / 4;
+                } else {
+                    return b;
+                }
+
+                return 10;
+            }
+        "#;
+        let scanner = Scanner::new(source);
+        let mut parser = Parser::new(scanner);
+        let mut ast = parser.parse().expect("Parser failed.");
+        let mut checker = TypeChecker::new();
+        let _ = checker
+            .check(ast.as_mut_slice())
+            .expect("Should have passed.");
+    }
+
+    #[test]
+    fn test_tc_function_correct_return2() {
+        let source = r#"
+            func add(a:number, b:number): number {
+                if a > b {
+                    return a / 4;
+                } else {
+                    return b;
+                }
+            }
+        "#;
+        let scanner = Scanner::new(source);
+        let mut parser = Parser::new(scanner);
+        let mut ast = parser.parse().expect("Parser failed.");
+        let mut checker = TypeChecker::new();
+        let _ = checker
+            .check(ast.as_mut_slice())
+            .expect("Should have passed.");
+    }
+    #[test]
+    fn test_tc_nested_function_correct_return() {
+        let source = r#"
+            func add(a:number, b:number): number {
+                func add2(a:number, b:number): number {
+                    return add(a, b);
+                }
+
+                return add2(a, b);
+            }
+            "#;
+        let scanner = Scanner::new(source);
+        let mut parser = Parser::new(scanner);
+        let mut ast = parser.parse().expect("Parser failed.");
+        let mut checker = TypeChecker::new();
+        let _ = checker
+            .check(ast.as_mut_slice())
+            .expect("Should have passed.");
+    }
+
+    #[test]
+    fn test_tc_nested_function_missing_return() {
+        let source = r#"
+            func add(a:number, b:number): number {
+                func add2(a:number, b:number): number {
+
+                }
+
+                return add2(a, b);
+            }
+            "#;
+        let scanner = Scanner::new(source);
+        let mut parser = Parser::new(scanner);
+        let mut ast = parser.parse().expect("Parser failed.");
+        let mut checker = TypeChecker::new();
+        let errors = checker
+            .check(ast.as_mut_slice())
+            .expect_err("Should have failed.");
+        assert_eq!(errors.len(), 1, "Expected 1 error, got {}", errors.len());
+        assert!(matches!(
+            errors[0],
+            TypeCheckerError::MissingReturnStatement { .. }
+        ))
     }
 }
