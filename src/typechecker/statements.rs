@@ -119,7 +119,6 @@ impl<'src> TypeChecker<'src> {
                     unreachable!()
                 }
             }
-            // TODO check if functions that must return a value are actually returning a value.
             Stmt::Return(expr) => {
                 let return_type = self.infer_expression(expr)?;
                 if let FunctionContext::Function(func_return_type) = &self.current_function {

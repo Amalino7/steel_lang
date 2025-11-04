@@ -31,6 +31,12 @@ pub enum TypeCheckerError {
         param_index: usize,
         line: usize,
     },
+    UnreachableCode {
+        line: usize,
+    },
+    MissingReturnStatement {
+        line: usize,
+    },
 }
 impl std::fmt::Display for TypeCheckerError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -87,6 +93,12 @@ impl std::fmt::Display for TypeCheckerError {
                     "[line {}] Error: Function parameter type mismatch for parameter in position '{}'. Expected '{}' but found '{}'.",
                     line, param_index, expected, found
                 )
+            }
+            TypeCheckerError::UnreachableCode { line } => {
+                write!(f, "[line {}] Error: Unreachable code detected.", line)
+            }
+            TypeCheckerError::MissingReturnStatement { line } => {
+                write!(f, "[line {}] Error: Missing return statement.", line)
             }
         }
     }

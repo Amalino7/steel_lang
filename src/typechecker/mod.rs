@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 pub mod error;
 mod expressions;
+mod return_analysis;
 mod statements;
 mod tests;
 
@@ -54,6 +55,7 @@ impl<'src> TypeChecker<'src> {
         }
         self.end_scope();
 
+        self.check_returns(ast, &mut errors);
         if !errors.is_empty() {
             Err(errors)
         } else {
