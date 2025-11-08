@@ -3,4 +3,7 @@ name = "steel_lang"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+debug_trace_execution = []
+debug_stack_execution = []
 [dependencies]

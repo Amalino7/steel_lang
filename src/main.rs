@@ -6,6 +6,7 @@ mod parser;
 mod scanner;
 mod token;
 mod typechecker;
+mod vm;
 
 fn main() {
     let source_path = args().nth(1).expect("No source file provided.");

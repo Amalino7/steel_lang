@@ -150,12 +150,6 @@ mod tests {
             line,
         })
     }
-    fn boolean(b: bool, line: usize) -> Box<Expr<'static>> {
-        Box::new(Expr::Literal {
-            literal: Literal::Boolean(b),
-            line,
-        })
-    }
 
     fn var(name: &'static str, line: usize) -> Box<Expr<'static>> {
         Box::new(Expr::Variable {
