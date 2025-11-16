@@ -317,7 +317,7 @@ mod tests {
         let mut scanner = Scanner::new(input);
         assert_eq!(
             scanner.next_token(),
-            Token::new(TokenType::Error, 1, "Unexpected character.")
+            Token::new(TokenType::UnexpectedSymbolError, 1, "?")
         );
     }
     #[test]

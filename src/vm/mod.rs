@@ -1,14 +1,15 @@
 use crate::vm::byte_utils::{byte_to_opcode, read_24_bytes};
 use crate::vm::bytecode::{Chunk, Opcode};
+use crate::vm::disassembler::disassemble_instruction;
 use crate::vm::stack::Stack;
 use crate::vm::value::Value;
 use std::process::exit;
 
 mod byte_utils;
-mod bytecode;
+pub mod bytecode;
 mod disassembler;
 mod stack;
-mod value;
+pub mod value;
 
 const STACK_MAX: usize = 256;
 pub struct VM {
