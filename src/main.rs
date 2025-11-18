@@ -2,6 +2,7 @@ use crate::typechecker::TypeChecker;
 use std::env::args;
 use std::fs;
 
+mod compiler;
 mod parser;
 mod scanner;
 mod token;

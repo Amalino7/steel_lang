@@ -6,11 +6,28 @@ pub type Bytecode = u8;
 pub enum Opcode {
     Constant,
     ConstantLong,
+
     Negate,
     Subtract,
     Add,
     Divide,
     Multiply,
+    Not,
+
+    Equal,
+    Greater,
+    Less,
+    Pop,
+    JumpIfFalse,
+    Jump,
+    JumpBack,
+
+    SetLocal,
+    GetLocal,
+    SetGlobal,
+    GetGlobal,
+    Call,
+
     Return,
     Halt,
 }
@@ -28,7 +45,7 @@ impl Chunk {
             lines: Vec::new(),
         }
     }
-    pub fn add_constant(&mut self, value: Value) -> usize {
+    fn add_constant(&mut self, value: Value) -> usize {
         self.constants.push(value);
         self.constants.len() - 1
     }

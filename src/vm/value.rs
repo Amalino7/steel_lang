@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::fmt::{Display, Formatter};
 use std::ops::{Add, Div, Mul, Neg, Not, Sub};
 use std::rc::Rc;
@@ -8,6 +9,15 @@ pub enum Value {
     String(Rc<String>),
     Boolean(bool),
     Nil,
+}
+
+impl PartialOrd for Value {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        match (self, other) {
+            (Value::Number(l), Value::Number(r)) => l.partial_cmp(r),
+            _ => None,
+        }
+    }
 }
 
 impl Display for Value {

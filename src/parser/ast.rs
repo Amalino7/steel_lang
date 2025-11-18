@@ -70,6 +70,8 @@ pub enum Stmt<'src> {
         identifier: Token<'src>,
         value: Expr<'src>,
         type_info: Type,
+        scope: Option<usize>,
+        index: Option<usize>,
     },
     Block(Vec<Stmt<'src>>),
     If {
@@ -202,6 +204,7 @@ impl Display for Stmt<'_> {
                 identifier,
                 value,
                 type_info,
+                ..
             } => write!(f, "let {}: {} = {}", identifier.lexeme, type_info, value),
             Stmt::Block(statements) => {
                 write!(f, "do\n")?;

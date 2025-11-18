@@ -240,6 +240,8 @@ mod tests {
             },
             value: *number(10.0, 2),
             type_info: Type::Number,
+            scope: None,
+            index: None,
         });
         expected.push(Stmt::While {
             condition: Expr::Logical {

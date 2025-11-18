@@ -33,6 +33,8 @@ impl<'src> TypeChecker<'src> {
                 identifier,
                 value,
                 type_info,
+                scope,
+                index,
             } => {
                 let value_type = self.infer_expression(value)?;
                 if *type_info == Type::Unknown {
@@ -48,6 +50,9 @@ impl<'src> TypeChecker<'src> {
                         message: "Expected the same type but found something else.",
                     });
                 }
+                let scope_val = self.variable_scope.len() - 1;
+                *scope = Some(scope_val);
+                *index = Some(self.variable_scope[scope_val].variables.len() - 1);
             }
             Stmt::Block(statements) => {
                 self.begin_scope();

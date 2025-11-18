@@ -47,6 +47,49 @@ pub fn disassemble_instruction(
         Opcode::Add => println!("Add"),
         Opcode::Divide => println!("Divide"),
         Opcode::Multiply => println!("Multiply"),
+        Opcode::Not => println!("Not"),
+        Opcode::Equal => {
+            println!("Equal")
+        }
+        Opcode::Greater => {
+            println!("Greater")
+        }
+        Opcode::Less => {
+            println!("Less")
+        }
+        Opcode::Pop => {
+            println!("Pop")
+        }
+        Opcode::JumpIfFalse => {
+            offset += 2;
+            let jump_offset = read_bytes(&bytecode[(offset - 1)..=offset]);
+            println!("JumpIfFalse {} ", jump_offset)
+        }
+        Opcode::Jump => {
+            offset += 2;
+            let jump_offset = read_bytes(&bytecode[(offset - 1)..=offset]);
+            println!("Jump {} ", jump_offset)
+        }
+        Opcode::JumpBack => {
+            offset += 2;
+            let jump_offset = read_bytes(&bytecode[(offset - 1)..=offset]);
+            println!("Jump -{} ", jump_offset)
+        }
+        Opcode::SetLocal => {
+            todo!()
+        }
+        Opcode::GetLocal => {
+            todo!()
+        }
+        Opcode::SetGlobal => {
+            todo!()
+        }
+        Opcode::GetGlobal => {
+            todo!()
+        }
+        Opcode::Call => {
+            todo!()
+        }
     };
     offset + 1
 }

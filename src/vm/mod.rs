@@ -1,8 +1,9 @@
-use crate::vm::byte_utils::{byte_to_opcode, read_24_bytes};
+use crate::vm::byte_utils::{byte_to_opcode, read_24_bytes, read_bytes};
 use crate::vm::bytecode::{Chunk, Opcode};
 use crate::vm::disassembler::disassemble_instruction;
 use crate::vm::stack::Stack;
 use crate::vm::value::Value;
+use std::cmp::PartialOrd;
 use std::process::exit;
 
 mod byte_utils;
@@ -16,6 +17,7 @@ pub struct VM {
     pub chunk: Chunk,
     ip: usize,
     stack: Stack<STACK_MAX>,
+    globals: Vec<Value>,
 }
 
 impl VM {
@@ -24,10 +26,11 @@ impl VM {
             chunk: Chunk::new(),
             ip: 0,
             stack: Stack::<STACK_MAX>::new(),
+            globals: vec![],
         }
     }
 
-    fn run(&mut self) -> Value {
+    pub fn run(&mut self) -> Value {
         loop {
             #[cfg(feature = "debug_trace_execution")]
             disassemble_instruction(
@@ -87,6 +90,66 @@ impl VM {
                     let b = self.stack.pop();
                     let a = self.stack.pop();
                     self.stack.push(a * b);
+                }
+                Opcode::Not => {
+                    let val = self.stack.pop();
+                    self.stack.push(!val);
+                }
+                Opcode::Equal => {
+                    let b = self.stack.pop();
+                    let a = self.stack.pop();
+                    self.stack.push(Value::Boolean(a == b));
+                }
+                Opcode::Greater => {
+                    let b = self.stack.pop();
+                    let a = self.stack.pop();
+                    self.stack.push(Value::Boolean(a > b));
+                }
+                Opcode::Less => {
+                    let b = self.stack.pop();
+                    let a = self.stack.pop();
+                    self.stack.push(Value::Boolean(a < b))
+                }
+                Opcode::Pop => {
+                    self.stack.pop();
+                }
+                Opcode::JumpIfFalse => {
+                    let offset = read_bytes(&self.chunk.instructions[self.ip..self.ip + 2]);
+                    self.ip += 2;
+                    let cond = self.stack.get_mut();
+                    if *cond == Value::Boolean(false) {
+                        self.ip += offset;
+                    }
+                }
+                Opcode::Jump => {
+                    let offset = read_bytes(&self.chunk.instructions[self.ip..self.ip + 2]);
+                    self.ip += 2;
+                    self.ip += offset;
+                }
+
+                Opcode::JumpBack => {
+                    let offset = read_bytes(&self.chunk.instructions[self.ip..self.ip + 2]);
+                    self.ip += 2;
+                    self.ip -= offset;
+                }
+
+                Opcode::SetLocal => {
+                    todo!()
+                }
+                Opcode::GetLocal => {
+                    todo!()
+                }
+                Opcode::SetGlobal => {
+                    let index = self.chunk.instructions[self.ip] as usize;
+                    self.ip += 1;
+                    self.globals[index] = self.stack.pop();
+                }
+                Opcode::GetGlobal => {
+                    let val = self.globals[self.chunk.instructions[self.ip] as usize].clone();
+                    self.stack.push(val);
+                }
+                Opcode::Call => {
+                    todo!()
                 }
             }
         }
