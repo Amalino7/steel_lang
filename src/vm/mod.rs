@@ -8,7 +8,7 @@ use std::process::exit;
 
 mod byte_utils;
 pub mod bytecode;
-mod disassembler;
+pub mod disassembler;
 mod stack;
 pub mod value;
 
@@ -21,12 +21,12 @@ pub struct VM {
 }
 
 impl VM {
-    pub fn new() -> Self {
+    pub fn new(global_count: usize) -> Self {
         VM {
             chunk: Chunk::new(),
             ip: 0,
             stack: Stack::<STACK_MAX>::new(),
-            globals: vec![],
+            globals: vec![Value::Nil; global_count],
         }
     }
 
@@ -111,7 +111,8 @@ impl VM {
                     self.stack.push(Value::Boolean(a < b))
                 }
                 Opcode::Pop => {
-                    self.stack.pop();
+                    println!("Popping {}", self.stack.pop());
+                    // self.stack.pop();
                 }
                 Opcode::JumpIfFalse => {
                     let offset = read_bytes(&self.chunk.instructions[self.ip..self.ip + 2]);
@@ -134,22 +135,30 @@ impl VM {
                 }
 
                 Opcode::SetLocal => {
-                    todo!()
+                    let index = self.chunk.instructions[self.ip] as usize;
+                    self.ip += 1;
+
+                    let val = self.stack.get_mut().clone();
+                    self.stack.set_at(index, val);
                 }
                 Opcode::GetLocal => {
-                    todo!()
+                    let index = self.chunk.instructions[self.ip] as usize;
+                    self.ip += 1;
+                    let val = self.stack.get_at(index);
+                    self.stack.push(val);
                 }
                 Opcode::SetGlobal => {
                     let index = self.chunk.instructions[self.ip] as usize;
                     self.ip += 1;
-                    self.globals[index] = self.stack.pop();
+                    self.globals[index] = self.stack.get_mut().clone();
                 }
                 Opcode::GetGlobal => {
                     let val = self.globals[self.chunk.instructions[self.ip] as usize].clone();
+                    self.ip += 1;
                     self.stack.push(val);
                 }
                 Opcode::Call => {
-                    todo!()
+                    todo!("Calls are not yet done")
                 }
             }
         }
@@ -164,10 +173,15 @@ impl VM {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compiler::Compiler;
+    use crate::parser::Parser;
+    use crate::scanner::Scanner;
+    use crate::typechecker::TypeChecker;
+    use crate::vm::disassembler::disassemble_chunk;
     use crate::vm::value::Value;
     #[test]
     fn test_simple_add() {
-        let mut vm = VM::new();
+        let mut vm = VM::new(0);
         vm.chunk.write_constant(Value::Number(1.0), 1);
         vm.chunk.write_constant(Value::Number(2.0), 2);
         vm.chunk.write_op(Opcode::Add as u8, 3);
@@ -176,7 +190,7 @@ mod tests {
     }
     #[test]
     fn test_complex_arithmetic() {
-        let mut vm = VM::new();
+        let mut vm = VM::new(0);
         vm.chunk.write_constant(Value::Number(6.9), 1);
         vm.chunk.write_constant(Value::Number(4.0), 2);
         vm.chunk.write_constant(Value::Number(3.0), 3);
@@ -195,7 +209,7 @@ mod tests {
     }
     #[test]
     fn test_constant_long() {
-        let mut vm = VM::new();
+        let mut vm = VM::new(0);
         vm.chunk.write_constant(Value::Number(0.0), 1);
         for i in 1..300 {
             vm.chunk.write_constant(Value::Number(i as f64), 1);
@@ -206,9 +220,105 @@ mod tests {
     }
     #[test]
     fn test_boolean() {
-        let mut vm = VM::new();
+        let mut vm = VM::new(0);
         vm.chunk.write_constant(Value::Boolean(true), 1);
         vm.chunk.write_op(Opcode::Return as u8, 1);
         assert_eq!(vm.run(), Value::Boolean(true));
+    }
+
+    #[test]
+    fn test_expressions() {
+        let src = "let a = 7 + 3 * 2 == 1;";
+        let scanner = Scanner::new(src);
+        let mut parser = Parser::new(scanner);
+        let mut typecheker = TypeChecker::new();
+        let mut ast = parser.parse().expect("Failed to parse");
+        let analysis = typecheker.check(&mut ast).expect("Failed to typecheck");
+        let compiler = Compiler::new(analysis);
+        let chunk = compiler.compile(&ast);
+
+        let mut vm = VM::new(analysis.global_count);
+        vm.chunk = chunk;
+        vm.run();
+        assert_eq!(vm.globals[0], Value::Boolean(false));
+    }
+
+    #[test]
+    fn test_cmp() {
+        let src = "let a = 7 >= 1;";
+        let scanner = Scanner::new(src);
+        let mut parser = Parser::new(scanner);
+        let mut typecheker = TypeChecker::new();
+        let mut ast = parser.parse().expect("Failed to parse");
+        let analysis = typecheker.check(&mut ast).expect("Failed to typecheck");
+        let mut compiler = Compiler::new(analysis);
+        let chunk = compiler.compile(&ast);
+        let mut vm = VM::new(analysis.global_count);
+        vm.chunk = chunk;
+        vm.run();
+        assert_eq!(vm.globals[0], Value::Boolean(true));
+    }
+    #[test]
+    fn test_complex() {
+        let src = "let a = 1;
+        while a < 10 {
+            a = a + 1;
+        }
+        ";
+
+        let scanner = Scanner::new(src);
+        let mut parser = Parser::new(scanner);
+        let mut typecheker = TypeChecker::new();
+        let mut ast = parser.parse().expect("Failed to parse");
+        let analysis = typecheker.check(&mut ast).expect("Failed to typecheck");
+        let compiler = Compiler::new(analysis);
+        let chunk = compiler.compile(&ast);
+
+        disassemble_chunk(&chunk, "test");
+        let mut vm = VM::new(analysis.global_count);
+
+        vm.chunk = chunk;
+        vm.run();
+        assert_eq!(vm.globals[0], Value::Number(10.0));
+    }
+
+    #[test]
+    fn test_local_variables() {
+        let src = "
+            let a = 0;
+        {
+            let a = 1;
+            {
+                let b = 2;
+                {
+                    let c = 3;
+                    {
+                        let d = 4;
+                        a + b + c + d;
+                    }
+                    let e = 5;
+                }
+            }
+            let f = 6;
+            {
+                let g = 7;
+                a + f + g;
+            }
+        }
+        ";
+
+        let scanner = Scanner::new(src);
+        let mut parser = Parser::new(scanner);
+        let mut typecheker = TypeChecker::new();
+        let mut ast = parser.parse().expect("Failed to parse");
+        let analysis = typecheker.check(&mut ast).expect("Failed to typecheck");
+        let compiler = Compiler::new(analysis);
+        let chunk = compiler.compile(&ast);
+
+        disassemble_chunk(&chunk, "test");
+        let mut vm = VM::new(analysis.global_count);
+
+        vm.chunk = chunk;
+        let val = vm.run();
     }
 }

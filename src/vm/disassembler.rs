@@ -76,19 +76,23 @@ pub fn disassemble_instruction(
             println!("Jump -{} ", jump_offset)
         }
         Opcode::SetLocal => {
-            todo!()
+            offset += 1;
+            println!("SetLocal {}", bytecode[offset]);
         }
         Opcode::GetLocal => {
-            todo!()
+            offset += 1;
+            println!("GetLocal {}", bytecode[offset]);
         }
         Opcode::SetGlobal => {
-            todo!()
+            offset += 1;
+            println!("SetGlobal {}", bytecode[offset]);
         }
         Opcode::GetGlobal => {
-            todo!()
+            offset += 1;
+            println!("GetGlobal {}", bytecode[offset]);
         }
         Opcode::Call => {
-            todo!()
+            todo!("Calls are not yet done")
         }
     };
     offset + 1

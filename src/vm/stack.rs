@@ -21,6 +21,12 @@ impl<const SIZE: usize> Stack<SIZE> {
         self.top -= 1;
         replace(&mut self.buffer[self.top], Value::Nil)
     }
+    pub fn set_at(&mut self, index: usize, value: Value) {
+        self.buffer[index] = value;
+    }
+    pub fn get_at(&self, index: usize) -> Value {
+        self.buffer[index].clone()
+    }
     pub fn push(&mut self, value: Value) {
         self.buffer[self.top] = value;
         self.top += 1;

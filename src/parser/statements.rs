@@ -39,8 +39,7 @@ impl<'src> Parser<'src> {
                 identifier: name,
                 value: expr,
                 type_info,
-                scope: None,
-                index: None,
+                id: self.get_node_id(),
             })
         }
     }

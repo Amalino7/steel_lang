@@ -10,8 +10,8 @@ pub fn read_24_bytes(bytes: &[u8]) -> usize {
 pub fn read_bytes(slice: &[u8]) -> usize {
     assert!(slice.len() <= std::mem::size_of::<usize>());
     let mut out: usize = 0;
-    for (i, &b) in slice.iter().enumerate() {
-        out |= (b as usize) << (i * 8);
+    for &b in slice.iter() {
+        out = out << 8 | b as usize;
     }
     out
 }

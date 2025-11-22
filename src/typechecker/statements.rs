@@ -33,8 +33,7 @@ impl<'src> TypeChecker<'src> {
                 identifier,
                 value,
                 type_info,
-                scope,
-                index,
+                id,
             } => {
                 let value_type = self.infer_expression(value)?;
                 if *type_info == Type::Unknown {
@@ -50,9 +49,12 @@ impl<'src> TypeChecker<'src> {
                         message: "Expected the same type but found something else.",
                     });
                 }
-                let scope_val = self.variable_scope.len() - 1;
-                *scope = Some(scope_val);
-                *index = Some(self.variable_scope[scope_val].variables.len() - 1);
+
+                let var_ctx = self
+                    .lookup_variable(identifier.lexeme)
+                    .expect("Variable was just added to the scope.");
+
+                self.analysis_info.add_var(*id, var_ctx.1);
             }
             Stmt::Block(statements) => {
                 self.begin_scope();
@@ -108,7 +110,7 @@ impl<'src> TypeChecker<'src> {
                 {
                     self.current_function = FunctionContext::Function(*return_type.clone());
 
-                    self.begin_scope();
+                    self.begin_function_scope();
 
                     // Declare parameters.
                     for (i, param) in params.iter().enumerate() {

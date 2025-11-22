@@ -1,23 +1,30 @@
+pub mod analysis;
+
+use crate::compiler::analysis::{AnalysisInfo, ResolvedVar};
 use crate::parser::ast::{Expr, Literal, Stmt};
 use crate::token::TokenType;
 use crate::vm::bytecode::{Chunk, Opcode};
 use crate::vm::value::Value;
 use std::rc::Rc;
 
-struct Compiler {
+pub struct Compiler<'a> {
     chunk: Chunk,
+    analysis_info: &'a AnalysisInfo,
 }
 
-impl Compiler {
-    pub fn new() -> Self {
+impl<'a> Compiler<'a> {
+    pub fn new(analysis_info: &'a AnalysisInfo) -> Self {
         Self {
             chunk: Chunk::new(),
+            analysis_info,
         }
     }
     pub fn compile(mut self, statements: &[Stmt]) -> Chunk {
         for stmt in statements {
             self.compile_stmt(stmt);
         }
+        self.chunk.write_constant(Value::Nil, 0);
+        self.emit_op(Opcode::Return, 0);
         self.chunk
     }
     fn compile_stmt(&mut self, stmt: &Stmt) {
@@ -29,19 +36,31 @@ impl Compiler {
             Stmt::Let {
                 identifier,
                 value,
-                type_info,
-                scope,
-                index,
+                id,
+                ..
             } => {
                 self.compile_expr(value);
-                let scope = scope.expect("Scope should be written");
-                let index = index.expect("Index should be written");
-                if scope == 0 {
-                    self.emit_op(Opcode::SetGlobal, identifier.line);
-                    self.emit_byte(scope as u8, identifier.line);
-                } else {
-                    self.emit_op(Opcode::SetLocal, identifier.line);
-                    self.emit_byte(index as u8, identifier.line); // ??? TODO rework logic
+
+                let var_ctx = self
+                    .analysis_info
+                    .resolved_vars
+                    .get(id)
+                    .expect("Variable not found");
+
+                match var_ctx {
+                    ResolvedVar::Local(idx) => {
+                        self.emit_op(Opcode::SetLocal, identifier.line);
+                        self.emit_byte(*idx as u8, identifier.line);
+                    }
+                    ResolvedVar::Global(idx) => {
+                        self.emit_op(Opcode::SetGlobal, identifier.line);
+                        self.emit_byte(*idx as u8, identifier.line);
+
+                        self.emit_op(Opcode::Pop, identifier.line);
+                    }
+                    ResolvedVar::Closure(_) => {
+                        todo!("closures are not yet done")
+                    }
                 }
             }
             Stmt::Block(statements) => {
@@ -55,14 +74,15 @@ impl Compiler {
                 else_branch,
             } => {
                 let line = condition.get_line();
+                self.compile_expr(condition);
                 let then_jump = self.emit_jump(Opcode::JumpIfFalse, line);
                 self.emit_op(Opcode::Pop, line);
 
                 self.compile_stmt(then_branch);
-                self.emit_jump_back(then_jump, then_branch.get_line());
-                self.patch_jump(then_jump);
 
                 let else_jump = self.emit_jump(Opcode::Jump, line);
+                self.patch_jump(then_jump);
+
                 self.emit_op(Opcode::Pop, line);
 
                 if let Some(else_branch) = else_branch {
@@ -87,7 +107,7 @@ impl Compiler {
                 self.emit_op(Opcode::Pop, body.get_line());
             }
             Stmt::Function { .. } => {
-                todo!()
+                todo!("functions are not yet done")
             }
             Stmt::Return(val) => {
                 self.compile_expr(val);
@@ -181,20 +201,52 @@ impl Compiler {
                     _ => panic!("Unknown unary operator"),
                 }
             }
-            Expr::Variable { name, scope, index } => {
-                let scope = scope.expect("Scope should be written");
-                let index = index.expect("Index should be written");
-                if scope == 0 {
-                    self.emit_op(Opcode::GetGlobal, name.line);
-                    self.emit_byte(index as u8, name.line);
-                } else {
-                    self.emit_op(Opcode::GetLocal, name.line);
-                    self.emit_byte(index as u8, name.line);
+            Expr::Variable { name, id } => {
+                let var_ctx = self
+                    .analysis_info
+                    .resolved_vars
+                    .get(id)
+                    .expect("Variable not found");
+
+                match var_ctx {
+                    ResolvedVar::Local(idx) => {
+                        self.emit_op(Opcode::GetLocal, name.line);
+                        self.emit_byte(*idx as u8, name.line);
+                    }
+                    ResolvedVar::Global(idx) => {
+                        self.emit_op(Opcode::GetGlobal, name.line);
+                        self.emit_byte(*idx as u8, name.line);
+                    }
+                    ResolvedVar::Closure(_) => {
+                        todo!("closures are not yet done")
+                    }
                 }
             }
-            Expr::Assignment { identifier, value } => {
+            Expr::Assignment {
+                identifier,
+                value,
+                id,
+            } => {
                 self.compile_expr(value);
-                todo!()
+                let var_ctx = self
+                    .analysis_info
+                    .resolved_vars
+                    .get(id)
+                    .expect("Variable not found");
+
+                match var_ctx {
+                    ResolvedVar::Local(idx) => {
+                        self.emit_op(Opcode::SetLocal, identifier.line);
+                        self.emit_byte(*idx as u8, identifier.line);
+                    }
+                    ResolvedVar::Global(idx) => {
+                        self.emit_op(Opcode::SetGlobal, identifier.line);
+                        self.emit_byte(*idx as u8, identifier.line);
+                    }
+                    ResolvedVar::Closure(_) => {
+                        todo!("closures are not yet done")
+                    }
+                }
             }
             Expr::Logical {
                 left,
@@ -219,8 +271,8 @@ impl Compiler {
                     panic!("Unknown logical operator");
                 }
             }
-            Expr::Call { callee, arguments } => {
-                todo!()
+            Expr::Call { .. } => {
+                todo!("Function calls haven't been added yet")
             }
         }
     }
@@ -230,69 +282,5 @@ impl Compiler {
     }
     fn emit_byte(&mut self, byte: u8, line: usize) {
         self.chunk.write_op(byte, line);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::compiler::Compiler;
-    use crate::parser::Parser;
-    use crate::scanner::Scanner;
-    use crate::typechecker::TypeChecker;
-    use crate::vm::value::Value;
-    use crate::vm::VM;
-
-    #[test]
-    fn test_expressions() {
-        let src = "7 + 3 * 2 == 1;";
-        let scanner = Scanner::new(src);
-        let mut parser = Parser::new(scanner);
-        let mut typecheker = TypeChecker::new();
-        let mut ast = parser.parse().expect("Failed to parse");
-        typecheker.check(&mut ast).expect("Failed to typecheck");
-        let mut compiler = Compiler::new();
-        let chunk = compiler.compile(&ast);
-        let mut vm = VM::new();
-        vm.chunk = chunk;
-        let val = vm.run();
-        assert_eq!(val, Value::Boolean(false));
-    }
-
-    #[test]
-    fn test_cmp() {
-        let src = "7 >= 1;";
-        let scanner = Scanner::new(src);
-        let mut parser = Parser::new(scanner);
-        let mut typecheker = TypeChecker::new();
-        let mut ast = parser.parse().expect("Failed to parse");
-        typecheker.check(&mut ast).expect("Failed to typecheck");
-        let mut compiler = Compiler::new();
-        let chunk = compiler.compile(&ast);
-        let mut vm = VM::new();
-        vm.chunk = chunk;
-        let val = vm.run();
-        assert_eq!(val, Value::Boolean(true));
-    }
-    #[test]
-    fn test_complex() {
-        let src = "let a = 1;
-        if a < 10 {
-           a;
-        }
-        else {
-            a + 10;
-        }
-        ";
-
-        let scanner = Scanner::new(src);
-        let mut parser = Parser::new(scanner);
-        let mut typecheker = TypeChecker::new();
-        let mut ast = parser.parse().expect("Failed to parse");
-        typecheker.check(&mut ast).expect("Failed to typecheck");
-        let mut compiler = Compiler::new();
-        let chunk = compiler.compile(&ast);
-        let mut vm = VM::new();
-        vm.chunk = chunk;
-        let val = vm.run();
     }
 }

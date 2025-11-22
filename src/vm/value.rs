@@ -124,7 +124,7 @@ impl Add for Value {
             (Value::String(l), Value::String(r)) => Value::String(Rc::new(format!("{}{}", l, r))),
             (l, r) => {
                 unreachable!(
-                    "Invalid type for division!\
+                    "Invalid type for addition!\
                      Left: {:?}, Right: {:?}",
                     l, r
                 );
