@@ -14,12 +14,19 @@ impl<'src> TypeChecker<'src> {
                 params: _,
                 type_: type_info,
                 body: _,
+                id,
             } = stmt
             {
                 let res = self.declare_variable(name.lexeme, type_info.clone());
                 if let Err(e) = res {
                     errors.push(e);
                 }
+
+                let var_ctx = self
+                    .lookup_variable(name.lexeme)
+                    .expect("Variable was just added to the scope.");
+
+                self.analysis_info.add_var(*id, var_ctx.1);
             }
         }
     }
@@ -99,8 +106,12 @@ impl<'src> TypeChecker<'src> {
                 params,
                 body,
                 type_,
+                id,
             } => {
-                self.declare_variable(name.lexeme, type_.clone())?;
+                // global functions are already declared
+                if self.current_function != FunctionContext::None {
+                    self.declare_variable(name.lexeme, type_.clone())?;
+                }
 
                 let enclosing_function_context = self.current_function.clone();
                 if let Type::Function {
@@ -122,6 +133,12 @@ impl<'src> TypeChecker<'src> {
 
                     self.end_scope();
                     self.current_function = enclosing_function_context;
+
+                    let var_ctx = self
+                        .lookup_variable(name.lexeme)
+                        .expect("Variable was just added to the scope.");
+
+                    self.analysis_info.add_var(*id, var_ctx.1);
                 } else {
                     unreachable!()
                 }

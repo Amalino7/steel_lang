@@ -4,11 +4,12 @@ use crate::vm::value::Value;
 
 pub fn disassemble_chunk(chunk: &Chunk, name: &str) {
     let bytecode = &chunk.instructions;
-    println!("== {} ==", name);
+    println!("==== {} ====", name);
     let mut offset = 0;
     while offset < bytecode.len() {
         offset = disassemble_instruction(bytecode, offset, &chunk.constants, &chunk.lines);
     }
+    println!("==== {} end ====", name);
 }
 
 pub fn disassemble_instruction(
@@ -31,6 +32,9 @@ pub fn disassemble_instruction(
             let index = bytecode[offset];
             let val = constants[index as usize].clone();
             println!(" {}", val);
+            if let Value::Function(func) = val {
+                disassemble_chunk(&func.chunk, func.name.as_str());
+            }
         }
         Opcode::ConstantLong => {
             offset += 3;
@@ -92,7 +96,8 @@ pub fn disassemble_instruction(
             println!("GetGlobal {}", bytecode[offset]);
         }
         Opcode::Call => {
-            todo!("Calls are not yet done")
+            offset += 1;
+            println!("Call {}", bytecode[offset]);
         }
     };
     offset + 1

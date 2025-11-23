@@ -85,6 +85,7 @@ pub enum Stmt<'src> {
         params: Vec<Token<'src>>,
         body: Vec<Stmt<'src>>,
         type_: Type,
+        id: usize,
     },
     Return(Expr<'src>),
 }
@@ -233,6 +234,7 @@ impl Display for Stmt<'_> {
                 params,
                 body,
                 type_,
+                id: _,
             } => {
                 write!(
                     f,

@@ -4,28 +4,33 @@ use crate::compiler::analysis::{AnalysisInfo, ResolvedVar};
 use crate::parser::ast::{Expr, Literal, Stmt};
 use crate::token::TokenType;
 use crate::vm::bytecode::{Chunk, Opcode};
-use crate::vm::value::Value;
+use crate::vm::value::{Function, Value};
 use std::rc::Rc;
 
 pub struct Compiler<'a> {
-    chunk: Chunk,
+    function: Function,
     analysis_info: &'a AnalysisInfo,
 }
 
 impl<'a> Compiler<'a> {
-    pub fn new(analysis_info: &'a AnalysisInfo) -> Self {
+    pub fn new(analysis_info: &'a AnalysisInfo, name: String) -> Self {
         Self {
-            chunk: Chunk::new(),
+            function: Function::new(name, 0, Chunk::new()),
             analysis_info,
         }
     }
-    pub fn compile(mut self, statements: &[Stmt]) -> Chunk {
+    fn chunk(&mut self) -> &mut Chunk {
+        &mut self.function.chunk
+    }
+
+    pub fn compile(mut self, statements: &[Stmt]) -> Function {
         for stmt in statements {
             self.compile_stmt(stmt);
         }
-        self.chunk.write_constant(Value::Nil, 0);
+
+        self.chunk().write_constant(Value::Nil, 0);
         self.emit_op(Opcode::Return, 0);
-        self.chunk
+        self.function
     }
     fn compile_stmt(&mut self, stmt: &Stmt) {
         match stmt {
@@ -94,7 +99,7 @@ impl<'a> Compiler<'a> {
             Stmt::While { condition, body } => {
                 let line = condition.get_line();
 
-                let loop_start = self.chunk.instructions.len();
+                let loop_start = self.chunk().instructions.len();
                 self.compile_expr(condition);
 
                 let exit_jump = self.emit_jump(Opcode::JumpIfFalse, line);
@@ -106,8 +111,47 @@ impl<'a> Compiler<'a> {
                 self.patch_jump(exit_jump);
                 self.emit_op(Opcode::Pop, body.get_line());
             }
-            Stmt::Function { .. } => {
-                todo!("functions are not yet done")
+            Stmt::Function {
+                name,
+                params,
+                body,
+                type_: _type_,
+                id,
+            } => {
+                let mut func_compiler = Compiler::new(self.analysis_info, name.lexeme.to_string());
+                func_compiler.function.arity = params.len();
+
+                for stmt in body {
+                    func_compiler.compile_stmt(stmt);
+                }
+                func_compiler.chunk().write_constant(Value::Nil, 0);
+                func_compiler.chunk().write_op(Opcode::Return as u8, 0);
+
+                let compiled_fn = func_compiler.function;
+                self.chunk()
+                    .write_constant(Value::Function(Rc::new(compiled_fn)), name.line);
+
+                let var_ctx = self
+                    .analysis_info
+                    .resolved_vars
+                    .get(id)
+                    .expect("Variable not found");
+
+                match var_ctx {
+                    ResolvedVar::Local(idx) => {
+                        self.emit_op(Opcode::SetLocal, name.line);
+                        self.emit_byte(*idx as u8, name.line);
+                    }
+                    ResolvedVar::Global(idx) => {
+                        self.emit_op(Opcode::SetGlobal, name.line);
+                        self.emit_byte(*idx as u8, name.line);
+
+                        self.emit_op(Opcode::Pop, name.line);
+                    }
+                    ResolvedVar::Closure(_) => {
+                        todo!("closures are not yet done")
+                    }
+                }
             }
             Stmt::Return(val) => {
                 self.compile_expr(val);
@@ -120,11 +164,11 @@ impl<'a> Compiler<'a> {
         self.emit_op(op, line);
         self.emit_byte(0xff, line); // Placeholder
         self.emit_byte(0xff, line); // Placeholder
-        self.chunk.instructions.len() - 2
+        self.chunk().instructions.len() - 2
     }
     fn emit_jump_back(&mut self, start: usize, line: usize) {
         self.emit_op(Opcode::JumpBack, line);
-        let offset = self.chunk.instructions.len() - start + 2;
+        let offset = self.chunk().instructions.len() - start + 2;
         if offset > u16::MAX as usize {
             panic!("Loop body too large!");
         }
@@ -133,12 +177,12 @@ impl<'a> Compiler<'a> {
     }
 
     fn patch_jump(&mut self, offset: usize) {
-        let jump = self.chunk.instructions.len() - offset - 2;
+        let jump = self.chunk().instructions.len() - offset - 2;
         if jump > u16::MAX as usize {
             panic!("Too much code to jump over!");
         }
-        self.chunk.instructions[offset] = ((jump >> 8) & 0xff) as u8;
-        self.chunk.instructions[offset + 1] = (jump & 0xff) as u8;
+        self.chunk().instructions[offset] = ((jump >> 8) & 0xff) as u8;
+        self.chunk().instructions[offset + 1] = (jump & 0xff) as u8;
     }
 
     fn compile_expr(&mut self, expr: &Expr) {
@@ -178,15 +222,15 @@ impl<'a> Compiler<'a> {
                 self.compile_expr(expression);
             }
             Expr::Literal { literal, line } => match literal {
-                Literal::Number(n) => self.chunk.write_constant(Value::Number(*n), *line),
+                Literal::Number(n) => self.chunk().write_constant(Value::Number(*n), *line),
                 Literal::String(s) => self
-                    .chunk
+                    .chunk()
                     .write_constant(Value::String(Rc::new(s.to_string())), *line),
                 Literal::Boolean(b) => {
-                    self.chunk.write_constant(Value::Boolean(*b), *line);
+                    self.chunk().write_constant(Value::Boolean(*b), *line);
                 }
                 Literal::Void => {
-                    self.chunk.write_constant(Value::Nil, *line);
+                    self.chunk().write_constant(Value::Nil, *line);
                 }
             },
 
@@ -271,16 +315,27 @@ impl<'a> Compiler<'a> {
                     panic!("Unknown logical operator");
                 }
             }
-            Expr::Call { .. } => {
-                todo!("Function calls haven't been added yet")
+            Expr::Call { callee, arguments } => {
+                self.compile_expr(callee);
+                for arg in arguments {
+                    self.compile_expr(arg);
+                }
+                self.emit_op(Opcode::Call, callee.get_line());
+                self.emit_byte(
+                    arguments.len() as u8,
+                    arguments
+                        .last()
+                        .map(|e| e.get_line())
+                        .unwrap_or(callee.get_line()),
+                );
             }
         }
     }
 
     fn emit_op(&mut self, op: Opcode, line: usize) {
-        self.chunk.write_op(op as u8, line);
+        self.chunk().write_op(op as u8, line);
     }
     fn emit_byte(&mut self, byte: u8, line: usize) {
-        self.chunk.write_op(byte, line);
+        self.chunk().write_op(byte, line);
     }
 }

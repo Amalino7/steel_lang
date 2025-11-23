@@ -1,12 +1,32 @@
+use crate::vm::bytecode::Chunk;
 use std::cmp::Ordering;
 use std::fmt::{Display, Formatter};
 use std::ops::{Add, Div, Mul, Neg, Not, Sub};
 use std::rc::Rc;
 
+#[derive(Debug)]
+pub struct Function {
+    pub name: String,
+    pub arity: usize,
+    pub chunk: Chunk,
+}
+
+impl Function {
+    pub fn new(name: String, arity: usize, chunk: Chunk) -> Function {
+        Function { name, arity, chunk }
+    }
+}
+
+impl PartialEq for Function {
+    fn eq(&self, _other: &Self) -> bool {
+        false
+    }
+}
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
     Number(f64),
     String(Rc<String>),
+    Function(Rc<Function>),
     Boolean(bool),
     Nil,
 }
@@ -22,11 +42,12 @@ impl PartialOrd for Value {
 
 impl Display for Value {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
+        match &self {
             Value::Number(num) => write!(f, "{}", num),
             Value::String(str) => write!(f, "{}", str),
             Value::Boolean(bool) => write!(f, "{}", bool),
-            &Value::Nil => write!(f, "Nil"),
+            Value::Nil => write!(f, "Nil"),
+            Value::Function(func) => write!(f, "<fn {}>", func.name.as_str()),
         }
     }
 }

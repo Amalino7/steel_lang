@@ -124,12 +124,12 @@ impl<'src> TypeChecker<'src> {
         let mut is_closure = false;
         for scope in self.variable_scope.iter().rev() {
             if let Some(var) = scope.variables.get(name) {
-                return if is_closure {
-                    Some((&var, ResolvedVar::Closure(0)))
-                } else if scope.scope_type != ScopeType::Global {
-                    Some((&var, ResolvedVar::Local(var.index)))
-                } else {
+                return if scope.scope_type == ScopeType::Global {
                     Some((&var, ResolvedVar::Global(var.index)))
+                } else if is_closure {
+                    Some((&var, ResolvedVar::Closure(0)))
+                } else {
+                    Some((&var, ResolvedVar::Local(var.index)))
                 };
             }
 

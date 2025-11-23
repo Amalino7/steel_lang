@@ -4,14 +4,14 @@ use std::mem::replace;
 #[derive(Debug)]
 pub struct Stack<const SIZE: usize> {
     buffer: [Value; SIZE],
-    top: usize,
+    pub top: usize,
 }
 
 impl<const SIZE: usize> Stack<SIZE> {
-    pub(crate) fn new() -> Stack<256> {
+    pub(crate) fn new() -> Stack<SIZE> {
         Stack {
             top: 0,
-            buffer: [const { Value::Nil }; 256],
+            buffer: [const { Value::Nil }; SIZE],
         }
     }
 }
@@ -34,5 +34,9 @@ impl<const SIZE: usize> Stack<SIZE> {
     #[allow(dead_code)]
     pub fn get_mut(&mut self) -> &mut Value {
         &mut self.buffer[self.top - 1]
+    }
+
+    pub fn truncate(&mut self, index: usize) {
+        self.top = index;
     }
 }

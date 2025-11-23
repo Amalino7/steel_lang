@@ -1,3 +1,4 @@
+use std::cmp::max;
 use std::collections::HashMap;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -23,8 +24,8 @@ impl AnalysisInfo {
     }
 
     pub fn add_var(&mut self, id: usize, var: ResolvedVar) {
-        if let ResolvedVar::Global(_) = var {
-            self.global_count += 1;
+        if let ResolvedVar::Global(idx) = var {
+            self.global_count = max(idx + 1, self.global_count);
         }
         self.resolved_vars.insert(id, var);
     }

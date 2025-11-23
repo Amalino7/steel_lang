@@ -115,6 +115,7 @@ impl<'src> Parser<'src> {
                 name,
                 params,
                 body,
+                id: self.get_node_id(),
             })
         }
     }
