@@ -1,4 +1,5 @@
-use crate::vm::byte_utils::{byte_to_opcode, read_24_bytes, read_bytes};
+use crate::stdlib::NativeDef;
+use crate::vm::byte_utils::{byte_to_opcode, read_16_bytes, read_24_bytes};
 use crate::vm::bytecode::Opcode;
 use crate::vm::stack::Stack;
 use crate::vm::value::{Function, Value};
@@ -33,6 +34,12 @@ impl VM {
             stack: Stack::<STACK_MAX>::new(),
             globals: vec![Value::Nil; global_count],
             ip: 0,
+        }
+    }
+
+    pub fn set_native_functions(&mut self, natives: Vec<NativeDef>) {
+        for i in 0..natives.len() {
+            self.globals[i] = Value::NativeFunction(natives[i].func);
         }
     }
 
@@ -145,7 +152,7 @@ impl VM {
                     self.stack.pop();
                 }
                 Opcode::JumpIfFalse => {
-                    let offset = read_bytes(&chunk.instructions[self.ip..self.ip + 2]);
+                    let offset = read_16_bytes(&chunk.instructions[self.ip..self.ip + 2]);
                     self.ip += 2;
                     let cond = self.stack.get_mut();
                     if *cond == Value::Boolean(false) {
@@ -153,13 +160,13 @@ impl VM {
                     }
                 }
                 Opcode::Jump => {
-                    let offset = read_bytes(&chunk.instructions[self.ip..self.ip + 2]);
+                    let offset = read_16_bytes(&chunk.instructions[self.ip..self.ip + 2]);
                     self.ip += 2;
                     self.ip += offset;
                 }
 
                 Opcode::JumpBack => {
-                    let offset = read_bytes(&chunk.instructions[self.ip..self.ip + 2]);
+                    let offset = read_16_bytes(&chunk.instructions[self.ip..self.ip + 2]);
                     self.ip += 2;
                     self.ip -= offset;
                 }
@@ -207,6 +214,18 @@ impl VM {
                             function = self.current_frame().function.clone();
                             chunk = &function.chunk; // updated chunk
                             slot_offset = new_slot_offset; // update offset
+                        }
+                        Value::NativeFunction(native_fn) => {
+                            let args_start = top - arg_count;
+                            let mut args = Vec::with_capacity(arg_count);
+                            for i in 0..arg_count {
+                                args.push(self.stack.get_at(args_start + i));
+                            }
+                            let result = native_fn(&args);
+
+                            self.stack.truncate(top - arg_count - 1);
+
+                            self.stack.push(result);
                         }
                         val => unreachable!("Only functions should be called found {val}"),
                     }

@@ -1,6 +1,7 @@
 use crate::compiler::Compiler;
 use crate::parser::Parser;
 use crate::scanner::Scanner;
+use crate::stdlib::get_natives;
 use crate::typechecker::TypeChecker;
 use crate::vm::disassembler::disassemble_chunk;
 use crate::vm::VM;
@@ -10,6 +11,7 @@ use std::fs;
 mod compiler;
 mod parser;
 mod scanner;
+mod stdlib;
 mod token;
 mod typechecker;
 mod vm;
@@ -36,7 +38,9 @@ pub fn execute_source(source: &str, debug: bool, mode: &str, force: bool) {
         return;
     }
 
-    let mut typechecker = TypeChecker::new();
+    let natives = get_natives();
+    let mut typechecker = TypeChecker::new_with_natives(&natives);
+
     let analysis = typechecker.check(&mut ast);
     if !force && let Err(e) = &analysis {
         for err in e {
@@ -70,6 +74,7 @@ pub fn execute_source(source: &str, debug: bool, mode: &str, force: bool) {
     }
 
     let mut vm = VM::new(analysis.global_count);
+    vm.set_native_functions(natives);
 
     let result = vm.run(func);
 

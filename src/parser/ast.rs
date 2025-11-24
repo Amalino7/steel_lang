@@ -21,6 +21,8 @@ pub enum Type {
         return_type: Box<Type>,
     },
     Unknown,
+
+    Any, //TODO repalce with generic types, this is for native functions.
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -130,6 +132,7 @@ impl Display for Type {
                 )
             }
             Type::Unknown => write!(f, "Unknown"),
+            Type::Any => write!(f, "any"),
         }
     }
 }
