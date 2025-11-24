@@ -46,6 +46,7 @@ impl<'src> Parser<'src> {
                 return Ok(Expr::Assignment {
                     identifier: name,
                     value: Box::new(value),
+                    id: self.get_node_id(),
                 });
             }
             return Err(self.error_current("Invalid assignment target."));
@@ -172,8 +173,7 @@ impl<'src> Parser<'src> {
             ))), // TODO Add string parsing
             TokT::Identifier => Ok(Expr::Variable {
                 name: self.previous_token.clone(),
-                scope: None,
-                index: None,
+                id: self.get_node_id(),
             }),
             TokT::LeftParen => {
                 let expr = self.expression()?;

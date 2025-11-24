@@ -1,3 +1,4 @@
+use crate::compiler::analysis::{AnalysisInfo, ResolvedVar};
 use crate::parser::ast::{Stmt, Type};
 use crate::typechecker::error::TypeCheckerError;
 use std::collections::HashMap;
@@ -26,14 +27,22 @@ impl<'src> VariableContext<'src> {
     }
 }
 
+#[derive(Debug, PartialEq, Clone)]
+enum ScopeType {
+    Global,
+    Function,
+    Block,
+}
 struct Scope<'src> {
     variables: HashMap<&'src str, VariableContext<'src>>,
-    depth: usize,
+    scope_type: ScopeType,
+    last_index: usize,
 }
 
 pub struct TypeChecker<'src> {
     current_function: FunctionContext,
     variable_scope: Vec<Scope<'src>>,
+    analysis_info: AnalysisInfo,
 }
 
 impl<'src> TypeChecker<'src> {
@@ -41,9 +50,13 @@ impl<'src> TypeChecker<'src> {
         TypeChecker {
             current_function: FunctionContext::None,
             variable_scope: vec![],
+            analysis_info: AnalysisInfo::new(),
         }
     }
-    pub fn check(&mut self, ast: &mut [Stmt<'src>]) -> Result<(), Vec<TypeCheckerError>> {
+    pub fn check(
+        &mut self,
+        ast: &mut [Stmt<'src>],
+    ) -> Result<&AnalysisInfo, Vec<TypeCheckerError>> {
         let mut errors = vec![];
         self.begin_scope();
         self.declare_global_functions(ast, &mut errors); // First pass declare all global functions.
@@ -59,14 +72,34 @@ impl<'src> TypeChecker<'src> {
         if !errors.is_empty() {
             Err(errors)
         } else {
-            Ok(())
+            Ok(&self.analysis_info)
         }
     }
-    fn begin_scope(&mut self) {
+    fn begin_function_scope(&mut self) {
         self.variable_scope.push(Scope {
             variables: Default::default(),
-            depth: self.variable_scope.len(),
+            scope_type: ScopeType::Function,
+            last_index: 0,
         });
+    }
+    fn begin_scope(&mut self) {
+        if let Some(scope) = self.variable_scope.last() {
+            self.variable_scope.push(Scope {
+                variables: Default::default(),
+                scope_type: ScopeType::Block,
+                last_index: if scope.scope_type != ScopeType::Global {
+                    scope.last_index
+                } else {
+                    0
+                },
+            })
+        } else {
+            self.variable_scope.push(Scope {
+                variables: Default::default(),
+                scope_type: ScopeType::Global,
+                last_index: 0,
+            })
+        }
     }
     fn end_scope(&mut self) {
         self.variable_scope.pop();
@@ -80,16 +113,28 @@ impl<'src> TypeChecker<'src> {
         if let Some(scope) = self.variable_scope.last_mut() {
             scope.variables.insert(
                 name,
-                VariableContext::new(name, type_info, scope.variables.len()),
+                VariableContext::new(name, type_info, scope.last_index),
             );
+            scope.last_index += 1;
         }
         Ok(())
     }
 
-    fn lookup_variable(&mut self, name: &str) -> Option<&VariableContext> {
+    fn lookup_variable(&self, name: &str) -> Option<(&VariableContext, ResolvedVar)> {
+        let mut is_closure = false;
         for scope in self.variable_scope.iter().rev() {
             if let Some(var) = scope.variables.get(name) {
-                return Some(var);
+                return if scope.scope_type == ScopeType::Global {
+                    Some((&var, ResolvedVar::Global(var.index)))
+                } else if is_closure {
+                    Some((&var, ResolvedVar::Closure(0)))
+                } else {
+                    Some((&var, ResolvedVar::Local(var.index)))
+                };
+            }
+
+            if scope.scope_type == ScopeType::Function {
+                is_closure = true;
             }
         }
         None

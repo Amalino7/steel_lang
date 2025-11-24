@@ -13,6 +13,7 @@ pub struct Parser<'src> {
     scanner: Scanner<'src>,
     previous_token: Token<'src>,
     current_token: Token<'src>,
+    node_id: usize,
 }
 macro_rules! check_token_type {
     ($parser:expr, $( $token_type:pat $(,)?)*) => {
@@ -45,7 +46,12 @@ impl<'src> Parser<'src> {
             scanner,
             previous_token: start_token.clone(),
             current_token: start_token,
+            node_id: 0,
         }
+    }
+    fn get_node_id(&mut self) -> usize {
+        self.node_id += 1;
+        self.node_id - 1
     }
     fn advance(&mut self) -> Result<(), ParserError<'src>> {
         self.previous_token = self.current_token.clone();
@@ -150,18 +156,11 @@ mod tests {
             line,
         })
     }
-    fn boolean(b: bool, line: usize) -> Box<Expr<'static>> {
-        Box::new(Expr::Literal {
-            literal: Literal::Boolean(b),
-            line,
-        })
-    }
 
-    fn var(name: &'static str, line: usize) -> Box<Expr<'static>> {
+    fn var(name: &'static str, line: usize, id: usize) -> Box<Expr<'static>> {
         Box::new(Expr::Variable {
             name: Token::new(TokenType::Identifier, line, name),
-            scope: None,
-            index: None,
+            id,
         })
     }
 
@@ -246,6 +245,7 @@ mod tests {
             },
             value: *number(10.0, 2),
             type_info: Type::Number,
+            id: 0,
         });
         expected.push(Stmt::While {
             condition: Expr::Logical {
@@ -255,7 +255,7 @@ mod tests {
                         line: 3,
                         lexeme: ">",
                     },
-                    left: var("a", 3),
+                    left: var("a", 3, 1),
                     right: number(0.0, 3),
                 }),
                 operator: Token {
@@ -269,7 +269,7 @@ mod tests {
                         line: 3,
                         lexeme: "<",
                     },
-                    left: var("a", 3),
+                    left: var("a", 3, 2),
                     right: number(20.0, 3),
                 }),
             },
@@ -281,9 +281,10 @@ mod tests {
                         line: 4,
                         lexeme: "+",
                     },
-                    left: var("a", 4),
+                    left: var("a", 4, 4),
                     right: number(1.0, 4),
                 }),
+                id: 5,
             })])),
         });
         assert_eq!(res, expected);

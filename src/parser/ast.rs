@@ -35,11 +35,8 @@ pub enum Expr<'src> {
         right: Box<Expr<'src>>,
     },
     Variable {
-        // the scope depth and index will be set in the type checker.
-        // TODO test if this is enough information. Potential problems closures.
         name: Token<'src>,
-        scope: Option<usize>,
-        index: Option<usize>,
+        id: usize,
     },
     Grouping {
         expression: Box<Expr<'src>>,
@@ -51,6 +48,7 @@ pub enum Expr<'src> {
     Assignment {
         identifier: Token<'src>,
         value: Box<Expr<'src>>,
+        id: usize,
     },
     Logical {
         left: Box<Expr<'src>>,
@@ -70,6 +68,7 @@ pub enum Stmt<'src> {
         identifier: Token<'src>,
         value: Expr<'src>,
         type_info: Type,
+        id: usize,
     },
     Block(Vec<Stmt<'src>>),
     If {
@@ -86,6 +85,7 @@ pub enum Stmt<'src> {
         params: Vec<Token<'src>>,
         body: Vec<Stmt<'src>>,
         type_: Type,
+        id: usize,
     },
     Return(Expr<'src>),
 }
@@ -168,7 +168,9 @@ impl Display for Expr<'_> {
                 write!(f, "{}", literal)
             }
             Expr::Variable { name, .. } => write!(f, "{}", name.lexeme),
-            Expr::Assignment { identifier, value } => {
+            Expr::Assignment {
+                identifier, value, ..
+            } => {
                 write!(f, "{} = {}", identifier.lexeme, value)
             }
             Expr::Logical {
@@ -202,6 +204,7 @@ impl Display for Stmt<'_> {
                 identifier,
                 value,
                 type_info,
+                ..
             } => write!(f, "let {}: {} = {}", identifier.lexeme, type_info, value),
             Stmt::Block(statements) => {
                 write!(f, "do\n")?;
@@ -231,6 +234,7 @@ impl Display for Stmt<'_> {
                 params,
                 body,
                 type_,
+                id: _,
             } => {
                 write!(
                     f,

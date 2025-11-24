@@ -43,14 +43,13 @@ impl TypeChecker<'_> {
                 right,
             } => self.check_binary_expression(operator, left, right)?,
 
-            Expr::Variable { name, scope, index } => {
+            Expr::Variable { name, id } => {
                 let var = self.lookup_variable(name.lexeme);
-                if let Some(var) = var {
-                    let type_info = var.type_.clone();
-                    let var_index = var.index;
-                    let _ = index.insert(var_index);
-                    let scope_depth = self.variable_scope.len();
-                    let _ = scope.insert(scope_depth);
+                if let Some((ctx, resolved)) = var {
+                    let type_info = ctx.type_.clone();
+
+                    self.analysis_info.add_var(*id, resolved);
+
                     type_info
                 } else {
                     return Err(TypeCheckerError::UndefinedVariable {
@@ -66,18 +65,23 @@ impl TypeChecker<'_> {
                 Literal::Boolean(_) => Type::Boolean,
                 Literal::Void => Type::Void,
             },
-            Expr::Assignment { identifier, value } => {
+            Expr::Assignment {
+                identifier,
+                value,
+                id,
+            } => {
                 let value_type = self.infer_expression(value)?;
                 let var_type = self.lookup_variable(identifier.lexeme);
-                if let Some(var) = var_type {
-                    if value_type != var.type_ {
+                if let Some((ctx, resolved)) = var_type {
+                    if value_type != ctx.type_ {
                         return Err(TypeCheckerError::TypeMismatch {
-                            expected: var.type_.clone(),
+                            expected: ctx.type_.clone(),
                             found: value_type,
                             line: identifier.line,
                             message: "Expected the same type but found something else.",
                         });
                     } else {
+                        self.analysis_info.add_var(*id, resolved);
                         value_type
                     }
                 } else {
