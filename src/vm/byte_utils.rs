@@ -16,6 +16,11 @@ pub fn read_bytes(slice: &[u8]) -> usize {
     out
 }
 
+pub fn read_16_bytes(bytes: &[u8]) -> usize {
+    assert_eq!(bytes.len(), 2);
+    bytes[1] as usize | (bytes[0] as usize) << 8
+}
+
 //TODO is this the best way to turn byte into instruction?
 #[inline]
 pub fn byte_to_opcode(byte: u8) -> Opcode {

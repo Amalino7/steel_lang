@@ -141,7 +141,7 @@ impl TypeChecker<'_> {
 
                     for (i, arg) in arguments.iter_mut().enumerate() {
                         let arg_type = self.infer_expression(arg)?;
-                        if arg_type != param_types[i] {
+                        if param_types[i] != Type::Any && arg_type != param_types[i] {
                             return Err(TypeCheckerError::FunctionParameterTypeMismatch {
                                 expected: param_types[i].clone(),
                                 found: arg_type,

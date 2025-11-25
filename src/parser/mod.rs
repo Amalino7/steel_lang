@@ -320,4 +320,19 @@ mod tests {
             "Parser should error on missing right parenthesis"
         );
     }
+
+    #[test]
+    fn test_parser_else_if() {
+        let source = r#"
+        if (a > 0) {
+            println("a is greater than 0");
+        } else if (a < 0) {
+            println("a is less than 0");
+        } else {
+            println("a is equal to 0");
+        }"#;
+        let scanner = Scanner::new(source);
+        let mut parser = Parser::new(scanner);
+        let _ast = parser.parse().expect("Failed to parse.");
+    }
 }

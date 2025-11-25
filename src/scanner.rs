@@ -385,4 +385,68 @@ mod tests {
         );
         assert_eq!(scanner.next_token(), Token::new(TokenType::EOF, 4, "end"));
     }
+
+    #[test]
+    fn test_empty_string() {
+        let source = r#"let a = "";"#;
+        let mut scanner = Scanner::new(source);
+        assert_eq!(scanner.next_token(), Token::new(TokenType::Let, 1, "let"));
+        assert_eq!(
+            scanner.next_token(),
+            Token::new(TokenType::Identifier, 1, "a")
+        );
+        assert_eq!(scanner.next_token(), Token::new(TokenType::Equal, 1, "="));
+        assert_eq!(
+            scanner.next_token(),
+            Token::new(TokenType::String, 1, "\"\"")
+        );
+        assert_eq!(
+            scanner.next_token(),
+            Token::new(TokenType::Semicolon, 1, ";")
+        );
+        assert_eq!(scanner.next_token(), Token::new(TokenType::EOF, 1, "end"));
+    }
+    #[test]
+    fn test_escape_character() {
+        let source = r#"let a = "\"";"#;
+        let mut scanner = Scanner::new(source);
+        assert_eq!(scanner.next_token(), Token::new(TokenType::Let, 1, "let"));
+        assert_eq!(
+            scanner.next_token(),
+            Token::new(TokenType::Identifier, 1, "a")
+        );
+        assert_eq!(scanner.next_token(), Token::new(TokenType::Equal, 1, "="));
+        assert_eq!(
+            scanner.next_token(),
+            Token::new(TokenType::String, 1, r#""\"""#)
+        )
+    }
+    #[test]
+    fn test_underscore_identifier() {
+        let source = "let _ = 10; let __ = 20;";
+        let mut scanner = Scanner::new(source);
+        assert_eq!(scanner.next_token(), Token::new(TokenType::Let, 1, "let"));
+        assert_eq!(
+            scanner.next_token(),
+            Token::new(TokenType::Identifier, 1, "_")
+        );
+        assert_eq!(scanner.next_token(), Token::new(TokenType::Equal, 1, "="));
+        assert_eq!(scanner.next_token(), Token::new(TokenType::Number, 1, "10"));
+        assert_eq!(
+            scanner.next_token(),
+            Token::new(TokenType::Semicolon, 1, ";")
+        );
+
+        assert_eq!(scanner.next_token(), Token::new(TokenType::Let, 1, "let"));
+        assert_eq!(
+            scanner.next_token(),
+            Token::new(TokenType::Identifier, 1, "__")
+        );
+        assert_eq!(scanner.next_token(), Token::new(TokenType::Equal, 1, "="));
+        assert_eq!(scanner.next_token(), Token::new(TokenType::Number, 1, "20"));
+        assert_eq!(
+            scanner.next_token(),
+            Token::new(TokenType::Semicolon, 1, ";")
+        );
+    }
 }

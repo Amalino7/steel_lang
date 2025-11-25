@@ -24,7 +24,17 @@ impl<'a> Compiler<'a> {
     }
 
     pub fn compile(mut self, statements: &[Stmt]) -> Function {
+        // Compile functions first
         for stmt in statements {
+            if let Stmt::Function { .. } = stmt {
+                self.compile_stmt(stmt);
+            }
+        }
+
+        for stmt in statements {
+            if let Stmt::Function { .. } = stmt {
+                continue;
+            }
             self.compile_stmt(stmt);
         }
 
@@ -121,13 +131,8 @@ impl<'a> Compiler<'a> {
                 let mut func_compiler = Compiler::new(self.analysis_info, name.lexeme.to_string());
                 func_compiler.function.arity = params.len();
 
-                for stmt in body {
-                    func_compiler.compile_stmt(stmt);
-                }
-                func_compiler.chunk().write_constant(Value::Nil, 0);
-                func_compiler.chunk().write_op(Opcode::Return as u8, 0);
+                let compiled_fn = func_compiler.compile(body);
 
-                let compiled_fn = func_compiler.function;
                 self.chunk()
                     .write_constant(Value::Function(Rc::new(compiled_fn)), name.line);
 

@@ -1,4 +1,5 @@
-use crate::vm::byte_utils::{byte_to_opcode, read_24_bytes, read_bytes};
+use crate::stdlib::NativeDef;
+use crate::vm::byte_utils::{byte_to_opcode, read_16_bytes, read_24_bytes};
 use crate::vm::bytecode::Opcode;
 use crate::vm::stack::Stack;
 use crate::vm::value::{Function, Value};
@@ -36,6 +37,12 @@ impl VM {
         }
     }
 
+    pub fn set_native_functions(&mut self, natives: Vec<NativeDef>) {
+        for i in 0..natives.len() {
+            self.globals[i] = Value::NativeFunction(natives[i].func);
+        }
+    }
+
     pub fn run(&mut self, main_function: Function) -> Value {
         self.frames.push(CallFrame {
             slot_offset: 0,
@@ -43,8 +50,7 @@ impl VM {
             function: Rc::new(main_function),
         });
 
-        let mut function = self.current_frame().function.clone();
-        let mut chunk = &function.chunk;
+        let mut chunk = &self.frames.last_mut().unwrap().function.chunk;
 
         let mut slot_offset = 0;
 
@@ -60,8 +66,8 @@ impl VM {
             {
                 println!("Stack: {:?}", self.stack);
             }
+            let opcode = byte_to_opcode(chunk.instructions[self.ip]);
             self.ip += 1;
-            let opcode = byte_to_opcode(chunk.instructions[self.ip - 1]);
 
             match opcode {
                 Opcode::Constant => {
@@ -78,11 +84,9 @@ impl VM {
                     }
                     self.stack.truncate(slot_offset - 1);
 
-                    let current_frame = self.current_frame();
-                    function = current_frame.function.clone();
-                    chunk = &function.chunk; // update chunk
+                    let current_frame = self.frames.last_mut().expect("No active frame");
+                    chunk = &current_frame.function.chunk; // update chunk
                     slot_offset = current_frame.slot_offset; // return offset
-
                     self.ip = current_frame.ip; // updated ip
                     self.stack.push(val)
                 }
@@ -145,7 +149,7 @@ impl VM {
                     self.stack.pop();
                 }
                 Opcode::JumpIfFalse => {
-                    let offset = read_bytes(&chunk.instructions[self.ip..self.ip + 2]);
+                    let offset = read_16_bytes(&chunk.instructions[self.ip..self.ip + 2]);
                     self.ip += 2;
                     let cond = self.stack.get_mut();
                     if *cond == Value::Boolean(false) {
@@ -153,13 +157,13 @@ impl VM {
                     }
                 }
                 Opcode::Jump => {
-                    let offset = read_bytes(&chunk.instructions[self.ip..self.ip + 2]);
+                    let offset = read_16_bytes(&chunk.instructions[self.ip..self.ip + 2]);
                     self.ip += 2;
                     self.ip += offset;
                 }
 
                 Opcode::JumpBack => {
-                    let offset = read_bytes(&chunk.instructions[self.ip..self.ip + 2]);
+                    let offset = read_16_bytes(&chunk.instructions[self.ip..self.ip + 2]);
                     self.ip += 2;
                     self.ip -= offset;
                 }
@@ -204,9 +208,20 @@ impl VM {
                             self.current_frame().ip = self.ip;
                             self.ip = 0; // updated ip
                             self.frames.push(frame);
-                            function = self.current_frame().function.clone();
-                            chunk = &function.chunk; // updated chunk
+                            chunk = &self.frames.last_mut().unwrap().function.chunk; // updated chunk
                             slot_offset = new_slot_offset; // update offset
+                        }
+                        Value::NativeFunction(native_fn) => {
+                            let args_start = top - arg_count;
+                            let mut args = Vec::with_capacity(arg_count);
+                            for i in 0..arg_count {
+                                args.push(self.stack.get_at(args_start + i));
+                            }
+                            let result = native_fn(&args);
+
+                            self.stack.truncate(top - arg_count - 1);
+
+                            self.stack.push(result);
                         }
                         val => unreachable!("Only functions should be called found {val}"),
                     }
@@ -215,6 +230,7 @@ impl VM {
         }
     }
 
+    #[inline]
     fn current_frame(&mut self) -> &mut CallFrame {
         self.frames.last_mut().expect("No active frame")
     }
@@ -224,155 +240,157 @@ impl VM {
 mod tests {
     use super::*;
     use crate::compiler::Compiler;
+    use crate::execute_source;
     use crate::parser::Parser;
     use crate::scanner::Scanner;
     use crate::typechecker::TypeChecker;
-    use crate::vm::disassembler::disassemble_chunk;
-    // #[test]
-    // fn test_simple_add() {
-    //     let mut vm = VM::new(0);
-    //     vm.chunk.write_constant(Value::Number(1.0), 1);
-    //     vm.chunk.write_constant(Value::Number(2.0), 2);
-    //     vm.chunk.write_op(Opcode::Add as u8, 3);
-    //     vm.chunk.write_op(Opcode::Return as u8, 4);
-    //     assert_eq!(vm.run(), Value::Number(3.0));
-    // }
-    // #[test]
-    // fn test_complex_arithmetic() {
-    //     let mut vm = VM::new(0);
-    //     vm.chunk.write_constant(Value::Number(6.9), 1);
-    //     vm.chunk.write_constant(Value::Number(4.0), 2);
-    //     vm.chunk.write_constant(Value::Number(3.0), 3);
-    //     vm.chunk.write_constant(Value::Number(2.0), 4);
-    //     vm.chunk.write_constant(Value::Number(1.0), 4);
-    //
-    //     // 6.9 / (4 - 3 * (2 + (-1)))) = 6.9
-    //     vm.chunk.write_op(Opcode::Negate as u8, 5);
-    //     vm.chunk.write_op(Opcode::Add as u8, 5);
-    //     vm.chunk.write_op(Opcode::Multiply as u8, 6);
-    //     vm.chunk.write_op(Opcode::Subtract as u8, 7);
-    //     vm.chunk.write_op(Opcode::Divide as u8, 8);
-    //     vm.chunk.write_op(Opcode::Return as u8, 9);
-    //
-    //     assert_eq!(vm.run(), Value::Number(6.9));
-    // }
-    // #[test]
-    // fn test_constant_long() {
-    //     let mut vm = VM::new(0);
-    //     vm.chunk.write_constant(Value::Number(0.0), 1);
-    //     for i in 1..300 {
-    //         vm.chunk.write_constant(Value::Number(i as f64), 1);
-    //         vm.chunk.write_op(Opcode::Add as u8, 1);
-    //     }
-    //     vm.chunk.write_op(Opcode::Return as u8, 1);
-    //     assert_eq!(vm.run(), Value::Number(44850.0)); // (299 * 300) / 2
-    // }
-    // #[test]
-    // fn test_boolean() {
-    //     let mut vm = VM::new(0);
-    //     vm.chunk.write_constant(Value::Boolean(true), 1);
-    //     vm.chunk.write_op(Opcode::Return as u8, 1);
-    //     assert_eq!(vm.run(), Value::Boolean(true));
-    // }
-    //
-    // #[test]
-    // fn test_expressions() {
-    //     let src = "let a = 7 + 3 * 2 == 1;";
-    //     let scanner = Scanner::new(src);
-    //     let mut parser = Parser::new(scanner);
-    //     let mut typecheker = TypeChecker::new();
-    //     let mut ast = parser.parse().expect("Failed to parse");
-    //     let analysis = typecheker.check(&mut ast).expect("Failed to typecheck");
-    //     let compiler = Compiler::new(analysis);
-    //     let chunk = compiler.compile(&ast);
-    //
-    //     let mut vm = VM::new(analysis.global_count);
-    //     vm.chunk = chunk;
-    //     vm.run();
-    //     assert_eq!(vm.globals[0], Value::Boolean(false));
-    // }
-    //
-    // #[test]
-    // fn test_cmp() {
-    //     let src = "let a = 7 >= 1;";
-    //     let scanner = Scanner::new(src);
-    //     let mut parser = Parser::new(scanner);
-    //     let mut typecheker = TypeChecker::new();
-    //     let mut ast = parser.parse().expect("Failed to parse");
-    //     let analysis = typecheker.check(&mut ast).expect("Failed to typecheck");
-    //     let mut compiler = Compiler::new(analysis);
-    //     let chunk = compiler.compile(&ast);
-    //     let mut vm = VM::new(analysis.global_count);
-    //     vm.chunk = chunk;
-    //     vm.run();
-    //     assert_eq!(vm.globals[0], Value::Boolean(true));
-    // }
-    // #[test]
-    // fn test_complex() {
-    //     let src = "let a = 1;
-    //     while a < 10 {
-    //         a = a + 1;
-    //     }
-    //     ";
-    //
-    //     let scanner = Scanner::new(src);
-    //     let mut parser = Parser::new(scanner);
-    //     let mut typecheker = TypeChecker::new();
-    //     let mut ast = parser.parse().expect("Failed to parse");
-    //     let analysis = typecheker.check(&mut ast).expect("Failed to typecheck");
-    //     let compiler = Compiler::new(analysis);
-    //     let chunk = compiler.compile(&ast);
-    //
-    //     disassemble_chunk(&chunk, "test");
-    //     let mut vm = VM::new(analysis.global_count);
-    //
-    //     vm.chunk = chunk;
-    //     vm.run();
-    //     assert_eq!(vm.globals[0], Value::Number(10.0));
-    // }
-    //
-    // #[test]
-    // fn test_local_variables() {
-    //     let src = "
-    //         let a = 0;
-    //     {
-    //         let a = 1;
-    //         {
-    //             let b = 2;
-    //             {
-    //                 let c = 3;
-    //                 {
-    //                     let d = 4;
-    //                     a + b + c + d;
-    //                 }
-    //                 let e = 5;
-    //             }
-    //         }
-    //         let f = 6;
-    //         {
-    //             let g = 7;
-    //             a + f + g;
-    //         }
-    //     }
-    //     ";
-    //
-    //     let scanner = Scanner::new(src);
-    //     let mut parser = Parser::new(scanner);
-    //     let mut typecheker = TypeChecker::new();
-    //     let mut ast = parser.parse().expect("Failed to parse");
-    //     let analysis = typecheker.check(&mut ast).expect("Failed to typecheck");
-    //     let compiler = Compiler::new(analysis);
-    //     let chunk = compiler.compile(&ast);
-    //
-    //     disassemble_chunk(&chunk, "test");
-    //     let mut vm = VM::new(analysis.global_count);
-    //
-    //     vm.chunk = chunk;
-    //     let val = vm.run();
-    // }
+    use crate::vm::bytecode::Chunk;
+    #[test]
+    fn test_simple_add() {
+        let mut vm = VM::new(0);
+        let mut function = Function::new("Main".to_string(), 0, Chunk::new());
+        function.chunk.write_constant(Value::Number(1.0), 1);
+        function.chunk.write_constant(Value::Number(2.0), 2);
+        function.chunk.write_op(Opcode::Add as u8, 3);
+        function.chunk.write_op(Opcode::Return as u8, 4);
+
+        assert_eq!(vm.run(function), Value::Number(3.0));
+    }
+    #[test]
+    fn test_complex_arithmetic() {
+        let mut vm = VM::new(0);
+
+        let mut function = Function::new("Main".to_string(), 0, Chunk::new());
+        function.chunk.write_constant(Value::Number(6.9), 1);
+        function.chunk.write_constant(Value::Number(4.0), 2);
+        function.chunk.write_constant(Value::Number(3.0), 3);
+        function.chunk.write_constant(Value::Number(2.0), 4);
+        function.chunk.write_constant(Value::Number(1.0), 4);
+
+        // 6.9 / (4 - 3 * (2 + (-1)))) = 6.9
+        function.chunk.write_op(Opcode::Negate as u8, 5);
+        function.chunk.write_op(Opcode::Add as u8, 5);
+        function.chunk.write_op(Opcode::Multiply as u8, 6);
+        function.chunk.write_op(Opcode::Subtract as u8, 7);
+        function.chunk.write_op(Opcode::Divide as u8, 8);
+        function.chunk.write_op(Opcode::Return as u8, 9);
+
+        assert_eq!(vm.run(function), Value::Number(6.9));
+    }
+    #[test]
+    fn test_constant_long() {
+        let mut vm = VM::new(0);
+        let mut function = Function::new("Main".to_string(), 0, Chunk::new());
+        function.chunk.write_constant(Value::Number(0.0), 1);
+        for i in 1..300 {
+            function.chunk.write_constant(Value::Number(i as f64), 1);
+            function.chunk.write_op(Opcode::Add as u8, 1);
+        }
+        function.chunk.write_op(Opcode::Return as u8, 1);
+        assert_eq!(vm.run(function), Value::Number(44850.0)); // (299 * 300) / 2
+    }
+    #[test]
+    fn test_boolean() {
+        let mut vm = VM::new(0);
+        let mut function = Function::new("Main".to_string(), 0, Chunk::new());
+        function.chunk.write_constant(Value::Boolean(true), 1);
+        function.chunk.write_op(Opcode::Return as u8, 1);
+        assert_eq!(vm.run(function), Value::Boolean(true));
+    }
+
+    #[test]
+    fn test_expressions() {
+        let src = "let a = 7 + 3 * 2 == 1;";
+        let scanner = Scanner::new(src);
+        let mut parser = Parser::new(scanner);
+        let mut typecheker = TypeChecker::new();
+        let mut ast = parser.parse().expect("Failed to parse");
+        let analysis = typecheker.check(&mut ast).expect("Failed to typecheck");
+        let compiler = Compiler::new(analysis, "main".to_string());
+        let function = compiler.compile(&ast);
+
+        let mut vm = VM::new(analysis.global_count);
+        vm.run(function);
+        assert_eq!(vm.globals[0], Value::Boolean(false));
+    }
+
+    #[test]
+    fn test_cmp() {
+        let src = "let a = 7 >= 1;";
+        let scanner = Scanner::new(src);
+        let mut parser = Parser::new(scanner);
+        let mut typecheker = TypeChecker::new();
+        let mut ast = parser.parse().expect("Failed to parse");
+        let analysis = typecheker.check(&mut ast).expect("Failed to typecheck");
+        let mut compiler = Compiler::new(analysis, "main".to_string());
+        let function = compiler.compile(&ast);
+
+        let mut vm = VM::new(analysis.global_count);
+        vm.run(function);
+        assert_eq!(vm.globals[0], Value::Boolean(true));
+    }
+    #[test]
+    fn test_while_loop() {
+        let src = "let a = 1;
+        while a < 10 {
+            a = a + 1;
+        }
+        ";
+
+        let scanner = Scanner::new(src);
+        let mut parser = Parser::new(scanner);
+        let mut typecheker = TypeChecker::new();
+        let mut ast = parser.parse().expect("Failed to parse");
+        let analysis = typecheker.check(&mut ast).expect("Failed to typecheck");
+        let compiler = Compiler::new(analysis, "main".to_string());
+        let function = compiler.compile(&ast);
+
+        let mut vm = VM::new(analysis.global_count);
+
+        vm.run(function);
+        assert_eq!(vm.globals[0], Value::Number(10.0));
+    }
 
     #[test]
     fn test_local_variables() {
+        let src = "
+            let a = 0;
+        {
+            let a = 1;
+            {
+                let b = 2;
+                {
+                    let c = 3;
+                    {
+                        let d = 4;
+                        a + b + c + d;
+                    }
+                    let e = 5;
+                }
+            }
+            let f = 6;
+            {
+                let g = 7;
+                a + f + g;
+            }
+        }
+        ";
+
+        let scanner = Scanner::new(src);
+        let mut parser = Parser::new(scanner);
+        let mut typecheker = TypeChecker::new();
+        let mut ast = parser.parse().expect("Failed to parse");
+        let analysis = typecheker.check(&mut ast).expect("Failed to typecheck");
+        let compiler = Compiler::new(analysis, "main".to_string());
+        let function = compiler.compile(&ast);
+
+        let mut vm = VM::new(analysis.global_count);
+
+        vm.run(function);
+    }
+
+    #[test]
+    fn test_functions() {
         let src = "
             let a = 0;
             func add2(): number{
@@ -406,7 +424,6 @@ mod tests {
         let compiler = Compiler::new(analysis, "main".to_string());
         let func = compiler.compile(&ast);
 
-        disassemble_chunk(&func.chunk, "test");
         let mut vm = VM::new(analysis.global_count);
         vm.run(func);
     }
@@ -431,9 +448,62 @@ mod tests {
         let analysis = typecheker.check(&mut ast).expect("Failed to typecheck");
         let compiler = Compiler::new(analysis, "main".to_string());
         let func = compiler.compile(&ast);
-
-        disassemble_chunk(&func.chunk, "test");
         let mut vm = VM::new(analysis.global_count);
         vm.run(func);
+    }
+
+    #[test]
+    fn test_short_circuit() {
+        let src = "
+            let a = 0;
+            if a != 0 and (10 / a > 1) {
+                // ...
+            }
+        ";
+
+        execute_source(src, false, "run", true);
+    }
+    #[test]
+    fn torture_test() {
+        let src = r#"let g_counter = 0;
+        // 2. Function with shadowing and recursion
+        func complex(n: number): number {
+            let g_counter = "string shadow"; // Shadow global with different type
+
+            if n <= 0 {
+                return 0;
+            }
+
+            // 3. Logical operator precedence
+            if n > 5 and n < 10 or n == 20 {
+                return n;
+            }
+
+            return 1 + complex(n - 1);
+        }
+
+        // 4. Block scoping torture
+        {
+            let x = 10;
+            {
+                let x = true; // Shadow
+                {
+                    let x = "deep"; // Shadow again
+                }
+                // x is boolean here
+                if x {
+                    // do nothing
+                }
+            }
+            // x is number here
+            x = x + 1;
+        }
+
+        // 5. String concatenation edge cases
+        let empty = "";
+        let combined = empty + "start" + empty + "end";
+        print(combined);
+         "#;
+        execute_source(src, false, "run", true);
     }
 }

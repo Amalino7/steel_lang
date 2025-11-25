@@ -1,5 +1,6 @@
 use crate::compiler::analysis::{AnalysisInfo, ResolvedVar};
 use crate::parser::ast::{Stmt, Type};
+use crate::stdlib::NativeDef;
 use crate::typechecker::error::TypeCheckerError;
 use std::collections::HashMap;
 
@@ -43,6 +44,7 @@ pub struct TypeChecker<'src> {
     current_function: FunctionContext,
     variable_scope: Vec<Scope<'src>>,
     analysis_info: AnalysisInfo,
+    natives: &'src [NativeDef],
 }
 
 impl<'src> TypeChecker<'src> {
@@ -51,16 +53,27 @@ impl<'src> TypeChecker<'src> {
             current_function: FunctionContext::None,
             variable_scope: vec![],
             analysis_info: AnalysisInfo::new(),
+            natives: &[],
         }
     }
+    pub fn new_with_natives(natives: &'src [NativeDef]) -> Self {
+        TypeChecker {
+            current_function: FunctionContext::None,
+            variable_scope: vec![],
+            analysis_info: AnalysisInfo::new(),
+            natives,
+        }
+    }
+
     pub fn check(
         &mut self,
         ast: &mut [Stmt<'src>],
     ) -> Result<&AnalysisInfo, Vec<TypeCheckerError>> {
         let mut errors = vec![];
         self.begin_scope();
-        self.declare_global_functions(ast, &mut errors); // First pass declare all global functions.
 
+        self.register_globals(self.natives);
+        self.declare_global_functions(ast, &mut errors); // First pass declare all global functions.
         for stmt in ast.iter_mut() {
             if let Err(e) = self.check_stmt(stmt) {
                 errors.push(e);
@@ -103,6 +116,12 @@ impl<'src> TypeChecker<'src> {
     }
     fn end_scope(&mut self) {
         self.variable_scope.pop();
+    }
+    fn register_globals(&mut self, natives: &[NativeDef]) {
+        for native in natives.iter() {
+            self.declare_variable(native.name, native.type_.clone())
+                .expect("Failed to register global");
+        }
     }
 
     fn declare_variable(

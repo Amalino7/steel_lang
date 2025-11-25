@@ -27,9 +27,12 @@ pub enum Value {
     Number(f64),
     String(Rc<String>),
     Function(Rc<Function>),
+    NativeFunction(NativeFn),
     Boolean(bool),
     Nil,
 }
+
+pub type NativeFn = fn(&[Value]) -> Value;
 
 impl PartialOrd for Value {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
@@ -48,6 +51,7 @@ impl Display for Value {
             Value::Boolean(bool) => write!(f, "{}", bool),
             Value::Nil => write!(f, "Nil"),
             Value::Function(func) => write!(f, "<fn {}>", func.name.as_str()),
+            Value::NativeFunction(_) => write!(f, "<native fn>"),
         }
     }
 }
