@@ -49,6 +49,8 @@ pub fn execute_source(source: &str, debug: bool, mode: &str, force: bool) {
         return;
     }
 
+    let analysis = analysis.unwrap();
+
     if mode == "check" {
         println!("Type checking has passed.");
         if debug {
@@ -56,13 +58,11 @@ pub fn execute_source(source: &str, debug: bool, mode: &str, force: bool) {
             println!("{:#?}", ast);
             println!("=============");
             println!("=== Type analysis ===");
-            println!("Type analysis: {:#?}", analysis.unwrap());
+            println!("Type analysis: {:#?}", analysis);
             println!("====================");
         }
         return;
     }
-
-    let analysis = analysis.unwrap();
 
     let compiler = Compiler::new(analysis, "main".to_string());
     let func = compiler.compile(&ast);

@@ -159,7 +159,11 @@ impl<'src> Parser<'src> {
         let then_branch = self.block()?;
         let mut else_branch = None;
         if match_token_type!(self, TokT::Else) {
-            else_branch = Some(self.block()?);
+            if match_token_type!(self, TokT::If) {
+                else_branch = Some(self.if_statement()?);
+            } else {
+                else_branch = Some(self.block()?);
+            }
         }
         Ok(Stmt::If {
             condition,

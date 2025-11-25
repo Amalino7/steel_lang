@@ -1,5 +1,6 @@
 #[cfg(test)]
 mod tests {
+    use crate::execute_source;
     use crate::parser::Parser;
     use crate::scanner::Scanner;
     use crate::typechecker::error::TypeCheckerError;
@@ -361,6 +362,59 @@ mod tests {
         assert!(matches!(
             errors[0],
             TypeCheckerError::MissingReturnStatement { .. }
+        ))
+    }
+
+    #[test]
+    fn test_variable_shadowing_types() {
+        let source = r#"
+        let a: number = 10;
+        {
+            let a: string = "shadow";
+            a = a + "ed";
+        }
+        // 'a' should still be a number here
+        let b = a + 5;
+        "#;
+
+        execute_source(source, false, "check", true);
+    }
+
+    #[test]
+    fn test_assign_void() {
+        let source = r#"
+                func noReturn(): void {
+                    return;
+                }
+                // Edge Case: Type of x should work
+                let x = noReturn();
+            "#;
+        execute_source(source, false, "check", true);
+    }
+
+    #[test]
+    fn test_unreachable_code_after_return() {
+        let source = r#"
+            func test(): number {
+                return 10;
+                let a = 5; // This should trigger a warning or error
+                return a;
+            }
+            while false {
+            }
+        "#;
+
+        let scanner = Scanner::new(source);
+        let mut parser = Parser::new(scanner);
+        let mut ast = parser.parse().expect("Parser failed.");
+        let mut checker = TypeChecker::new();
+        let errors = checker
+            .check(ast.as_mut_slice())
+            .expect_err("Should have failed.");
+        assert_eq!(errors.len(), 1, "Expected 1 error, got {}", errors.len());
+        assert!(matches!(
+            errors[0],
+            TypeCheckerError::UnreachableCode { .. }
         ))
     }
 }
