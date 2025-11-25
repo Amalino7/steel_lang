@@ -44,6 +44,12 @@ pub enum TokenType {
     Less,
     LessEqual,
 
+    // Assignment arithmetic operators.
+    PlusEqual,
+    MinusEqual,
+    StarEqual,
+    SlashEqual,
+
     // Literals.
     Identifier,
     String,
@@ -108,6 +114,10 @@ impl Display for TokenType {
             TokenType::While => f.write_str("while"),
             TokenType::Error => f.write_str("error"),
             TokenType::UnexpectedSymbolError => f.write_str("unexpected symbol"),
+            TokenType::PlusEqual => f.write_str("+="),
+            TokenType::MinusEqual => f.write_str("-="),
+            TokenType::StarEqual => f.write_str("*="),
+            TokenType::SlashEqual => f.write_str("/="),
             TokenType::EOF => f.write_str("nothing"),
         }
     }

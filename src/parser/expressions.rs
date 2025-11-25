@@ -3,6 +3,7 @@ use crate::parser::check_token_type;
 use crate::parser::error::ParserError;
 use crate::parser::TokT;
 use crate::parser::{match_token_type, Parser};
+use crate::token::Token;
 
 impl<'src> Parser<'src> {
     pub(crate) fn expression(&mut self) -> Result<Expr<'src>, ParserError<'src>> {
@@ -48,6 +49,53 @@ impl<'src> Parser<'src> {
                     value: Box::new(value),
                     id: self.get_node_id(),
                 });
+            }
+            return Err(self.error_current("Invalid assignment target."));
+        } else if match_token_type!(
+            self,
+            TokT::PlusEqual,
+            TokT::MinusEqual,
+            TokT::StarEqual,
+            TokT::SlashEqual
+        ) {
+            if let Expr::Variable { name, .. } = expr {
+                let op = self.previous_token.clone();
+                let left = Expr::Variable {
+                    name: name.clone(),
+                    id: self.get_node_id(),
+                };
+                let right = self.assignment()?;
+
+                let binary = match op.token_type {
+                    TokT::PlusEqual => Expr::Binary {
+                        left: Box::new(left),
+                        operator: Token::new(TokT::Plus, op.line, op.lexeme),
+                        right: Box::new(right),
+                    },
+                    TokT::MinusEqual => Expr::Binary {
+                        left: Box::new(left),
+                        operator: Token::new(TokT::Minus, op.line, op.lexeme),
+                        right: Box::new(right),
+                    },
+                    TokT::StarEqual => Expr::Binary {
+                        left: Box::new(left),
+                        operator: Token::new(TokT::Star, op.line, op.lexeme),
+                        right: Box::new(right),
+                    },
+                    TokT::SlashEqual => Expr::Binary {
+                        left: Box::new(left),
+                        operator: Token::new(TokT::Slash, op.line, op.lexeme),
+                        right: Box::new(right),
+                    },
+                    _ => unreachable!(),
+                };
+
+                let target = Expr::Assignment {
+                    identifier: name,
+                    value: Box::new(binary),
+                    id: self.get_node_id(),
+                };
+                return Ok(target);
             }
             return Err(self.error_current("Invalid assignment target."));
         }

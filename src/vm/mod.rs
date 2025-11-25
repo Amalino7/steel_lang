@@ -223,7 +223,7 @@ impl VM {
 
                             self.stack.push(result);
                         }
-                        val => unreachable!("Only functions should be called found {val}"),
+                        val => unreachable!("Only functions should be called found {}", val),
                     }
                 }
             }
@@ -439,17 +439,11 @@ mod tests {
                 return fib(n - 1) + fib(n-2);
             }
             a = fib(20);
+
+            assert(a, 6765);
         ";
 
-        let scanner = Scanner::new(src);
-        let mut parser = Parser::new(scanner);
-        let mut typecheker = TypeChecker::new();
-        let mut ast = parser.parse().expect("Failed to parse");
-        let analysis = typecheker.check(&mut ast).expect("Failed to typecheck");
-        let compiler = Compiler::new(analysis, "main".to_string());
-        let func = compiler.compile(&ast);
-        let mut vm = VM::new(analysis.global_count);
-        vm.run(func);
+        execute_source(src, false, "run", true);
     }
 
     #[test]
@@ -504,6 +498,27 @@ mod tests {
         let combined = empty + "start" + empty + "end";
         print(combined);
          "#;
+        execute_source(src, false, "run", true);
+    }
+
+    #[test]
+    fn test_assignment_operators() {
+        let src = r#"
+            let a = 2;
+            a = a += 1;
+            assert(a, 3);
+
+            a -= 2;
+
+            assert(a, 1);
+            a *= 3;
+            a /= 2;
+
+            assert(a, 1.5);
+
+            a *= a -= a += 2;
+            assert(a, -3);
+        "#;
         execute_source(src, false, "run", true);
     }
 }

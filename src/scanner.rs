@@ -41,11 +41,18 @@ impl<'src> Scanner<'src> {
             ',' => self.make_token(TokenType::Comma),
             ':' => self.make_token(TokenType::Colon),
             ';' => self.make_token(TokenType::Semicolon),
+            '.' => self.make_token(TokenType::Dot),
+
+            '+' if self.matches('=') => self.make_token(TokenType::PlusEqual),
             '+' => self.make_token(TokenType::Plus),
+
+            '*' if self.matches('=') => self.make_token(TokenType::StarEqual),
             '*' => self.make_token(TokenType::Star),
 
+            '/' if self.matches('=') => self.make_token(TokenType::SlashEqual),
             '/' => self.make_token(TokenType::Slash),
-            '.' => self.make_token(TokenType::Dot),
+
+            '-' if self.matches('=') => self.make_token(TokenType::MinusEqual),
             '-' => self.make_token(TokenType::Minus),
 
             '!' if self.matches('=') => self.make_token(TokenType::BangEqual),

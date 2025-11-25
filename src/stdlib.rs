@@ -24,6 +24,19 @@ pub fn get_natives() -> Vec<NativeDef> {
             },
         },
         NativeDef {
+            name: "assert",
+            type_: Type::Function {
+                param_types: vec![Type::Any, Type::Any],
+                return_type: Box::new(Type::Void),
+            },
+            func: |args| {
+                if args[0] != args[1] {
+                    panic!("Assertion failed: {} != {}", args[0], args[1]);
+                }
+                Value::Nil
+            },
+        },
+        NativeDef {
             name: "clock",
             type_: Type::Function {
                 param_types: vec![],
