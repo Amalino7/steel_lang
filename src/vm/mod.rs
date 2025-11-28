@@ -584,7 +584,7 @@ mod tests {
 
     #[test]
     fn test_gc() {
-        let stc = r#"
+        let src = r#"
             let a = 0;
             let str = "";
             while a < 100 {
@@ -593,6 +593,28 @@ mod tests {
             }
             print(str);
         "#;
-        execute_source(stc, false, "run", true);
+        execute_source(src, false, "run", true);
+    }
+
+    #[test]
+    fn test_higher_order_functions() {
+        let src = r#"
+        func foo(a: number, b: func():string): func(number): number {
+            print(b());
+            func bar(c: number): number {
+                return 10 + c;
+            }
+            return bar;
+        }
+        func str(): string { return "hello";}
+
+        let res = foo(10, str);
+        let sum = res(5) + 10;
+        print(sum);
+        assert(sum, 25);
+        assert(res(10), 20);
+        "#;
+
+        execute_source(src, false, "run", true);
     }
 }

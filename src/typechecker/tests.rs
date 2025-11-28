@@ -417,4 +417,28 @@ mod tests {
             TypeCheckerError::UnreachableCode { .. }
         ))
     }
+
+    #[test]
+    fn test_tc_function_complex_types() {
+        let source = r#"
+        func foo(a: number, b: func():string): func(number): number {
+            func bar(c: number): number {
+                return a + c;
+            }
+            return bar;
+        }
+        func str(): string { return "hello";}
+
+        let res = foo(10, str);
+        let sum = res(5) + 10;
+
+        "#;
+        let scanner = Scanner::new(source);
+        let mut parser = Parser::new(scanner);
+        let mut ast = parser.parse().expect("Parser failed.");
+        let mut checker = TypeChecker::new();
+        let _ = checker
+            .check(ast.as_mut_slice())
+            .expect("Should have passed.");
+    }
 }
