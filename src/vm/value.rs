@@ -1,8 +1,8 @@
 use crate::vm::bytecode::Chunk;
+use crate::vm::gc::Gc;
 use std::cmp::Ordering;
 use std::fmt::{Display, Formatter};
 use std::ops::{Add, Div, Mul, Neg, Not, Sub};
-use std::rc::Rc;
 
 #[derive(Debug)]
 pub struct Function {
@@ -25,8 +25,8 @@ impl PartialEq for Function {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
     Number(f64),
-    String(Rc<String>),
-    Function(Rc<Function>),
+    String(Gc<String>),
+    Function(Gc<Function>),
     NativeFunction(NativeFn),
     Boolean(bool),
     Nil,
@@ -47,7 +47,7 @@ impl Display for Value {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match &self {
             Value::Number(num) => write!(f, "{}", num),
-            Value::String(str) => write!(f, "{}", str),
+            Value::String(str) => write!(f, "{}", str.as_str()),
             Value::Boolean(bool) => write!(f, "{}", bool),
             Value::Nil => write!(f, "Nil"),
             Value::Function(func) => write!(f, "<fn {}>", func.name.as_str()),
@@ -146,7 +146,6 @@ impl Add for Value {
     fn add(self, rhs: Self) -> Self::Output {
         match (self, rhs) {
             (Value::Number(l), Value::Number(r)) => Value::Number(l + r),
-            (Value::String(l), Value::String(r)) => Value::String(Rc::new(format!("{}{}", l, r))),
             (l, r) => {
                 unreachable!(
                     "Invalid type for addition!\

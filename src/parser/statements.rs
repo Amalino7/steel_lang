@@ -119,6 +119,26 @@ impl<'src> Parser<'src> {
             })
         }
     }
+
+    // fn type_block(&mut self) -> Result<Type, ParserError<'src>> {
+    //     match self.current_token.token_type {
+    //         TokenType::Func => {}
+    //         TokenType::Identifier => {
+    //             self.consume(
+    //                 TokT::Identifier,
+    //                 "Expected the name of the return type of the function.",
+    //             )?;
+    //
+    //             if let Some(t) = Type::from_identifier(self.previous_token.clone()) {
+    //                 Ok(t)
+    //             } else {
+    //                 return Err(self.error_previous("Expected valid type identifier"));
+    //             }
+    //         }
+    //         _ => Err(self.error_current("Expected the name of the return type of the function.")),
+    //     }
+    // }
+
     fn statement(&mut self) -> Result<Stmt<'src>, ParserError<'src>> {
         if check_token_type!(self, TokT::LeftBrace) {
             self.block()

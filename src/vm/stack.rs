@@ -3,7 +3,7 @@ use std::mem::replace;
 
 #[derive(Debug)]
 pub struct Stack<const SIZE: usize> {
-    buffer: [Value; SIZE],
+    pub buffer: [Value; SIZE],
     pub top: usize,
 }
 

@@ -109,7 +109,7 @@ impl<'src> TypeChecker<'src> {
                 id,
             } => {
                 // global functions are already declared
-                if self.current_function != FunctionContext::None {
+                if self.variable_scope.len() != 1 {
                     self.declare_variable(name.lexeme, type_.clone())?;
                 }
 
@@ -117,12 +117,13 @@ impl<'src> TypeChecker<'src> {
                 if let Type::Function {
                     param_types,
                     return_type,
-                } = type_
+                } = type_.clone()
                 {
                     self.current_function = FunctionContext::Function(*return_type.clone());
 
                     self.begin_function_scope();
 
+                    self.declare_variable(name.lexeme, type_.clone())?;
                     // Declare parameters.
                     for (i, param) in params.iter().enumerate() {
                         self.declare_variable(param.lexeme, param_types[i].clone())?;

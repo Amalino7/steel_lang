@@ -52,6 +52,7 @@ pub fn get_natives() -> Vec<NativeDef> {
     ]
 }
 
+#[allow(dead_code)]
 pub fn debug_size<T>() {
     println!(
         "Size of {}: {} bytes, alignment: {} bytes",

@@ -1,43 +1,46 @@
 use crate::stdlib::NativeDef;
 use crate::vm::byte_utils::{byte_to_opcode, read_16_bytes, read_24_bytes};
 use crate::vm::bytecode::Opcode;
+use crate::vm::gc::{GarbageCollector, Gc};
 use crate::vm::stack::Stack;
 use crate::vm::value::{Function, Value};
 use std::process::exit;
-use std::rc::Rc;
 
 mod byte_utils;
 pub mod bytecode;
 pub mod disassembler;
+pub mod gc;
 mod stack;
 pub mod value;
 
 struct CallFrame {
     slot_offset: usize,
     ip: usize,
-    function: Rc<Function>,
+    function: Gc<Function>,
 }
 
 const STACK_MAX: usize = 256 * 64;
 
 pub struct VM {
     frames: Vec<CallFrame>,
+    gc: GarbageCollector,
     stack: Stack<STACK_MAX>,
     globals: Vec<Value>,
-    ip: usize,
 }
 
 impl VM {
-    pub fn new(global_count: usize) -> Self {
+    pub fn new(global_count: usize, garbage_collector: GarbageCollector) -> Self {
         VM {
             frames: Vec::with_capacity(64),
+            gc: garbage_collector,
             stack: Stack::<STACK_MAX>::new(),
             globals: vec![Value::Nil; global_count],
-            ip: 0,
         }
     }
 
     pub fn set_native_functions(&mut self, natives: Vec<NativeDef>) {
+        self.globals
+            .resize(natives.len() + self.globals.len(), Value::Nil);
         for i in 0..natives.len() {
             self.globals[i] = Value::NativeFunction(natives[i].func);
         }
@@ -47,12 +50,11 @@ impl VM {
         self.frames.push(CallFrame {
             slot_offset: 0,
             ip: 0,
-            function: Rc::new(main_function),
+            function: self.gc.alloc(main_function),
         });
 
-        let mut chunk = &self.frames.last_mut().unwrap().function.chunk;
-
-        let mut slot_offset = 0;
+        let mut current_frame = self.frames.pop().expect("No active frame");
+        let mut chunk = &current_frame.function.chunk;
 
         loop {
             #[cfg(feature = "debug_trace_execution")]
@@ -66,33 +68,31 @@ impl VM {
             {
                 println!("Stack: {:?}", self.stack);
             }
-            let opcode = byte_to_opcode(chunk.instructions[self.ip]);
-            self.ip += 1;
+            let opcode = byte_to_opcode(chunk.instructions[current_frame.ip]);
+            current_frame.ip += 1;
 
             match opcode {
                 Opcode::Constant => {
-                    let index = chunk.instructions[self.ip] as usize;
-                    self.ip += 1;
+                    let index = chunk.instructions[current_frame.ip] as usize;
+                    current_frame.ip += 1;
                     let val = chunk.constants[index].clone();
                     self.stack.push(val);
                 }
                 Opcode::Return => {
                     let val = self.stack.pop();
-                    let _frame = self.frames.pop().expect("Stack underflow");
                     if self.frames.is_empty() {
                         return val;
                     }
-                    self.stack.truncate(slot_offset - 1);
-
-                    let current_frame = self.frames.last_mut().expect("No active frame");
+                    self.stack.truncate(current_frame.slot_offset);
+                    let _frame = self.frames.pop().expect("Stack underflow");
+                    current_frame = _frame;
                     chunk = &current_frame.function.chunk; // update chunk
-                    slot_offset = current_frame.slot_offset; // return offset
-                    self.ip = current_frame.ip; // updated ip
                     self.stack.push(val)
                 }
                 Opcode::ConstantLong => {
-                    let index = read_24_bytes(&chunk.instructions[self.ip..self.ip + 3]);
-                    self.ip += 3;
+                    let index =
+                        read_24_bytes(&chunk.instructions[current_frame.ip..current_frame.ip + 3]);
+                    current_frame.ip += 3;
                     let val = chunk.constants[index].clone();
                     self.stack.push(val);
                 }
@@ -114,6 +114,18 @@ impl VM {
                     let a = self.stack.pop();
                     let res = a + b;
                     self.stack.push(res);
+                }
+                Opcode::Concat => {
+                    let b = self.stack.pop();
+                    let a = self.stack.pop();
+                    match (a, b) {
+                        (Value::String(a), Value::String(b)) => {
+                            let str = format!("{}{}", a.as_str(), b.as_str());
+                            let val = self.alloc_string(str, &current_frame);
+                            self.stack.push(val);
+                        }
+                        _ => unreachable!("Can only concatenate strings"),
+                    }
                 }
                 Opcode::Divide => {
                     let b = self.stack.pop();
@@ -149,67 +161,68 @@ impl VM {
                     self.stack.pop();
                 }
                 Opcode::JumpIfFalse => {
-                    let offset = read_16_bytes(&chunk.instructions[self.ip..self.ip + 2]);
-                    self.ip += 2;
+                    let offset =
+                        read_16_bytes(&chunk.instructions[current_frame.ip..current_frame.ip + 2]);
+                    current_frame.ip += 2;
                     let cond = self.stack.get_mut();
                     if *cond == Value::Boolean(false) {
-                        self.ip += offset;
+                        current_frame.ip += offset;
                     }
                 }
                 Opcode::Jump => {
-                    let offset = read_16_bytes(&chunk.instructions[self.ip..self.ip + 2]);
-                    self.ip += 2;
-                    self.ip += offset;
+                    let offset =
+                        read_16_bytes(&chunk.instructions[current_frame.ip..current_frame.ip + 2]);
+                    current_frame.ip += 2;
+                    current_frame.ip += offset;
                 }
 
                 Opcode::JumpBack => {
-                    let offset = read_16_bytes(&chunk.instructions[self.ip..self.ip + 2]);
-                    self.ip += 2;
-                    self.ip -= offset;
+                    let offset =
+                        read_16_bytes(&chunk.instructions[current_frame.ip..current_frame.ip + 2]);
+                    current_frame.ip += 2;
+                    current_frame.ip -= offset;
                 }
 
                 Opcode::SetLocal => {
-                    let index = chunk.instructions[self.ip] as usize;
-                    self.ip += 1;
+                    let index = chunk.instructions[current_frame.ip] as usize;
+                    current_frame.ip += 1;
 
                     let val = self.stack.get_mut().clone();
-                    self.stack.set_at(slot_offset + index, val);
+                    self.stack.set_at(current_frame.slot_offset + index, val);
                 }
                 Opcode::GetLocal => {
-                    let index = chunk.instructions[self.ip] as usize;
-                    self.ip += 1;
-                    let val = self.stack.get_at(slot_offset + index);
+                    let index = chunk.instructions[current_frame.ip] as usize;
+                    current_frame.ip += 1;
+                    let val = self.stack.get_at(current_frame.slot_offset + index);
                     self.stack.push(val);
                 }
                 Opcode::SetGlobal => {
-                    let index = chunk.instructions[self.ip] as usize;
-                    self.ip += 1;
+                    let index = chunk.instructions[current_frame.ip] as usize;
+                    current_frame.ip += 1;
                     self.globals[index] = self.stack.get_mut().clone();
                 }
                 Opcode::GetGlobal => {
-                    let val = self.globals[chunk.instructions[self.ip] as usize].clone();
-                    self.ip += 1;
+                    let val = self.globals[chunk.instructions[current_frame.ip] as usize].clone();
+                    current_frame.ip += 1;
                     self.stack.push(val);
                 }
                 Opcode::Call => {
-                    let arg_count = chunk.instructions[self.ip] as usize;
-                    self.ip += 1;
+                    let arg_count = chunk.instructions[current_frame.ip] as usize;
+                    current_frame.ip += 1;
 
                     let top = self.stack.top;
                     let func = self.stack.get_at(top - arg_count - 1);
                     match func {
                         Value::Function(func) => {
-                            let new_slot_offset = top - arg_count;
+                            let new_slot_offset = top - arg_count - 1;
                             let frame = CallFrame {
                                 function: func,
                                 ip: 0,
                                 slot_offset: new_slot_offset,
                             };
-                            self.current_frame().ip = self.ip;
-                            self.ip = 0; // updated ip
-                            self.frames.push(frame);
-                            chunk = &self.frames.last_mut().unwrap().function.chunk; // updated chunk
-                            slot_offset = new_slot_offset; // update offset
+                            self.frames.push(current_frame);
+                            current_frame = frame;
+                            chunk = &current_frame.function.chunk; // updated chunk
                         }
                         Value::NativeFunction(native_fn) => {
                             let args_start = top - arg_count;
@@ -230,9 +243,23 @@ impl VM {
         }
     }
 
-    #[inline]
-    fn current_frame(&mut self) -> &mut CallFrame {
-        self.frames.last_mut().expect("No active frame")
+    fn alloc_string(&mut self, s: String, current_frame: &CallFrame) -> Value {
+        if self.gc.should_collect() || true {
+            for global in &self.globals {
+                self.gc.mark_value(global);
+            }
+            for i in 0..self.stack.top {
+                self.gc.mark_value(&self.stack.buffer[i]);
+            }
+
+            self.gc.mark(current_frame.function);
+            for frame in &self.frames {
+                self.gc.mark(frame.function);
+            }
+            self.gc.collect();
+        }
+        let str_ref = self.gc.alloc(s);
+        Value::String(str_ref)
     }
 }
 
@@ -247,7 +274,7 @@ mod tests {
     use crate::vm::bytecode::Chunk;
     #[test]
     fn test_simple_add() {
-        let mut vm = VM::new(0);
+        let mut vm = VM::new(0, GarbageCollector::new());
         let mut function = Function::new("Main".to_string(), 0, Chunk::new());
         function.chunk.write_constant(Value::Number(1.0), 1);
         function.chunk.write_constant(Value::Number(2.0), 2);
@@ -258,7 +285,7 @@ mod tests {
     }
     #[test]
     fn test_complex_arithmetic() {
-        let mut vm = VM::new(0);
+        let mut vm = VM::new(0, GarbageCollector::new());
 
         let mut function = Function::new("Main".to_string(), 0, Chunk::new());
         function.chunk.write_constant(Value::Number(6.9), 1);
@@ -279,7 +306,7 @@ mod tests {
     }
     #[test]
     fn test_constant_long() {
-        let mut vm = VM::new(0);
+        let mut vm = VM::new(0, GarbageCollector::new());
         let mut function = Function::new("Main".to_string(), 0, Chunk::new());
         function.chunk.write_constant(Value::Number(0.0), 1);
         for i in 1..300 {
@@ -291,7 +318,7 @@ mod tests {
     }
     #[test]
     fn test_boolean() {
-        let mut vm = VM::new(0);
+        let mut vm = VM::new(0, GarbageCollector::new());
         let mut function = Function::new("Main".to_string(), 0, Chunk::new());
         function.chunk.write_constant(Value::Boolean(true), 1);
         function.chunk.write_op(Opcode::Return as u8, 1);
@@ -306,10 +333,12 @@ mod tests {
         let mut typecheker = TypeChecker::new();
         let mut ast = parser.parse().expect("Failed to parse");
         let analysis = typecheker.check(&mut ast).expect("Failed to typecheck");
-        let compiler = Compiler::new(analysis, "main".to_string());
+
+        let mut gc = GarbageCollector::new();
+        let compiler = Compiler::new(analysis, "main".to_string(), &mut gc);
         let function = compiler.compile(&ast);
 
-        let mut vm = VM::new(analysis.global_count);
+        let mut vm = VM::new(analysis.global_count, gc);
         vm.run(function);
         assert_eq!(vm.globals[0], Value::Boolean(false));
     }
@@ -322,10 +351,12 @@ mod tests {
         let mut typecheker = TypeChecker::new();
         let mut ast = parser.parse().expect("Failed to parse");
         let analysis = typecheker.check(&mut ast).expect("Failed to typecheck");
-        let mut compiler = Compiler::new(analysis, "main".to_string());
+
+        let mut gc = GarbageCollector::new();
+        let compiler = Compiler::new(analysis, "main".to_string(), &mut gc);
         let function = compiler.compile(&ast);
 
-        let mut vm = VM::new(analysis.global_count);
+        let mut vm = VM::new(analysis.global_count, gc);
         vm.run(function);
         assert_eq!(vm.globals[0], Value::Boolean(true));
     }
@@ -342,10 +373,12 @@ mod tests {
         let mut typecheker = TypeChecker::new();
         let mut ast = parser.parse().expect("Failed to parse");
         let analysis = typecheker.check(&mut ast).expect("Failed to typecheck");
-        let compiler = Compiler::new(analysis, "main".to_string());
+
+        let mut gc = GarbageCollector::new();
+        let compiler = Compiler::new(analysis, "main".to_string(), &mut gc);
         let function = compiler.compile(&ast);
 
-        let mut vm = VM::new(analysis.global_count);
+        let mut vm = VM::new(analysis.global_count, gc);
 
         vm.run(function);
         assert_eq!(vm.globals[0], Value::Number(10.0));
@@ -376,17 +409,7 @@ mod tests {
         }
         ";
 
-        let scanner = Scanner::new(src);
-        let mut parser = Parser::new(scanner);
-        let mut typecheker = TypeChecker::new();
-        let mut ast = parser.parse().expect("Failed to parse");
-        let analysis = typecheker.check(&mut ast).expect("Failed to typecheck");
-        let compiler = Compiler::new(analysis, "main".to_string());
-        let function = compiler.compile(&ast);
-
-        let mut vm = VM::new(analysis.global_count);
-
-        vm.run(function);
+        execute_source(src, false, "run", true);
     }
 
     #[test]
@@ -416,16 +439,7 @@ mod tests {
             b;
         ";
 
-        let scanner = Scanner::new(src);
-        let mut parser = Parser::new(scanner);
-        let mut typecheker = TypeChecker::new();
-        let mut ast = parser.parse().expect("Failed to parse");
-        let analysis = typecheker.check(&mut ast).expect("Failed to typecheck");
-        let compiler = Compiler::new(analysis, "main".to_string());
-        let func = compiler.compile(&ast);
-
-        let mut vm = VM::new(analysis.global_count);
-        vm.run(func);
+        execute_source(src, false, "run", true);
     }
 
     #[test]
@@ -520,5 +534,65 @@ mod tests {
             assert(a, -3);
         "#;
         execute_source(src, false, "run", true);
+    }
+
+    #[test]
+    fn test_local_functions() {
+        let src = r#"
+            func main(): void {
+
+                func local_func(a: number): number {
+                    return a + 1;
+                }
+                let res = local_func(1);
+                assert(res, 2);
+                print(res);
+            }
+            main();
+        "#;
+        execute_source(src, false, "run", true);
+    }
+    #[test]
+    fn test_shadowing() {
+        let src = r#"
+            let a = 2;
+            {
+                let a = a + 5;
+                print(a);
+                assert(a, 7);
+            }
+            let a = 1;
+            assert(a, 1);
+        "#;
+        execute_source(src, false, "run", true);
+    }
+    #[test]
+    fn test_function_recursion() {
+        let src = r#"
+            {
+                func fib(n: number): number {
+                    if n <= 1 {
+                        return n;
+                    }
+                    return fib(n - 1) + fib(n - 2);
+                }
+                fib(20);
+            }
+        "#;
+        execute_source(src, false, "run", true);
+    }
+
+    #[test]
+    fn test_gc() {
+        let stc = r#"
+            let a = 0;
+            let str = "";
+            while a < 100 {
+                str+="a";
+                a+=1;
+            }
+            print(str);
+        "#;
+        execute_source(stc, false, "run", true);
     }
 }

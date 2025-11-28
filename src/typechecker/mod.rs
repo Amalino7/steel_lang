@@ -139,7 +139,7 @@ impl<'src> TypeChecker<'src> {
         Ok(())
     }
 
-    fn lookup_variable(&self, name: &str) -> Option<(&VariableContext, ResolvedVar)> {
+    fn lookup_variable(&self, name: &'src str) -> Option<(&'src VariableContext, ResolvedVar)> {
         let mut is_closure = false;
         for scope in self.variable_scope.iter().rev() {
             if let Some(var) = scope.variables.get(name) {

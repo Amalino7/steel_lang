@@ -16,6 +16,7 @@ pub fn read_bytes(slice: &[u8]) -> usize {
     out
 }
 
+/// USED only for jump instructions. It is reversed
 pub fn read_16_bytes(bytes: &[u8]) -> usize {
     assert_eq!(bytes.len(), 2);
     bytes[1] as usize | (bytes[0] as usize) << 8

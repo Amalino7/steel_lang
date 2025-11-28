@@ -52,6 +52,7 @@ pub fn disassemble_instruction(
         Opcode::Divide => println!("Divide"),
         Opcode::Multiply => println!("Multiply"),
         Opcode::Not => println!("Not"),
+        Opcode::Concat => println!("Concat"),
         Opcode::Equal => {
             println!("Equal")
         }

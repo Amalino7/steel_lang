@@ -4,6 +4,7 @@ use crate::scanner::Scanner;
 use crate::stdlib::get_natives;
 use crate::typechecker::TypeChecker;
 use crate::vm::disassembler::disassemble_chunk;
+use crate::vm::gc::GarbageCollector;
 use crate::vm::VM;
 use std::env::args;
 use std::fs;
@@ -64,7 +65,8 @@ pub fn execute_source(source: &str, debug: bool, mode: &str, force: bool) {
         return;
     }
 
-    let compiler = Compiler::new(analysis, "main".to_string());
+    let mut gc = GarbageCollector::new();
+    let compiler = Compiler::new(analysis, "main".to_string(), &mut gc);
     let func = compiler.compile(&ast);
 
     if debug {
@@ -73,7 +75,7 @@ pub fn execute_source(source: &str, debug: bool, mode: &str, force: bool) {
         println!("===================");
     }
 
-    let mut vm = VM::new(analysis.global_count);
+    let mut vm = VM::new(analysis.global_count, gc);
     vm.set_native_functions(natives);
 
     let result = vm.run(func);

@@ -13,6 +13,7 @@ pub enum Opcode {
     Divide,
     Multiply,
     Not,
+    Concat,
 
     Equal,
     Greater,

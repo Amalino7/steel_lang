@@ -4,19 +4,25 @@ use crate::compiler::analysis::{AnalysisInfo, ResolvedVar};
 use crate::parser::ast::{Expr, Literal, Stmt};
 use crate::token::TokenType;
 use crate::vm::bytecode::{Chunk, Opcode};
+use crate::vm::gc::GarbageCollector;
 use crate::vm::value::{Function, Value};
-use std::rc::Rc;
 
 pub struct Compiler<'a> {
     function: Function,
     analysis_info: &'a AnalysisInfo,
+    gc: &'a mut GarbageCollector,
 }
 
 impl<'a> Compiler<'a> {
-    pub fn new(analysis_info: &'a AnalysisInfo, name: String) -> Self {
+    pub fn new(
+        analysis_info: &'a AnalysisInfo,
+        name: String,
+        gc: &'a mut GarbageCollector,
+    ) -> Self {
         Self {
             function: Function::new(name, 0, Chunk::new()),
             analysis_info,
+            gc,
         }
     }
     fn chunk(&mut self) -> &mut Chunk {
@@ -63,9 +69,8 @@ impl<'a> Compiler<'a> {
                     .expect("Variable not found");
 
                 match var_ctx {
-                    ResolvedVar::Local(idx) => {
-                        self.emit_op(Opcode::SetLocal, identifier.line);
-                        self.emit_byte(*idx as u8, identifier.line);
+                    ResolvedVar::Local(_) => {
+                        // there is no need to set the variable it is already in the right slot
                     }
                     ResolvedVar::Global(idx) => {
                         self.emit_op(Opcode::SetGlobal, identifier.line);
@@ -128,13 +133,13 @@ impl<'a> Compiler<'a> {
                 type_: _type_,
                 id,
             } => {
-                let mut func_compiler = Compiler::new(self.analysis_info, name.lexeme.to_string());
+                let mut func_compiler =
+                    Compiler::new(self.analysis_info, name.lexeme.to_string(), self.gc);
                 func_compiler.function.arity = params.len();
 
                 let compiled_fn = func_compiler.compile(body);
-
-                self.chunk()
-                    .write_constant(Value::Function(Rc::new(compiled_fn)), name.line);
+                let constant = Value::Function(self.gc.alloc(compiled_fn));
+                self.chunk().write_constant(constant, name.line);
 
                 let var_ctx = self
                     .analysis_info
@@ -143,9 +148,8 @@ impl<'a> Compiler<'a> {
                     .expect("Variable not found");
 
                 match var_ctx {
-                    ResolvedVar::Local(idx) => {
-                        self.emit_op(Opcode::SetLocal, name.line);
-                        self.emit_byte(*idx as u8, name.line);
+                    ResolvedVar::Local(_) => {
+                        // there is no need to set the variable it is already in the right slot
                     }
                     ResolvedVar::Global(idx) => {
                         self.emit_op(Opcode::SetGlobal, name.line);
@@ -220,6 +224,9 @@ impl<'a> Compiler<'a> {
                         self.emit_op(Opcode::Greater, line);
                         self.emit_op(Opcode::Not, line);
                     }
+                    TokenType::Concat => {
+                        self.emit_op(Opcode::Concat, line);
+                    }
                     _ => panic!("Unknown binary operator"),
                 }
             }
@@ -228,9 +235,10 @@ impl<'a> Compiler<'a> {
             }
             Expr::Literal { literal, line } => match literal {
                 Literal::Number(n) => self.chunk().write_constant(Value::Number(*n), *line),
-                Literal::String(s) => self
-                    .chunk()
-                    .write_constant(Value::String(Rc::new(s.to_string())), *line),
+                Literal::String(s) => {
+                    let str = self.gc.alloc(s.to_string());
+                    self.chunk().write_constant(Value::String(str), *line)
+                }
                 Literal::Boolean(b) => {
                     self.chunk().write_constant(Value::Boolean(*b), *line);
                 }

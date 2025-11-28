@@ -44,6 +44,8 @@ pub enum TokenType {
     Less,
     LessEqual,
 
+    Concat, // String concatenation only in typechecker.
+
     // Assignment arithmetic operators.
     PlusEqual,
     MinusEqual,
@@ -118,6 +120,7 @@ impl Display for TokenType {
             TokenType::MinusEqual => f.write_str("-="),
             TokenType::StarEqual => f.write_str("*="),
             TokenType::SlashEqual => f.write_str("/="),
+            TokenType::Concat => f.write_str("+"),
             TokenType::EOF => f.write_str("nothing"),
         }
     }

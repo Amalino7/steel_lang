@@ -187,6 +187,7 @@ impl TypeChecker<'_> {
                 if left_type == Type::Number && right_type == Type::Number {
                     Ok(Type::Number)
                 } else if left_type == Type::String && right_type == Type::String {
+                    operator.token_type = TokenType::Concat;
                     Ok(Type::String)
                 } else {
                     Err(TypeCheckerError::TypeMismatch {
