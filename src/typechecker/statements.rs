@@ -1,6 +1,7 @@
 use crate::parser::ast::{Stmt, Type};
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::{FunctionContext, TypeChecker};
+use std::mem::replace;
 
 impl<'src> TypeChecker<'src> {
     pub(crate) fn declare_global_functions(
@@ -22,11 +23,11 @@ impl<'src> TypeChecker<'src> {
                     errors.push(e);
                 }
 
-                let var_ctx = self
+                let (_, var_ctx) = self
                     .lookup_variable(name.lexeme)
                     .expect("Variable was just added to the scope.");
 
-                self.analysis_info.add_var(*id, var_ctx.1);
+                self.analysis_info.add_var(*id, var_ctx);
             }
         }
     }
@@ -57,11 +58,11 @@ impl<'src> TypeChecker<'src> {
                     });
                 }
 
-                let var_ctx = self
+                let (_, var_ctx) = self
                     .lookup_variable(identifier.lexeme)
                     .expect("Variable was just added to the scope.");
 
-                self.analysis_info.add_var(*id, var_ctx.1);
+                self.analysis_info.add_var(*id, var_ctx);
             }
             Stmt::Block(statements) => {
                 self.begin_scope();
@@ -121,6 +122,7 @@ impl<'src> TypeChecker<'src> {
                 {
                     self.current_function = FunctionContext::Function(*return_type.clone());
 
+                    let prev_closures = replace(&mut self.closures, vec![]);
                     self.begin_function_scope();
 
                     self.declare_variable(name.lexeme, type_.clone())?;
@@ -135,11 +137,20 @@ impl<'src> TypeChecker<'src> {
                     self.end_scope();
                     self.current_function = enclosing_function_context;
 
-                    let var_ctx = self
+                    let (_, var_ctx) = self
                         .lookup_variable(name.lexeme)
                         .expect("Variable was just added to the scope.");
 
-                    self.analysis_info.add_var(*id, var_ctx.1);
+                    self.analysis_info.add_var(*id, var_ctx);
+
+                    let old_closures = replace(&mut self.closures, prev_closures);
+                    for clos_var in old_closures {
+                        let (_, var_ctx) = self
+                            .lookup_variable(clos_var)
+                            .expect("Variable should exist in upper scope.");
+
+                        self.analysis_info.add_capture(*id, var_ctx);
+                    }
                 } else {
                     unreachable!()
                 }

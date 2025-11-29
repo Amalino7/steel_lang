@@ -1,4 +1,4 @@
-use crate::vm::value::{Function, Value};
+use crate::vm::value::{Closure, Function, Value};
 use std::collections::VecDeque;
 use std::fmt::{Debug, Formatter};
 use std::mem::size_of;
@@ -23,9 +23,14 @@ struct GcBox<T: ?Sized> {
     value: T,
 }
 
-#[derive(Eq, PartialEq)]
 pub struct Gc<T: ?Sized + Trace + 'static> {
     ptr: NonNull<GcBox<T>>,
+}
+
+impl<T: Trace> PartialEq for Gc<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.ptr == other.ptr
+    }
 }
 
 impl<T: Trace> Copy for Gc<T> {}
@@ -33,6 +38,13 @@ impl<T: Trace> Copy for Gc<T> {}
 impl<T: Trace> Clone for Gc<T> {
     fn clone(&self) -> Gc<T> {
         *self
+    }
+}
+
+// Cannot guarantee that this won't lead to multiple mutable borrows.
+impl<T: Trace> Gc<T> {
+    pub(crate) unsafe fn deref_mut(&mut self) -> &mut T {
+        unsafe { &mut self.ptr.as_mut().value }
     }
 }
 
@@ -137,6 +149,9 @@ impl GarbageCollector {
             Value::NativeFunction(_) => {}
             Value::Boolean(_) => {}
             Value::Nil => {}
+            Value::Closure(closure) => {
+                self.mark(*closure);
+            }
         }
     }
 
@@ -204,5 +219,11 @@ impl Trace for Function {
         for constant in self.chunk.constants.iter() {
             gc.mark_value(constant)
         }
+    }
+}
+
+impl Trace for Closure {
+    fn trace(&self, gc: &mut GarbageCollector) {
+        gc.mark(self.function);
     }
 }

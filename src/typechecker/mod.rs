@@ -45,6 +45,7 @@ pub struct TypeChecker<'src> {
     variable_scope: Vec<Scope<'src>>,
     analysis_info: AnalysisInfo,
     natives: &'src [NativeDef],
+    closures: Vec<&'src str>,
 }
 
 impl<'src> TypeChecker<'src> {
@@ -54,6 +55,7 @@ impl<'src> TypeChecker<'src> {
             variable_scope: vec![],
             analysis_info: AnalysisInfo::new(),
             natives: &[],
+            closures: vec![],
         }
     }
     pub fn new_with_natives(natives: &'src [NativeDef]) -> Self {
@@ -62,6 +64,7 @@ impl<'src> TypeChecker<'src> {
             variable_scope: vec![],
             analysis_info: AnalysisInfo::new(),
             natives,
+            closures: vec![],
         }
     }
 
@@ -139,14 +142,18 @@ impl<'src> TypeChecker<'src> {
         Ok(())
     }
 
-    fn lookup_variable(&self, name: &'src str) -> Option<(&'src VariableContext, ResolvedVar)> {
+    fn lookup_variable(
+        &mut self,
+        name: &'src str,
+    ) -> Option<(&VariableContext<'src>, ResolvedVar)> {
         let mut is_closure = false;
         for scope in self.variable_scope.iter().rev() {
             if let Some(var) = scope.variables.get(name) {
                 return if scope.scope_type == ScopeType::Global {
                     Some((&var, ResolvedVar::Global(var.index)))
                 } else if is_closure {
-                    Some((&var, ResolvedVar::Closure(0)))
+                    self.closures.push(name);
+                    Some((&var, ResolvedVar::Closure(self.closures.len() - 1)))
                 } else {
                     Some((&var, ResolvedVar::Local(var.index)))
                 };
