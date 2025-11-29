@@ -11,21 +11,23 @@ pub struct Function {
     pub chunk: Chunk,
 }
 
+#[derive(Debug)]
+pub struct Closure {
+    pub function: Gc<Function>,
+    pub upvalues: Vec<Value>,
+}
+
 impl Function {
     pub fn new(name: String, arity: usize, chunk: Chunk) -> Function {
         Function { name, arity, chunk }
     }
 }
 
-impl PartialEq for Function {
-    fn eq(&self, _other: &Self) -> bool {
-        false
-    }
-}
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
     Number(f64),
     String(Gc<String>),
+    Closure(Gc<Closure>),
     Function(Gc<Function>),
     NativeFunction(NativeFn),
     Boolean(bool),
@@ -52,6 +54,7 @@ impl Display for Value {
             Value::Nil => write!(f, "Nil"),
             Value::Function(func) => write!(f, "<fn {}>", func.name.as_str()),
             Value::NativeFunction(_) => write!(f, "<native fn>"),
+            Value::Closure(closure) => write!(f, "<closure {}>", closure.function.name.as_str()),
         }
     }
 }

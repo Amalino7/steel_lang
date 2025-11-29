@@ -3,7 +3,8 @@ use crate::vm::byte_utils::{byte_to_opcode, read_16_bytes, read_24_bytes};
 use crate::vm::bytecode::Opcode;
 use crate::vm::gc::{GarbageCollector, Gc};
 use crate::vm::stack::Stack;
-use crate::vm::value::{Function, Value};
+use crate::vm::value::{Closure, Function, Value};
+use std::ops::DerefMut;
 use std::process::exit;
 
 mod byte_utils;
@@ -224,6 +225,23 @@ impl VM {
                             current_frame = frame;
                             chunk = &current_frame.function.chunk; // updated chunk
                         }
+                        Value::Closure(closure) => {
+                            let new_slot_offset = top - arg_count - 1;
+                            let frame = CallFrame {
+                                function: closure.function,
+                                ip: 0,
+                                slot_offset: new_slot_offset,
+                            };
+
+                            // Push the closure's upvalues onto the stack
+                            for upval in closure.upvalues.iter() {
+                                self.stack.push(upval.clone());
+                            }
+
+                            self.frames.push(current_frame);
+                            current_frame = frame;
+                            chunk = &current_frame.function.chunk; // updated chunk
+                        }
                         Value::NativeFunction(native_fn) => {
                             let args_start = top - arg_count;
                             let mut args = Vec::with_capacity(arg_count);
@@ -239,23 +257,87 @@ impl VM {
                         val => unreachable!("Only functions should be called found {}", val),
                     }
                 }
+                Opcode::MakeClosure => {
+                    let upvalue_count = chunk.instructions[current_frame.ip] as usize;
+                    current_frame.ip += 1;
+
+                    // Collect the captured values from the stack
+                    let mut upvalues = Vec::with_capacity(upvalue_count);
+                    for _ in 0..upvalue_count {
+                        upvalues.push(self.stack.pop());
+                    }
+
+                    let func_val = self.stack.pop();
+                    let function = match func_val {
+                        Value::Function(f) => f,
+                        _ => panic!("Expected raw function on stack"),
+                    };
+
+                    let closure = Value::Closure(self.gc.alloc(Closure { function, upvalues }));
+                    self.stack.push(closure);
+                }
+
+                Opcode::GetCapture => {
+                    let index = chunk.instructions[current_frame.ip] as usize;
+                    current_frame.ip += 1;
+
+                    let closure = self.stack.get_at(current_frame.slot_offset);
+                    match closure {
+                        Value::Closure(closure) => {
+                            let capture = closure.upvalues[index].clone();
+                            self.stack.push(capture);
+                        }
+                        _ => unreachable!("Expected closure on stack"),
+                    }
+                }
+                Opcode::SetCapture => {
+                    let index = chunk.instructions[current_frame.ip] as usize;
+                    current_frame.ip += 1;
+
+                    let closure = self.stack.get_at(current_frame.slot_offset);
+                    match closure {
+                        Value::Closure(mut closure) => unsafe {
+                            closure.deref_mut().upvalues[index] = self.stack.pop();
+                        },
+                        _ => unreachable!("Expected closure on stack"),
+                    }
+                }
             }
         }
     }
 
-    fn alloc_string(&mut self, s: String, current_frame: &CallFrame) -> Value {
-        if self.gc.should_collect() || true {
-            for global in &self.globals {
-                self.gc.mark_value(global);
-            }
-            for i in 0..self.stack.top {
-                self.gc.mark_value(&self.stack.buffer[i]);
-            }
+    fn alloc_closure(
+        &mut self,
+        function: Gc<Function>,
+        upvalues: Vec<Value>,
+        current_frame: &CallFrame,
+    ) -> Value {
+        let closure = self.gc.alloc(Closure { function, upvalues });
+        if self.gc.should_collect() {
+            self.gc.mark(closure);
+            self.mark_roots(current_frame);
+            self.gc.collect();
+        }
+        Value::Closure(closure)
+    }
 
-            self.gc.mark(current_frame.function);
-            for frame in &self.frames {
-                self.gc.mark(frame.function);
-            }
+    fn mark_roots(&mut self, current_frame: &CallFrame) {
+        for global in &self.globals {
+            self.gc.mark_value(global);
+        }
+        for i in 0..self.stack.top {
+            self.gc.mark_value(&self.stack.buffer[i]);
+        }
+
+        self.gc.mark(current_frame.function);
+        for frame in &self.frames {
+            self.gc.mark(frame.function);
+        }
+    }
+
+    fn alloc_string(&mut self, s: String, current_frame: &CallFrame) -> Value {
+        if self.gc.should_collect() {
+            self.mark_roots(current_frame);
             self.gc.collect();
         }
         let str_ref = self.gc.alloc(s);
@@ -584,7 +666,7 @@ mod tests {
 
     #[test]
     fn test_gc() {
-        let stc = r#"
+        let src = r#"
             let a = 0;
             let str = "";
             while a < 100 {
@@ -593,6 +675,48 @@ mod tests {
             }
             print(str);
         "#;
-        execute_source(stc, false, "run", true);
+        execute_source(src, false, "run", true);
+    }
+
+    #[test]
+    fn test_higher_order_functions() {
+        let src = r#"
+        func foo(a: number, b: func():string): func(number): number {
+            print(b());
+            func bar(c: number): number {
+                return 10 + c;
+            }
+            return bar;
+        }
+        func str(): string { return "hello";}
+
+        let res = foo(10, str);
+        let sum = res(5) + 10;
+        print(sum);
+        assert(sum, 25);
+        assert(res(10), 20);
+        "#;
+
+        execute_source(src, false, "run", true);
+    }
+
+    #[test]
+    fn test_closure() {
+        let src = r#"
+        func foo(a: number): func(number): number {
+            func bar(c: number): number {
+                return c + a;
+            }
+            return bar;
+        }
+        let res = foo(10);
+        let res2 = foo(21);
+        assert(res(5), 15);
+        assert(res2(10), 31);
+        print(res(5));
+        print(res2(10));
+
+        "#;
+        execute_source(src, false, "run", true);
     }
 }

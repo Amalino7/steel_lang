@@ -13,6 +13,7 @@ pub enum ResolvedVar {
 pub struct AnalysisInfo {
     pub global_count: usize,
     pub resolved_vars: HashMap<usize, ResolvedVar>,
+    pub captures: HashMap<usize, Vec<ResolvedVar>>,
 }
 
 impl AnalysisInfo {
@@ -20,6 +21,7 @@ impl AnalysisInfo {
         AnalysisInfo {
             global_count: 0,
             resolved_vars: HashMap::new(),
+            captures: HashMap::new(),
         }
     }
 
@@ -28,5 +30,9 @@ impl AnalysisInfo {
             self.global_count = max(idx + 1, self.global_count);
         }
         self.resolved_vars.insert(id, var);
+    }
+
+    pub fn add_capture(&mut self, id: usize, var: ResolvedVar) {
+        self.captures.entry(id).or_default().push(var);
     }
 }

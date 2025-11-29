@@ -78,8 +78,10 @@ impl<'a> Compiler<'a> {
 
                         self.emit_op(Opcode::Pop, identifier.line);
                     }
-                    ResolvedVar::Closure(_) => {
-                        todo!("closures are not yet done")
+                    ResolvedVar::Closure(idx) => {
+                        self.emit_op(Opcode::SetCapture, identifier.line);
+                        self.emit_byte(*idx as u8, identifier.line);
+                        self.emit_op(Opcode::Pop, identifier.line);
                     }
                 }
             }
@@ -147,6 +149,16 @@ impl<'a> Compiler<'a> {
                     .get(id)
                     .expect("Variable not found");
 
+                // Add captures
+                if let Some(captures) = self.analysis_info.captures.get(id) {
+                    // Reverse captures to make sure they are in the right order
+                    for capture in captures.iter().rev() {
+                        self.emit_var_access(capture, name.line)
+                    }
+                    self.emit_op(Opcode::MakeClosure, name.line);
+                    self.emit_byte(captures.len() as u8, name.line);
+                }
+
                 match var_ctx {
                     ResolvedVar::Local(_) => {
                         // there is no need to set the variable it is already in the right slot
@@ -157,14 +169,33 @@ impl<'a> Compiler<'a> {
 
                         self.emit_op(Opcode::Pop, name.line);
                     }
-                    ResolvedVar::Closure(_) => {
-                        todo!("closures are not yet done")
+                    ResolvedVar::Closure(idx) => {
+                        self.emit_op(Opcode::SetCapture, name.line);
+                        self.emit_byte(*idx as u8, name.line);
+                        self.emit_op(Opcode::Pop, name.line);
                     }
                 }
             }
             Stmt::Return(val) => {
                 self.compile_expr(val);
                 self.emit_op(Opcode::Return, val.get_line());
+            }
+        }
+    }
+
+    fn emit_var_access(&mut self, var_ctx: &ResolvedVar, line: usize) {
+        match var_ctx {
+            ResolvedVar::Local(idx) => {
+                self.emit_op(Opcode::GetLocal, line);
+                self.emit_byte(*idx as u8, line);
+            }
+            ResolvedVar::Global(idx) => {
+                self.emit_op(Opcode::GetGlobal, line);
+                self.emit_byte(*idx as u8, line);
+            }
+            ResolvedVar::Closure(idx) => {
+                self.emit_op(Opcode::GetCapture, line);
+                self.emit_byte(*idx as u8, line);
             }
         }
     }
@@ -265,19 +296,7 @@ impl<'a> Compiler<'a> {
                     .get(id)
                     .expect("Variable not found");
 
-                match var_ctx {
-                    ResolvedVar::Local(idx) => {
-                        self.emit_op(Opcode::GetLocal, name.line);
-                        self.emit_byte(*idx as u8, name.line);
-                    }
-                    ResolvedVar::Global(idx) => {
-                        self.emit_op(Opcode::GetGlobal, name.line);
-                        self.emit_byte(*idx as u8, name.line);
-                    }
-                    ResolvedVar::Closure(_) => {
-                        todo!("closures are not yet done")
-                    }
-                }
+                self.emit_var_access(var_ctx, name.line);
             }
             Expr::Assignment {
                 identifier,
@@ -300,8 +319,9 @@ impl<'a> Compiler<'a> {
                         self.emit_op(Opcode::SetGlobal, identifier.line);
                         self.emit_byte(*idx as u8, identifier.line);
                     }
-                    ResolvedVar::Closure(_) => {
-                        todo!("closures are not yet done")
+                    ResolvedVar::Closure(idx) => {
+                        self.emit_op(Opcode::SetCapture, identifier.line);
+                        self.emit_byte(*idx as u8, identifier.line);
                     }
                 }
             }

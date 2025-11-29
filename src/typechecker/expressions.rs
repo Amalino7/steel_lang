@@ -3,8 +3,11 @@ use crate::token::{Token, TokenType};
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::TypeChecker;
 
-impl TypeChecker<'_> {
-    pub(crate) fn infer_expression(&mut self, expr: &mut Expr) -> Result<Type, TypeCheckerError> {
+impl<'src> TypeChecker<'src> {
+    pub(crate) fn infer_expression(
+        &mut self,
+        expr: &mut Expr<'src>,
+    ) -> Result<Type, TypeCheckerError> {
         let inferred_type: Type = match expr {
             Expr::Unary {
                 operator,
@@ -45,6 +48,7 @@ impl TypeChecker<'_> {
 
             Expr::Variable { name, id } => {
                 let var = self.lookup_variable(name.lexeme);
+
                 if let Some((ctx, resolved)) = var {
                     let type_info = ctx.type_.clone();
 
@@ -165,8 +169,8 @@ impl TypeChecker<'_> {
     fn check_binary_expression(
         &mut self,
         operator: &mut Token,
-        left: &mut Box<Expr>,
-        right: &mut Box<Expr>,
+        left: &mut Box<Expr<'src>>,
+        right: &mut Box<Expr<'src>>,
     ) -> Result<Type, TypeCheckerError> {
         let left_type = self.infer_expression(left)?;
         let right_type = self.infer_expression(right)?;

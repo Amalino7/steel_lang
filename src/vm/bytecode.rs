@@ -29,6 +29,10 @@ pub enum Opcode {
     GetGlobal,
     Call,
 
+    MakeClosure,
+    GetCapture,
+    SetCapture,
+
     Return,
     Halt,
 }

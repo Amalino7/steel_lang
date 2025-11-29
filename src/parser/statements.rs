@@ -43,8 +43,6 @@ impl<'src> Parser<'src> {
             })
         }
     }
-
-    // TODO rethink how to refactor this function
     fn func_declaration(&mut self) -> Result<Stmt<'src>, ParserError<'src>> {
         if !match_token_type!(self, TokT::Identifier) {
             Err(self.error_current("Expected function name."))
@@ -65,18 +63,7 @@ impl<'src> Parser<'src> {
                         TokT::Colon,
                         "Expected ':' after parameter name. Syntax: 'name: type",
                     )?;
-                    self.consume(
-                        TokT::Identifier,
-                        "Expected the type after the function parameter name. Syntax: 'name: type'.",
-                    )?;
-
-                    if let Some(t) = Type::from_identifier(self.previous_token.clone()) {
-                        param_types.push(t);
-                    } else {
-                        return Err(self.error_previous(
-                            "Expected valid type identifier. Example: 'number, string, void'.",
-                        ));
-                    }
+                    param_types.push(self.type_block()?);
 
                     if !match_token_type!(self, TokT::Comma) {
                         break;
@@ -87,15 +74,7 @@ impl<'src> Parser<'src> {
             self.consume(TokT::RightParen, "Expected ')' after parameters.")?;
 
             let return_type = if match_token_type!(self, TokT::Colon) {
-                self.consume(
-                    TokT::Identifier,
-                    "Expected the name of the return type of the function.",
-                )?;
-                if let Some(t) = Type::from_identifier(self.previous_token.clone()) {
-                    t
-                } else {
-                    return Err(self.error_previous("Expected valid type identifier"));
-                }
+                self.type_block()?
             } else {
                 Type::Void
             };
@@ -119,25 +98,56 @@ impl<'src> Parser<'src> {
             })
         }
     }
+    fn type_block(&mut self) -> Result<Type, ParserError<'src>> {
+        match self.current_token.token_type {
+            TokT::Func => {
+                self.consume(TokT::Func, "Expected 'func' keyword.")?;
+                self.consume(
+                    TokT::LeftParen,
+                    "Expected 'paren' after func type definition",
+                )?;
+                let mut argument_types = vec![];
 
-    // fn type_block(&mut self) -> Result<Type, ParserError<'src>> {
-    //     match self.current_token.token_type {
-    //         TokenType::Func => {}
-    //         TokenType::Identifier => {
-    //             self.consume(
-    //                 TokT::Identifier,
-    //                 "Expected the name of the return type of the function.",
-    //             )?;
-    //
-    //             if let Some(t) = Type::from_identifier(self.previous_token.clone()) {
-    //                 Ok(t)
-    //             } else {
-    //                 return Err(self.error_previous("Expected valid type identifier"));
-    //             }
-    //         }
-    //         _ => Err(self.error_current("Expected the name of the return type of the function.")),
-    //     }
-    // }
+                if !check_token_type!(self, TokT::RightParen) {
+                    loop {
+                        let arg = self.type_block()?;
+                        argument_types.push(arg);
+
+                        if !match_token_type!(self, TokT::Comma) {
+                            break;
+                        }
+                    }
+                }
+                self.consume(
+                    TokT::RightParen,
+                    "Expected ')' after function type parameters.",
+                )?;
+
+                let return_type = if match_token_type!(self, TokT::Colon) {
+                    self.type_block()?
+                } else {
+                    Type::Void
+                };
+                Ok(Type::Function {
+                    param_types: argument_types,
+                    return_type: Box::new(return_type),
+                })
+            }
+            TokT::Identifier => {
+                self.consume(
+                    TokT::Identifier,
+                    "Expected the name of the return type of the function.",
+                )?;
+
+                if let Some(t) = Type::from_identifier(self.previous_token.clone()) {
+                    Ok(t)
+                } else {
+                    Err(self.error_previous("Expected valid type identifier"))
+                }
+            }
+            _ => Err(self.error_current("Expected the name of the return type of the function.")),
+        }
+    }
 
     fn statement(&mut self) -> Result<Stmt<'src>, ParserError<'src>> {
         if check_token_type!(self, TokT::LeftBrace) {
