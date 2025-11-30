@@ -108,10 +108,6 @@ pub fn disassemble_instruction(
             offset += 1;
             println!("GetCapture {}", bytecode[offset]);
         }
-        Opcode::SetCapture => {
-            offset += 1;
-            println!("SetCapture {}", bytecode[offset]);
-        }
     };
     offset + 1
 }

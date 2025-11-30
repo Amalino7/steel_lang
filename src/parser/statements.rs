@@ -182,7 +182,10 @@ impl<'src> Parser<'src> {
         }
 
         self.consume(TokT::RightBrace, "Expected '}' after block.")?;
-        Ok(Stmt::Block(statements))
+        Ok(Stmt::Block {
+            body: statements,
+            id: self.get_node_id(),
+        })
     }
     fn if_statement(&mut self) -> Result<Stmt<'src>, ParserError<'src>> {
         let condition = self.expression()?;

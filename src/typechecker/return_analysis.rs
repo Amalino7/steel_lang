@@ -19,8 +19,8 @@ impl<'src> TypeChecker<'src> {
         match stmt {
             Stmt::Expression(_) => Ok(()),
             Stmt::Let { .. } => Ok(()),
-            Stmt::Block(stmts) => {
-                for stmt in stmts {
+            Stmt::Block { body, id: _ } => {
+                for stmt in body {
                     self.check_stmt_returns(stmt)?;
                 }
                 Ok(())
@@ -72,7 +72,7 @@ impl<'src> TypeChecker<'src> {
         match stmt {
             Stmt::Expression(_) => false,
             Stmt::Let { .. } => false,
-            Stmt::Block(stmts) => stmts.iter_mut().any(|e| self.stmt_returns(e)),
+            Stmt::Block { body, id: _id } => body.iter_mut().any(|e| self.stmt_returns(e)),
             Stmt::If {
                 then_branch,
                 else_branch,

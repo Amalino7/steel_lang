@@ -31,7 +31,6 @@ pub enum Opcode {
 
     MakeClosure,
     GetCapture,
-    SetCapture,
 
     Return,
     Halt,

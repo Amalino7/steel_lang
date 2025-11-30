@@ -64,11 +64,15 @@ impl<'src> TypeChecker<'src> {
 
                 self.analysis_info.add_var(*id, var_ctx);
             }
-            Stmt::Block(statements) => {
+            Stmt::Block { body, id } => {
                 self.begin_scope();
-                for stmt in statements {
+                for stmt in body {
                     self.check_stmt(stmt)?;
                 }
+
+                self.analysis_info
+                    .drop_at_scope_end
+                    .insert(*id, self.variable_scope.last().unwrap().variables.len());
                 self.end_scope();
             }
             Stmt::If {

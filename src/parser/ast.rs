@@ -72,7 +72,10 @@ pub enum Stmt<'src> {
         type_info: Type,
         id: usize,
     },
-    Block(Vec<Stmt<'src>>),
+    Block {
+        body: Vec<Stmt<'src>>,
+        id: usize,
+    },
     If {
         condition: Expr<'src>,
         then_branch: Box<Stmt<'src>>,
@@ -209,9 +212,9 @@ impl Display for Stmt<'_> {
                 type_info,
                 ..
             } => write!(f, "let {}: {} = {}", identifier.lexeme, type_info, value),
-            Stmt::Block(statements) => {
+            Stmt::Block { body, id: _ } => {
                 write!(f, "do\n")?;
-                for statement in statements {
+                for statement in body {
                     write!(f, " {}\n", statement)?;
                 }
                 write!(f, "end")
@@ -280,8 +283,8 @@ impl Stmt<'_> {
         match self {
             Stmt::Expression(expr) => expr.get_line(),
             Stmt::Let { identifier, .. } => identifier.line,
-            Stmt::Block(statements) => {
-                if let Some(first_stmt) = statements.first() {
+            Stmt::Block { body, id: _ } => {
+                if let Some(first_stmt) = body.first() {
                     first_stmt.get_line()
                 } else {
                     0 //might need to add an alternative for empty blocks.
