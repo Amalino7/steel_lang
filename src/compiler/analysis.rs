@@ -5,7 +5,6 @@ use std::collections::HashMap;
 pub enum ResolvedVar {
     Local(usize),
     Global(usize),
-    // TODO Add upvalues
     Closure(usize),
 }
 
@@ -14,6 +13,7 @@ pub struct AnalysisInfo {
     pub global_count: usize,
     pub resolved_vars: HashMap<usize, ResolvedVar>,
     pub captures: HashMap<usize, Vec<ResolvedVar>>,
+    pub drop_at_scope_end: HashMap<usize, usize>,
 }
 
 impl AnalysisInfo {
@@ -22,6 +22,7 @@ impl AnalysisInfo {
             global_count: 0,
             resolved_vars: HashMap::new(),
             captures: HashMap::new(),
+            drop_at_scope_end: HashMap::new(),
         }
     }
 

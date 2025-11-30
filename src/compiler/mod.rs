@@ -11,6 +11,7 @@ pub struct Compiler<'a> {
     function: Function,
     analysis_info: &'a AnalysisInfo,
     gc: &'a mut GarbageCollector,
+    is_global: bool,
 }
 
 impl<'a> Compiler<'a> {
@@ -23,6 +24,7 @@ impl<'a> Compiler<'a> {
             function: Function::new(name, 0, Chunk::new()),
             analysis_info,
             gc,
+            is_global: true,
         }
     }
     fn chunk(&mut self) -> &mut Chunk {
@@ -32,13 +34,17 @@ impl<'a> Compiler<'a> {
     pub fn compile(mut self, statements: &[Stmt]) -> Function {
         // Compile functions first
         for stmt in statements {
-            if let Stmt::Function { .. } = stmt {
+            if self.is_global
+                && let Stmt::Function { .. } = stmt
+            {
                 self.compile_stmt(stmt);
             }
         }
 
         for stmt in statements {
-            if let Stmt::Function { .. } = stmt {
+            if self.is_global
+                && let Stmt::Function { .. } = stmt
+            {
                 continue;
             }
             self.compile_stmt(stmt);
@@ -78,16 +84,22 @@ impl<'a> Compiler<'a> {
 
                         self.emit_op(Opcode::Pop, identifier.line);
                     }
-                    ResolvedVar::Closure(idx) => {
-                        self.emit_op(Opcode::SetCapture, identifier.line);
-                        self.emit_byte(*idx as u8, identifier.line);
-                        self.emit_op(Opcode::Pop, identifier.line);
+                    ResolvedVar::Closure(_) => {
+                        unreachable!("Closures shouldn't be assigned to")
                     }
                 }
             }
-            Stmt::Block(statements) => {
-                for stmt in statements {
+            Stmt::Block { body, id } => {
+                for stmt in body {
                     self.compile_stmt(stmt);
+                }
+                for _ in 0..*self
+                    .analysis_info
+                    .drop_at_scope_end
+                    .get(id)
+                    .expect("Scope size should be found")
+                {
+                    self.emit_op(Opcode::Pop, body.last().unwrap().get_line());
                 }
             }
             Stmt::If {
@@ -137,8 +149,8 @@ impl<'a> Compiler<'a> {
             } => {
                 let mut func_compiler =
                     Compiler::new(self.analysis_info, name.lexeme.to_string(), self.gc);
+                func_compiler.is_global = false;
                 func_compiler.function.arity = params.len();
-
                 let compiled_fn = func_compiler.compile(body);
                 let constant = Value::Function(self.gc.alloc(compiled_fn));
                 self.chunk().write_constant(constant, name.line);
@@ -169,10 +181,8 @@ impl<'a> Compiler<'a> {
 
                         self.emit_op(Opcode::Pop, name.line);
                     }
-                    ResolvedVar::Closure(idx) => {
-                        self.emit_op(Opcode::SetCapture, name.line);
-                        self.emit_byte(*idx as u8, name.line);
-                        self.emit_op(Opcode::Pop, name.line);
+                    ResolvedVar::Closure(_) => {
+                        unreachable!("Closures shouldn't be assigned to")
                     }
                 }
             }
@@ -319,9 +329,8 @@ impl<'a> Compiler<'a> {
                         self.emit_op(Opcode::SetGlobal, identifier.line);
                         self.emit_byte(*idx as u8, identifier.line);
                     }
-                    ResolvedVar::Closure(idx) => {
-                        self.emit_op(Opcode::SetCapture, identifier.line);
-                        self.emit_byte(*idx as u8, identifier.line);
+                    ResolvedVar::Closure(_) => {
+                        unreachable!("Closures shouldn't be assigned to")
                     }
                 }
             }

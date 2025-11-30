@@ -49,6 +49,8 @@ pub struct TypeChecker<'src> {
 }
 
 impl<'src> TypeChecker<'src> {
+    // This is used for testing purposes only.
+    #[allow(dead_code)]
     pub fn new() -> Self {
         TypeChecker {
             current_function: FunctionContext::None,

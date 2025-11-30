@@ -37,6 +37,10 @@ pub enum TypeCheckerError {
     MissingReturnStatement {
         line: usize,
     },
+    AssignmentToCapturedVariable {
+        name: String,
+        line: usize,
+    },
 }
 impl std::fmt::Display for TypeCheckerError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -99,6 +103,13 @@ impl std::fmt::Display for TypeCheckerError {
             }
             TypeCheckerError::MissingReturnStatement { line } => {
                 write!(f, "[line {}] Error: Missing return statement.", line)
+            }
+            TypeCheckerError::AssignmentToCapturedVariable { name, line } => {
+                write!(
+                    f,
+                    "[line {}] Error: Cannot assign to captured variable '{}'.",
+                    line, name
+                )
             }
         }
     }

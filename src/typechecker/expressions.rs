@@ -1,6 +1,8 @@
+use crate::compiler::analysis::ResolvedVar;
 use crate::parser::ast::{Expr, Literal, Type};
 use crate::token::{Token, TokenType};
 use crate::typechecker::error::TypeCheckerError;
+use crate::typechecker::error::TypeCheckerError::AssignmentToCapturedVariable;
 use crate::typechecker::TypeChecker;
 
 impl<'src> TypeChecker<'src> {
@@ -85,6 +87,12 @@ impl<'src> TypeChecker<'src> {
                             message: "Expected the same type but found something else.",
                         });
                     } else {
+                        if let ResolvedVar::Closure(_) = &resolved {
+                            return Err(AssignmentToCapturedVariable {
+                                name: ctx.name.to_string(),
+                                line: identifier.line,
+                            });
+                        }
                         self.analysis_info.add_var(*id, resolved);
                         value_type
                     }

@@ -441,4 +441,30 @@ mod tests {
             .check(ast.as_mut_slice())
             .expect("Should have passed.");
     }
+    #[test]
+    fn test_assignment_to_captured_variable() {
+        let src = r#"{
+            let local = 10;
+            func foo(): number {
+                local = 20;
+                return local;
+            }
+            assert(foo(), 20);
+        }
+        "#;
+
+        let scanner = Scanner::new(src);
+        let mut parser = Parser::new(scanner);
+        let mut ast = parser.parse().expect("Parser failed.");
+        let mut checker = TypeChecker::new();
+        let errors = checker
+            .check(ast.as_mut_slice())
+            .expect_err("Should have failed.");
+        assert_eq!(errors.len(), 1, "Expected 1 error, got {}", errors.len());
+
+        assert!(matches!(
+            errors[0],
+            TypeCheckerError::AssignmentToCapturedVariable { .. }
+        ))
+    }
 }

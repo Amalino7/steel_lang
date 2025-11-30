@@ -273,23 +273,25 @@ mod tests {
                     right: number(20.0, 3),
                 }),
             },
-            body: Box::new(Stmt::Block(vec![Stmt::Expression(Expr::Assignment {
-                identifier: Token::new(TokenType::Identifier, 4, "a"),
-                value: Box::new(Expr::Binary {
-                    operator: Token {
-                        token_type: TokenType::Plus,
-                        line: 4,
-                        lexeme: "+",
-                    },
-                    left: var("a", 4, 4),
-                    right: number(1.0, 4),
-                }),
-                id: 5,
-            })])),
+            body: Box::new(Stmt::Block {
+                body: vec![Stmt::Expression(Expr::Assignment {
+                    identifier: Token::new(TokenType::Identifier, 4, "a"),
+                    value: Box::new(Expr::Binary {
+                        operator: Token {
+                            token_type: TokenType::Plus,
+                            line: 4,
+                            lexeme: "+",
+                        },
+                        left: var("a", 4, 4),
+                        right: number(1.0, 4),
+                    }),
+                    id: 5,
+                })],
+                id: 6,
+            }),
         });
         assert_eq!(res, expected);
     }
-
     #[test]
     fn test_parser_error_missing_semicolon() {
         let source = "let a = 10";

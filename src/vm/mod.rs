@@ -4,7 +4,6 @@ use crate::vm::bytecode::Opcode;
 use crate::vm::gc::{GarbageCollector, Gc};
 use crate::vm::stack::Stack;
 use crate::vm::value::{Closure, Function, Value};
-use std::ops::DerefMut;
 use std::process::exit;
 
 mod byte_utils;
@@ -273,7 +272,7 @@ impl VM {
                         _ => panic!("Expected raw function on stack"),
                     };
 
-                    let closure = Value::Closure(self.gc.alloc(Closure { function, upvalues }));
+                    let closure = self.alloc_closure(function, upvalues, &current_frame);
                     self.stack.push(closure);
                 }
 
@@ -287,18 +286,6 @@ impl VM {
                             let capture = closure.upvalues[index].clone();
                             self.stack.push(capture);
                         }
-                        _ => unreachable!("Expected closure on stack"),
-                    }
-                }
-                Opcode::SetCapture => {
-                    let index = chunk.instructions[current_frame.ip] as usize;
-                    current_frame.ip += 1;
-
-                    let closure = self.stack.get_at(current_frame.slot_offset);
-                    match closure {
-                        Value::Closure(mut closure) => unsafe {
-                            closure.deref_mut().upvalues[index] = self.stack.pop();
-                        },
                         _ => unreachable!("Expected closure on stack"),
                     }
                 }
@@ -718,5 +705,38 @@ mod tests {
 
         "#;
         execute_source(src, false, "run", true);
+    }
+
+    #[test]
+    fn test_closure_capture() {
+        let src = r#"
+        {
+            let i = 5;
+            while i < 10 {
+                func foo(): number {
+                    return i;
+                }
+                i+=1;
+                print(foo());
+                assert(foo(), i - 1);
+            }
+        }
+        "#;
+        execute_source(src, true, "run", true);
+    }
+
+    #[test]
+    fn test_local_override() {
+        let src = r#"{
+            let a = 1;
+            {
+                let b = 2;
+            }
+            let c = 100;
+            assert(a + c, 101);
+            print(a + c);
+        }
+        "#;
+        execute_source(src, true, "run", true);
     }
 }
