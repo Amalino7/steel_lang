@@ -14,7 +14,7 @@ pub struct Function {
 #[derive(Debug)]
 pub struct Closure {
     pub function: Gc<Function>,
-    pub upvalues: Vec<Value>,
+    pub captures: Vec<Value>,
 }
 
 impl Function {
@@ -23,7 +23,7 @@ impl Function {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Copy)]
 pub enum Value {
     Number(f64),
     String(Gc<String>),

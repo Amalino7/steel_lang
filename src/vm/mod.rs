@@ -75,7 +75,7 @@ impl VM {
                 Opcode::Constant => {
                     let index = chunk.instructions[current_frame.ip] as usize;
                     current_frame.ip += 1;
-                    let val = chunk.constants[index].clone();
+                    let val = chunk.constants[index];
                     self.stack.push(val);
                 }
                 Opcode::Return => {
@@ -93,7 +93,7 @@ impl VM {
                     let index =
                         read_24_bytes(&chunk.instructions[current_frame.ip..current_frame.ip + 3]);
                     current_frame.ip += 3;
-                    let val = chunk.constants[index].clone();
+                    let val = chunk.constants[index];
                     self.stack.push(val);
                 }
                 Opcode::Negate => {
@@ -157,15 +157,14 @@ impl VM {
                     self.stack.push(Value::Boolean(a < b))
                 }
                 Opcode::Pop => {
-                    // println!("Popping {}", self.stack.pop());
                     self.stack.pop();
                 }
                 Opcode::JumpIfFalse => {
                     let offset =
                         read_16_bytes(&chunk.instructions[current_frame.ip..current_frame.ip + 2]);
                     current_frame.ip += 2;
-                    let cond = self.stack.get_mut();
-                    if *cond == Value::Boolean(false) {
+                    let cond = self.stack.get_top();
+                    if cond == Value::Boolean(false) {
                         current_frame.ip += offset;
                     }
                 }
@@ -187,7 +186,7 @@ impl VM {
                     let index = chunk.instructions[current_frame.ip] as usize;
                     current_frame.ip += 1;
 
-                    let val = self.stack.get_mut().clone();
+                    let val = self.stack.get_top();
                     self.stack.set_at(current_frame.slot_offset + index, val);
                 }
                 Opcode::GetLocal => {
@@ -199,10 +198,10 @@ impl VM {
                 Opcode::SetGlobal => {
                     let index = chunk.instructions[current_frame.ip] as usize;
                     current_frame.ip += 1;
-                    self.globals[index] = self.stack.get_mut().clone();
+                    self.globals[index] = self.stack.get_top();
                 }
                 Opcode::GetGlobal => {
-                    let val = self.globals[chunk.instructions[current_frame.ip] as usize].clone();
+                    let val = self.globals[chunk.instructions[current_frame.ip] as usize];
                     current_frame.ip += 1;
                     self.stack.push(val);
                 }
@@ -233,8 +232,8 @@ impl VM {
                             };
 
                             // Push the closure's upvalues onto the stack
-                            for upval in closure.upvalues.iter() {
-                                self.stack.push(upval.clone());
+                            for capture in closure.captures.iter() {
+                                self.stack.push(*capture);
                             }
 
                             self.frames.push(current_frame);
@@ -283,7 +282,7 @@ impl VM {
                     let closure = self.stack.get_at(current_frame.slot_offset);
                     match closure {
                         Value::Closure(closure) => {
-                            let capture = closure.upvalues[index].clone();
+                            let capture = closure.captures[index];
                             self.stack.push(capture);
                         }
                         _ => unreachable!("Expected closure on stack"),
@@ -296,10 +295,10 @@ impl VM {
     fn alloc_closure(
         &mut self,
         function: Gc<Function>,
-        upvalues: Vec<Value>,
+        captures: Vec<Value>,
         current_frame: &CallFrame,
     ) -> Value {
-        let closure = self.gc.alloc(Closure { function, upvalues });
+        let closure = self.gc.alloc(Closure { function, captures });
         if self.gc.should_collect() {
             self.gc.mark(closure);
             self.mark_roots(current_frame);

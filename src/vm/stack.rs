@@ -1,5 +1,4 @@
 use crate::vm::value::Value;
-use std::mem::replace;
 
 #[derive(Debug)]
 pub struct Stack<const SIZE: usize> {
@@ -19,13 +18,13 @@ impl<const SIZE: usize> Stack<SIZE> {
 impl<const SIZE: usize> Stack<SIZE> {
     pub fn pop(&mut self) -> Value {
         self.top -= 1;
-        replace(&mut self.buffer[self.top], Value::Nil)
+        self.buffer[self.top]
     }
     pub fn set_at(&mut self, index: usize, value: Value) {
         self.buffer[index] = value;
     }
     pub fn get_at(&self, index: usize) -> Value {
-        self.buffer[index].clone()
+        self.buffer[index]
     }
     pub fn push(&mut self, value: Value) {
         self.buffer[self.top] = value;
@@ -34,6 +33,10 @@ impl<const SIZE: usize> Stack<SIZE> {
     #[allow(dead_code)]
     pub fn get_mut(&mut self) -> &mut Value {
         &mut self.buffer[self.top - 1]
+    }
+
+    pub fn get_top(&self) -> Value {
+        self.buffer[self.top - 1]
     }
 
     pub fn truncate(&mut self, index: usize) {
