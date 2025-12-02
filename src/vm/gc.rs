@@ -1,9 +1,11 @@
 use crate::vm::value::{Closure, Function, Value};
+use std::alloc::{GlobalAlloc, Layout, System};
 use std::collections::VecDeque;
 use std::fmt::{Debug, Formatter};
-use std::mem::size_of;
 use std::ops::Deref;
 use std::ptr::NonNull;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering::Relaxed;
 
 /// Trait for types that can be traced by the garbage collector
 pub trait Trace {
@@ -14,7 +16,6 @@ struct HeapHeader {
     trace_fn: unsafe fn(*mut u8, &mut GarbageCollector),
     drop_fn: unsafe fn(*mut u8),
     is_marked: bool,
-    size: usize,
 }
 
 #[repr(C)]
@@ -66,7 +67,6 @@ pub struct GarbageCollector {
     next_gc: usize,
     objects: Vec<NonNull<HeapHeader>>,
     gray_stack: VecDeque<NonNull<HeapHeader>>,
-    pub allocated: usize,
 }
 
 impl GarbageCollector {
@@ -77,7 +77,6 @@ impl GarbageCollector {
             next_gc: 1024 * 1024,
             objects: Vec::with_capacity(1024),
             gray_stack: VecDeque::new(),
-            allocated: 0,
         }
     }
 
@@ -91,7 +90,7 @@ impl GarbageCollector {
         #[cfg(feature = "debug_gc")]
         println!("GC Collected: {} bytes", start_size - self.allocated);
 
-        if self.allocated > self.next_gc {
+        if ALLOCATED.load(Relaxed) > self.next_gc {
             self.grow();
         }
     }
@@ -111,21 +110,17 @@ impl GarbageCollector {
             }
         }
 
-        let size = size_of::<GcBox<T>>();
-
         let gc_box = Box::new(GcBox {
             header: HeapHeader {
                 is_marked: false,
                 trace_fn: trace::<T>,
                 drop_fn: drop::<T>,
-                size,
             },
             value,
         });
 
         let ptr = NonNull::new(Box::into_raw(gc_box)).unwrap();
 
-        self.allocated += size;
         self.objects.push(ptr.cast());
 
         Gc { ptr }
@@ -160,7 +155,7 @@ impl GarbageCollector {
         return true;
 
         #[cfg(not(feature = "stress_gc"))]
-        return self.allocated > self.next_gc;
+        return ALLOCATED.load(Relaxed) > self.next_gc;
     }
 
     fn grow(&mut self) {
@@ -181,15 +176,12 @@ impl GarbageCollector {
     }
 
     fn sweep(&mut self) {
-        let allocated_ref = &mut self.allocated;
-
         self.objects.retain(|ptr| unsafe {
             let header = ptr.as_ref();
             if header.is_marked {
                 (*ptr.as_ptr()).is_marked = false;
                 true
             } else {
-                *allocated_ref -= header.size;
                 (header.drop_fn)(ptr.as_ptr() as *mut u8);
                 false
             }
@@ -227,3 +219,30 @@ impl Trace for Closure {
         gc.mark(self.function);
     }
 }
+
+#[cfg(not(feature = "stress_gc"))]
+struct Counter;
+
+static ALLOCATED: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(not(feature = "stress_gc"))]
+unsafe impl GlobalAlloc for Counter {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        let ret = unsafe { System.alloc(layout) };
+        if !ret.is_null() {
+            ALLOCATED.fetch_add(layout.size(), Relaxed);
+        }
+        ret
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        unsafe {
+            System.dealloc(ptr, layout);
+        }
+        ALLOCATED.fetch_sub(layout.size(), Relaxed);
+    }
+}
+
+#[cfg(not(feature = "stress_gc"))]
+#[global_allocator]
+static A: Counter = Counter;

@@ -120,7 +120,9 @@ impl VM {
                     let a = self.stack.pop();
                     match (a, b) {
                         (Value::String(a), Value::String(b)) => {
-                            let str = format!("{}{}", a.as_str(), b.as_str());
+                            let mut str = String::with_capacity(a.len() + b.len());
+                            str.push_str(a.as_str());
+                            str.push_str(b.as_str());
                             let val = self.alloc_string(str, &current_frame);
                             self.stack.push(val);
                         }
@@ -737,5 +739,21 @@ mod tests {
         }
         "#;
         execute_source(src, true, "run", true);
+    }
+
+    #[test]
+    fn string_concatenation() {
+        let src = r#"
+            let str = "Hello";
+            let i = 1;
+            while i < 1000 {
+                i += 1;
+                str += "a";
+            }
+            // 2,368305 -> 1,7654
+            // for 1000000: 22s
+            print(str);
+            "#;
+        execute_source(src, false, "run", true);
     }
 }
