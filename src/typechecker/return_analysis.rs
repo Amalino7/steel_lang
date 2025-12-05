@@ -1,5 +1,6 @@
-use crate::parser::ast::{Stmt, Type};
+use crate::parser::ast::Stmt;
 use crate::typechecker::error::TypeCheckerError;
+use crate::typechecker::type_ast::Type;
 use crate::typechecker::TypeChecker;
 
 impl<'src> TypeChecker<'src> {
@@ -19,7 +20,7 @@ impl<'src> TypeChecker<'src> {
         match stmt {
             Stmt::Expression(_) => Ok(()),
             Stmt::Let { .. } => Ok(()),
-            Stmt::Block { body, id: _ } => {
+            Stmt::Block { body, .. } => {
                 for stmt in body {
                     self.check_stmt_returns(stmt)?;
                 }
@@ -36,10 +37,15 @@ impl<'src> TypeChecker<'src> {
                 self.check_stmt_returns(then_branch)
             }
             Stmt::While { body, .. } => self.check_stmt_returns(body),
-            Stmt::Function { body, type_, .. } => {
+            Stmt::Function {
+                name,
+                params,
+                body,
+                type_,
+            } => {
                 let mut returns = false;
-                let return_type = if let Type::Function { return_type, .. } = type_ {
-                    return_type.clone()
+                let return_type = if let Some(Type::Function(func)) = Type::from_ast(type_) {
+                    func.return_type.clone()
                 } else {
                     unreachable!()
                 };
@@ -57,7 +63,7 @@ impl<'src> TypeChecker<'src> {
                     }
                 }
 
-                if !returns && *return_type != Type::Void {
+                if !returns && return_type != Type::Void {
                     Err(TypeCheckerError::MissingReturnStatement {
                         line: stmt.get_line(),
                     })
@@ -72,7 +78,7 @@ impl<'src> TypeChecker<'src> {
         match stmt {
             Stmt::Expression(_) => false,
             Stmt::Let { .. } => false,
-            Stmt::Block { body, id: _id } => body.iter_mut().any(|e| self.stmt_returns(e)),
+            Stmt::Block { body, .. } => body.iter_mut().any(|e| self.stmt_returns(e)),
             Stmt::If {
                 then_branch,
                 else_branch,

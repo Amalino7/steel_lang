@@ -13,7 +13,6 @@ pub struct Parser<'src> {
     scanner: Scanner<'src>,
     previous_token: Token<'src>,
     current_token: Token<'src>,
-    node_id: usize,
 }
 macro_rules! check_token_type {
     ($parser:expr, $( $token_type:pat $(,)?)*) => {
@@ -46,12 +45,7 @@ impl<'src> Parser<'src> {
             scanner,
             previous_token: start_token.clone(),
             current_token: start_token,
-            node_id: 0,
         }
-    }
-    fn get_node_id(&mut self) -> usize {
-        self.node_id += 1;
-        self.node_id - 1
     }
     fn advance(&mut self) -> Result<(), ParserError<'src>> {
         self.previous_token = self.current_token.clone();
@@ -139,28 +133,27 @@ impl<'src> Parser<'src> {
 
 #[cfg(test)]
 mod tests {
-    use crate::parser::ast::{Expr, Literal, Stmt, Type};
+    use crate::parser::ast::{Expr, Literal, Stmt, TypeAst};
     use crate::parser::Parser;
     use crate::scanner::Scanner;
     use crate::token::{Token, TokenType};
 
-    fn string(str: &str, line: usize) -> Box<Expr> {
+    fn string(str: &str, line: u32) -> Box<Expr> {
         Box::new(Expr::Literal {
             literal: Literal::String(String::from(str)),
             line,
         })
     }
-    fn number(num: f64, line: usize) -> Box<Expr<'static>> {
+    fn number(num: f64, line: u32) -> Box<Expr<'static>> {
         Box::new(Expr::Literal {
             literal: Literal::Number(num),
             line,
         })
     }
 
-    fn var(name: &'static str, line: usize, id: usize) -> Box<Expr<'static>> {
+    fn var(name: &'static str, line: u32, id: usize) -> Box<Expr<'static>> {
         Box::new(Expr::Variable {
             name: Token::new(TokenType::Identifier, line, name),
-            id,
         })
     }
 
@@ -244,8 +237,7 @@ mod tests {
                 lexeme: "a",
             },
             value: *number(10.0, 2),
-            type_info: Type::Number,
-            id: 0,
+            type_info: TypeAst::Named("number"),
         });
         expected.push(Stmt::While {
             condition: Expr::Logical {
@@ -274,6 +266,11 @@ mod tests {
                 }),
             },
             body: Box::new(Stmt::Block {
+                brace_token: Token {
+                    token_type: TokenType::LeftBrace,
+                    line: 3,
+                    lexeme: "{",
+                },
                 body: vec![Stmt::Expression(Expr::Assignment {
                     identifier: Token::new(TokenType::Identifier, 4, "a"),
                     value: Box::new(Expr::Binary {
@@ -285,9 +282,7 @@ mod tests {
                         left: var("a", 4, 4),
                         right: number(1.0, 4),
                     }),
-                    id: 5,
                 })],
-                id: 6,
             }),
         });
         assert_eq!(res, expected);
@@ -299,17 +294,6 @@ mod tests {
         let mut parser = Parser::new(scanner);
         let res = parser.parse();
         assert!(res.is_err(), "Parser should error on missing semicolon");
-    }
-
-    #[test]
-    fn test_parser_error_invalid_type_identifier() {
-        let source = "let a: foo = 10;";
-        let scanner = Scanner::new(source);
-        let mut parser = Parser::new(scanner);
-        assert!(
-            parser.parse().is_err(),
-            "Parser should error on invalid type identifier"
-        );
     }
 
     #[test]

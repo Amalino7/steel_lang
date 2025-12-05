@@ -66,7 +66,7 @@ pub fn execute_source(source: &str, debug: bool, mode: &str, force: bool) {
     }
 
     let mut gc = GarbageCollector::new();
-    let compiler = Compiler::new(analysis, "main".to_string(), &mut gc);
+    let compiler = Compiler::new(todo!("readd type"), "main".to_string(), &mut gc);
     let func = compiler.compile(&ast);
 
     if debug {
@@ -75,7 +75,7 @@ pub fn execute_source(source: &str, debug: bool, mode: &str, force: bool) {
         println!("===================");
     }
 
-    let mut vm = VM::new(analysis.global_count, gc);
+    let mut vm = VM::new(0, gc);
     vm.set_native_functions(natives);
 
     let result = vm.run(func);

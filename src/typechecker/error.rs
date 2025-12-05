@@ -1,45 +1,49 @@
-use crate::parser::ast::Type;
+use crate::typechecker::type_ast::Type;
 
 #[derive(Debug)]
 pub enum TypeCheckerError {
+    UndefinedType {
+        name: String,
+        line: u32,
+    },
     UndefinedVariable {
         name: String,
-        line: usize,
+        line: u32,
     },
     CalleeIsNotAFunction {
         found: Type,
-        line: usize,
+        line: u32,
     },
     TypeMismatch {
         expected: Type,
         found: Type,
-        line: usize,
+        line: u32,
         message: &'static str,
     },
     IncorrectArity {
         callee_name: String,
         expected: usize,
         found: usize,
-        line: usize,
+        line: u32,
     },
     InvalidReturnOutsideFunction {
-        line: usize,
+        line: u32,
     },
     FunctionParameterTypeMismatch {
         expected: Type,
         found: Type,
         param_index: usize,
-        line: usize,
+        line: u32,
     },
     UnreachableCode {
-        line: usize,
+        line: u32,
     },
     MissingReturnStatement {
-        line: usize,
+        line: u32,
     },
     AssignmentToCapturedVariable {
         name: String,
-        line: usize,
+        line: u32,
     },
 }
 impl std::fmt::Display for TypeCheckerError {
@@ -110,6 +114,9 @@ impl std::fmt::Display for TypeCheckerError {
                     "[line {}] Error: Cannot assign to captured variable '{}'.",
                     line, name
                 )
+            }
+            TypeCheckerError::UndefinedType { name, line } => {
+                write!(f, "[line {}] Error: Undefined type '{}'.", line, name)
             }
         }
     }

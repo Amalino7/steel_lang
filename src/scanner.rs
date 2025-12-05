@@ -6,7 +6,7 @@ pub struct Scanner<'src> {
     key_words: HashMap<&'static str, TokenType>,
     start: usize,
     current: usize,
-    line: usize,
+    line: u32,
 }
 
 impl<'src> Scanner<'src> {

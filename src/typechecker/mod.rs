@@ -1,7 +1,8 @@
-use crate::compiler::analysis::{AnalysisInfo, ResolvedVar};
-use crate::parser::ast::{Stmt, Type};
+use crate::compiler::analysis::ResolvedVar;
+use crate::parser::ast::Stmt;
 use crate::stdlib::NativeDef;
 use crate::typechecker::error::TypeCheckerError;
+use crate::typechecker::type_ast::{StmtKind, Type, TypedStmt};
 use std::collections::HashMap;
 
 pub mod error;
@@ -9,6 +10,7 @@ mod expressions;
 mod return_analysis;
 mod statements;
 mod tests;
+pub mod type_ast;
 
 #[derive(Debug, PartialEq, Clone)]
 enum FunctionContext {
@@ -17,14 +19,18 @@ enum FunctionContext {
 }
 
 struct VariableContext<'src> {
-    type_: Type,
+    type_info: Type,
     name: &'src str,
     index: usize,
 }
 
 impl<'src> VariableContext<'src> {
-    fn new(name: &'src str, type_: Type, index: usize) -> Self {
-        VariableContext { type_, name, index }
+    fn new(name: &'src str, type_info: Type, index: usize) -> Self {
+        VariableContext {
+            type_info,
+            name,
+            index,
+        }
     }
 }
 
@@ -43,7 +49,6 @@ struct Scope<'src> {
 pub struct TypeChecker<'src> {
     current_function: FunctionContext,
     variable_scope: Vec<Scope<'src>>,
-    analysis_info: AnalysisInfo,
     natives: &'src [NativeDef],
     closures: Vec<&'src str>,
 }
@@ -55,7 +60,6 @@ impl<'src> TypeChecker<'src> {
         TypeChecker {
             current_function: FunctionContext::None,
             variable_scope: vec![],
-            analysis_info: AnalysisInfo::new(),
             natives: &[],
             closures: vec![],
         }
@@ -64,33 +68,42 @@ impl<'src> TypeChecker<'src> {
         TypeChecker {
             current_function: FunctionContext::None,
             variable_scope: vec![],
-            analysis_info: AnalysisInfo::new(),
             natives,
             closures: vec![],
         }
     }
 
-    pub fn check(
-        &mut self,
-        ast: &mut [Stmt<'src>],
-    ) -> Result<&AnalysisInfo, Vec<TypeCheckerError>> {
+    pub fn check(&mut self, ast: &mut [Stmt<'src>]) -> Result<TypedStmt, Vec<TypeCheckerError>> {
         let mut errors = vec![];
         self.begin_scope();
+        let mut typed_ast = vec![];
 
         self.register_globals(self.natives);
         self.declare_global_functions(ast, &mut errors); // First pass declare all global functions.
         for stmt in ast.iter_mut() {
-            if let Err(e) = self.check_stmt(stmt) {
-                errors.push(e);
+            match self.check_stmt(stmt) {
+                Ok(stmt) => {
+                    typed_ast.push(stmt);
+                }
+                Err(e) => {
+                    errors.push(e);
+                }
             }
         }
+        let global_count = self.variable_scope.last().unwrap().variables.len() as u32;
         self.end_scope();
 
         self.check_returns(ast, &mut errors);
         if !errors.is_empty() {
             Err(errors)
         } else {
-            Ok(&self.analysis_info)
+            Ok(TypedStmt {
+                stmt: StmtKind::Global {
+                    global_count,
+                    stmt: typed_ast,
+                },
+                line: 1,
+            })
         }
     }
     fn begin_function_scope(&mut self) {
@@ -152,12 +165,12 @@ impl<'src> TypeChecker<'src> {
         for scope in self.variable_scope.iter().rev() {
             if let Some(var) = scope.variables.get(name) {
                 return if scope.scope_type == ScopeType::Global {
-                    Some((&var, ResolvedVar::Global(var.index)))
+                    Some((&var, ResolvedVar::Global(var.index as u16)))
                 } else if is_closure {
                     self.closures.push(name);
-                    Some((&var, ResolvedVar::Closure(self.closures.len() - 1)))
+                    Some((&var, ResolvedVar::Closure((self.closures.len() - 1) as u8)))
                 } else {
-                    Some((&var, ResolvedVar::Local(var.index)))
+                    Some((&var, ResolvedVar::Local(var.index as u8)))
                 };
             }
 

@@ -47,7 +47,6 @@ impl<'src> Parser<'src> {
                 return Ok(Expr::Assignment {
                     identifier: name,
                     value: Box::new(value),
-                    id: self.get_node_id(),
                 });
             }
             return Err(self.error_current("Invalid assignment target."));
@@ -60,10 +59,7 @@ impl<'src> Parser<'src> {
         ) {
             if let Expr::Variable { name, .. } = expr {
                 let op = self.previous_token.clone();
-                let left = Expr::Variable {
-                    name: name.clone(),
-                    id: self.get_node_id(),
-                };
+                let left = Expr::Variable { name: name.clone() };
                 let right = self.assignment()?;
 
                 let binary = match op.token_type {
@@ -93,7 +89,6 @@ impl<'src> Parser<'src> {
                 let target = Expr::Assignment {
                     identifier: name,
                     value: Box::new(binary),
-                    id: self.get_node_id(),
                 };
                 return Ok(target);
             }
@@ -221,7 +216,6 @@ impl<'src> Parser<'src> {
             ))), // TODO Add string parsing
             TokT::Identifier => Ok(Expr::Variable {
                 name: self.previous_token.clone(),
-                id: self.get_node_id(),
             }),
             TokT::LeftParen => {
                 let expr = self.expression()?;

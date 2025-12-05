@@ -1,5 +1,6 @@
-use crate::parser::ast::{Stmt, Type};
+use crate::parser::ast::Stmt;
 use crate::typechecker::error::TypeCheckerError;
+use crate::typechecker::type_ast::{StmtKind, Type, TypedStmt};
 use crate::typechecker::{FunctionContext, TypeChecker};
 use std::mem::replace;
 
@@ -15,65 +16,80 @@ impl<'src> TypeChecker<'src> {
                 params: _,
                 type_: type_info,
                 body: _,
-                id,
             } = stmt
             {
-                let res = self.declare_variable(name.lexeme, type_info.clone());
+                let res = self.declare_variable(
+                    name.lexeme,
+                    Type::from_ast(type_info).expect("Structs not yet supported."),
+                );
+
                 if let Err(e) = res {
                     errors.push(e);
                 }
-
-                let (_, var_ctx) = self
-                    .lookup_variable(name.lexeme)
-                    .expect("Variable was just added to the scope.");
-
-                self.analysis_info.add_var(*id, var_ctx);
             }
         }
     }
 
-    pub(crate) fn check_stmt(&mut self, stmt: &mut Stmt<'src>) -> Result<(), TypeCheckerError> {
+    pub(crate) fn check_stmt(&mut self, stmt: &Stmt<'src>) -> Result<TypedStmt, TypeCheckerError> {
         match stmt {
-            Stmt::Expression(expr) => {
-                self.infer_expression(expr)?;
-            }
+            Stmt::Expression(expr) => Ok(TypedStmt {
+                stmt: StmtKind::Expr(self.infer_expression(expr)?),
+                line: stmt.get_line(),
+            }),
             Stmt::Let {
                 identifier,
                 value,
                 type_info,
-                id,
             } => {
-                let value_type = self.infer_expression(value)?;
-                if *type_info == Type::Unknown {
-                    *type_info = value_type.clone();
-                    self.declare_variable(identifier.lexeme, value_type)?;
-                } else if *type_info == value_type {
-                    self.declare_variable(identifier.lexeme, value_type)?;
+                let value_node = self.infer_expression(value)?;
+
+                let type_info =
+                    Type::from_ast(type_info).ok_or(TypeCheckerError::UndefinedType {
+                        name: type_info.to_string(),
+                        line: identifier.line,
+                    })?;
+
+                if type_info == Type::Unknown {
+                    self.declare_variable(identifier.lexeme, value_node.ty.clone())?;
+                } else if type_info == value_node.ty {
+                    self.declare_variable(identifier.lexeme, type_info)?;
                 } else {
                     return Err(TypeCheckerError::TypeMismatch {
                         expected: type_info.clone(),
-                        found: value_type,
+                        found: value_node.ty,
                         line: identifier.line,
                         message: "Expected the same type but found something else.",
                     });
                 }
 
-                let (_, var_ctx) = self
-                    .lookup_variable(identifier.lexeme)
-                    .expect("Variable was just added to the scope.");
-
-                self.analysis_info.add_var(*id, var_ctx);
+                Ok(TypedStmt {
+                    stmt: StmtKind::Let {
+                        target: self
+                            .lookup_variable(identifier.lexeme)
+                            .expect("variable just declared")
+                            .1,
+                        value: value_node,
+                    },
+                    line: identifier.line,
+                })
             }
-            Stmt::Block { body, id } => {
+            Stmt::Block { body, brace_token } => {
                 self.begin_scope();
-                for stmt in body {
-                    self.check_stmt(stmt)?;
-                }
+                let stmts = body
+                    .iter()
+                    .map(|stmt| self.check_stmt(stmt))
+                    .collect::<Result<Vec<TypedStmt>, TypeCheckerError>>()?;
 
-                self.analysis_info
-                    .drop_at_scope_end
-                    .insert(*id, self.variable_scope.last().unwrap().variables.len());
+                let variable_count = self.variable_scope.last().unwrap().variables.len() as u8;
                 self.end_scope();
+
+                Ok(TypedStmt {
+                    stmt: StmtKind::Block {
+                        stmts,
+                        variable_count,
+                    },
+                    line: brace_token.line,
+                })
             }
             Stmt::If {
                 condition,
@@ -81,50 +97,65 @@ impl<'src> TypeChecker<'src> {
                 else_branch,
             } => {
                 let cond_type = self.infer_expression(condition)?;
-                self.check_stmt(then_branch)?;
-                if let Some(else_branch) = else_branch {
-                    self.check_stmt(else_branch)?;
-                }
-                if cond_type != Type::Boolean {
+                let then_branch = self.check_stmt(then_branch)?;
+                let else_branch = if let Some(else_branch) = else_branch {
+                    Some(Box::new(self.check_stmt(else_branch)?))
+                } else {
+                    None
+                };
+                if cond_type.ty != Type::Boolean {
                     return Err(TypeCheckerError::TypeMismatch {
                         expected: Type::Boolean,
-                        found: cond_type,
+                        found: cond_type.ty,
                         line: condition.get_line(),
                         message: "If condition must be a boolean.",
                     });
                 }
+
+                Ok(TypedStmt {
+                    stmt: StmtKind::If {
+                        condition: cond_type,
+                        then_branch: Box::new(then_branch),
+                        else_branch,
+                    },
+                    line: condition.get_line(),
+                })
             }
             Stmt::While { condition, body } => {
                 let cond_type = self.infer_expression(condition)?;
-                self.check_stmt(body)?;
-                if cond_type != Type::Boolean {
+                let body = self.check_stmt(body)?;
+                if cond_type.ty != Type::Boolean {
                     return Err(TypeCheckerError::TypeMismatch {
                         expected: Type::Boolean,
-                        found: cond_type,
+                        found: cond_type.ty,
                         line: condition.get_line(),
-                        message: "If condition must be a boolean.",
+                        message: "While condition must be a boolean.",
                     });
                 }
+
+                Ok(TypedStmt {
+                    stmt: StmtKind::While {
+                        condition: cond_type,
+                        body: Box::new(body),
+                    },
+                    line: condition.get_line(),
+                })
             }
             Stmt::Function {
                 name,
                 params,
                 body,
                 type_,
-                id,
             } => {
                 // global functions are already declared
+                let type_ = Type::from_ast(type_).expect("Structs not yet supported.");
                 if self.variable_scope.len() != 1 {
                     self.declare_variable(name.lexeme, type_.clone())?;
                 }
 
                 let enclosing_function_context = self.current_function.clone();
-                if let Type::Function {
-                    param_types,
-                    return_type,
-                } = type_.clone()
-                {
-                    self.current_function = FunctionContext::Function(*return_type.clone());
+                if let Type::Function(func) = &type_ {
+                    self.current_function = FunctionContext::Function(func.return_type.clone());
 
                     let prev_closures = replace(&mut self.closures, vec![]);
                     self.begin_function_scope();
@@ -132,29 +163,38 @@ impl<'src> TypeChecker<'src> {
                     self.declare_variable(name.lexeme, type_.clone())?;
                     // Declare parameters.
                     for (i, param) in params.iter().enumerate() {
-                        self.declare_variable(param.lexeme, param_types[i].clone())?;
+                        self.declare_variable(param.lexeme, func.param_types[i].clone())?;
                     }
-                    for stmt in body {
-                        self.check_stmt(stmt)?;
-                    }
+
+                    let func_body = body
+                        .iter()
+                        .map(|stmt| self.check_stmt(stmt))
+                        .collect::<Result<Vec<TypedStmt>, TypeCheckerError>>()?;
 
                     self.end_scope();
                     self.current_function = enclosing_function_context;
 
-                    let (_, var_ctx) = self
+                    let (_, func_location) = self
                         .lookup_variable(name.lexeme)
                         .expect("Variable was just added to the scope.");
 
-                    self.analysis_info.add_var(*id, var_ctx);
-
                     let old_closures = replace(&mut self.closures, prev_closures);
+                    let mut captures = vec![];
                     for clos_var in old_closures {
                         let (_, var_ctx) = self
                             .lookup_variable(clos_var)
                             .expect("Variable should exist in upper scope.");
-
-                        self.analysis_info.add_capture(*id, var_ctx);
+                        captures.push(var_ctx);
                     }
+                    Ok(TypedStmt {
+                        stmt: StmtKind::Function {
+                            target: func_location,
+                            name: Box::from(String::from(name.lexeme)),
+                            body: Box::from(func_body),
+                            captures: Box::from(captures),
+                        },
+                        line: name.line,
+                    })
                 } else {
                     unreachable!()
                 }
@@ -162,21 +202,25 @@ impl<'src> TypeChecker<'src> {
             Stmt::Return(expr) => {
                 let return_type = self.infer_expression(expr)?;
                 if let FunctionContext::Function(func_return_type) = &self.current_function {
-                    if return_type != *func_return_type {
-                        return Err(TypeCheckerError::TypeMismatch {
+                    if return_type.ty != *func_return_type {
+                        Err(TypeCheckerError::TypeMismatch {
                             expected: func_return_type.clone(),
-                            found: return_type,
+                            found: return_type.ty.clone(),
                             line: expr.get_line(),
                             message: "Mismatched return types. Expected a function that returns a different type than the function that is being called.",
-                        });
+                        })
+                    } else {
+                        Ok(TypedStmt {
+                            stmt: StmtKind::Return(return_type),
+                            line: expr.get_line(),
+                        })
                     }
                 } else {
-                    return Err(TypeCheckerError::InvalidReturnOutsideFunction {
+                    Err(TypeCheckerError::InvalidReturnOutsideFunction {
                         line: expr.get_line(),
-                    });
+                    })
                 }
             }
         }
-        Ok(())
     }
 }

@@ -82,13 +82,16 @@ impl GarbageCollector {
 
     pub fn collect(&mut self) {
         #[cfg(feature = "debug_gc")]
-        let start_size = self.allocated;
+        let start_size = ALLOCATED.load(Relaxed);
 
         self.trace_ref();
         self.sweep();
 
         #[cfg(feature = "debug_gc")]
-        println!("GC Collected: {} bytes", start_size - self.allocated);
+        println!(
+            "GC Collected: {} bytes",
+            start_size - ALLOCATED.load(Relaxed)
+        );
 
         if ALLOCATED.load(Relaxed) > self.next_gc {
             self.grow();
@@ -217,6 +220,9 @@ impl Trace for Function {
 impl Trace for Closure {
     fn trace(&self, gc: &mut GarbageCollector) {
         gc.mark(self.function);
+        for capture in self.captures.iter() {
+            gc.mark_value(capture)
+        }
     }
 }
 
