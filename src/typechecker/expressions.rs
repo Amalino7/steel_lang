@@ -3,7 +3,7 @@ use crate::parser::ast::{Expr, Literal};
 use crate::token::{Token, TokenType};
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::error::TypeCheckerError::AssignmentToCapturedVariable;
-use crate::typechecker::type_ast::{BinaryOp, ExprKind, Type, TypedExpr, UnaryOp};
+use crate::typechecker::type_ast::{BinaryOp, ExprKind, LogicalOp, Type, TypedExpr, UnaryOp};
 use crate::typechecker::TypeChecker;
 
 impl<'src> TypeChecker<'src> {
@@ -162,14 +162,14 @@ impl<'src> TypeChecker<'src> {
                 }
 
                 let op = match operator.token_type {
-                    TokenType::And => BinaryOp::And,
-                    TokenType::Or => BinaryOp::Or,
+                    TokenType::And => LogicalOp::And,
+                    TokenType::Or => LogicalOp::Or,
                     _ => unreachable!("Invalid logical operator"),
                 };
 
                 Ok(TypedExpr {
                     ty: Type::Boolean,
-                    expr: ExprKind::Binary {
+                    expr: ExprKind::Logical {
                         left: Box::new(left_typed),
                         operator: op,
                         right: Box::new(right_typed),
@@ -304,11 +304,15 @@ impl<'src> TypeChecker<'src> {
                 if (left_type == Type::Number && right_type == Type::Number)
                     || (left_type == Type::String && right_type == Type::String)
                 {
-                    let op = match operator.token_type {
-                        TokenType::Greater => BinaryOp::Greater,
-                        TokenType::GreaterEqual => BinaryOp::GreaterEqual,
-                        TokenType::Less => BinaryOp::Less,
-                        TokenType::LessEqual => BinaryOp::LessEqual,
+                    let op = match (operator.token_type.clone(), left_type) {
+                        (TokenType::Greater, Type::String) => BinaryOp::GreaterString,
+                        (TokenType::GreaterEqual, Type::String) => BinaryOp::GreaterEqualString,
+                        (TokenType::Less, Type::String) => BinaryOp::LessString,
+                        (TokenType::LessEqual, Type::String) => BinaryOp::LessEqualString,
+                        (TokenType::GreaterEqual, Type::Number) => BinaryOp::GreaterEqualNumber,
+                        (TokenType::Greater, Type::Number) => BinaryOp::GreaterNumber,
+                        (TokenType::LessEqual, Type::Number) => BinaryOp::LessEqualNumber,
+                        (TokenType::Less, Type::Number) => BinaryOp::LessNumber,
                         _ => unreachable!(),
                     };
 
@@ -332,11 +336,17 @@ impl<'src> TypeChecker<'src> {
             }
             TokenType::EqualEqual | TokenType::BangEqual => {
                 if left_type == right_type {
+                    let op = match left_type {
+                        Type::Number => BinaryOp::EqualEqualNumber,
+                        Type::String => BinaryOp::EqualEqualString,
+                        _ => BinaryOp::EqualEqual,
+                    };
+
                     let binary_expr = TypedExpr {
                         ty: Type::Boolean,
                         expr: ExprKind::Binary {
                             left: Box::new(left_typed),
-                            operator: BinaryOp::EqualEqual,
+                            operator: op,
                             right: Box::new(right_typed),
                         },
                         line: operator.line,

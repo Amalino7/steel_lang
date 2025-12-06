@@ -190,7 +190,13 @@ impl<'src> TypeChecker<'src> {
                         stmt: StmtKind::Function {
                             target: func_location,
                             name: Box::from(String::from(name.lexeme)),
-                            body: Box::from(func_body),
+                            body: Box::from(TypedStmt {
+                                stmt: StmtKind::Block {
+                                    stmts: func_body,
+                                    variable_count: 0,
+                                },
+                                line: name.line,
+                            }),
                             captures: Box::from(captures),
                         },
                         line: name.line,

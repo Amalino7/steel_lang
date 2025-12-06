@@ -2,6 +2,7 @@ use crate::compiler::Compiler;
 use crate::parser::Parser;
 use crate::scanner::Scanner;
 use crate::stdlib::get_natives;
+use crate::typechecker::type_ast::StmtKind;
 use crate::typechecker::TypeChecker;
 use crate::vm::disassembler::disassemble_chunk;
 use crate::vm::gc::GarbageCollector;
@@ -50,7 +51,7 @@ pub fn execute_source(source: &str, debug: bool, mode: &str, force: bool) {
         return;
     }
 
-    let analysis = analysis.unwrap();
+    let typed_ast = analysis.unwrap();
 
     if mode == "check" {
         println!("Type checking has passed.");
@@ -59,23 +60,27 @@ pub fn execute_source(source: &str, debug: bool, mode: &str, force: bool) {
             println!("{:#?}", ast);
             println!("=============");
             println!("=== Type analysis ===");
-            println!("Type analysis: {:#?}", analysis);
+            println!("Typed ast: {:#?}", typed_ast);
             println!("====================");
         }
         return;
     }
 
     let mut gc = GarbageCollector::new();
-    let compiler = Compiler::new(todo!("readd type"), "main".to_string(), &mut gc);
-    let func = compiler.compile(&ast);
+    let compiler = Compiler::new("main".to_string(), &mut gc);
+    let func = compiler.compile(&typed_ast);
 
     if debug {
         println!("=== Disassembly ===");
         disassemble_chunk(&func.chunk, "main_script");
         println!("===================");
     }
+    let global_count = match typed_ast.stmt {
+        StmtKind::Global { global_count, stmt } => global_count,
+        _ => panic!("Global statement expected"),
+    };
 
-    let mut vm = VM::new(0, gc);
+    let mut vm = VM::new(global_count as usize, gc);
     vm.set_native_functions(natives);
 
     let result = vm.run(func);

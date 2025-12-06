@@ -56,11 +56,17 @@ pub fn disassemble_instruction(
         Opcode::Equal => {
             println!("Equal")
         }
-        Opcode::Greater => {
-            println!("Greater")
+        Opcode::GreaterString => {
+            println!("GreaterString")
         }
-        Opcode::Less => {
-            println!("Less")
+        Opcode::LessString => {
+            println!("LessString")
+        }
+        Opcode::GreaterNumber => {
+            println!("GreaterNumber")
+        }
+        Opcode::LessNumber => {
+            println!("LessNumber")
         }
         Opcode::Pop => {
             println!("Pop")
@@ -108,6 +114,8 @@ pub fn disassemble_instruction(
             offset += 1;
             println!("GetCapture {}", bytecode[offset]);
         }
+        Opcode::EqualString => println!("EqualString"),
+        Opcode::EqualNumber => println!("EqualNumber"),
     };
     offset + 1
 }

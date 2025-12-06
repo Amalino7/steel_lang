@@ -7,7 +7,6 @@ use std::ops::{Add, Div, Mul, Neg, Not, Sub};
 #[derive(Debug)]
 pub struct Function {
     pub name: String,
-    pub arity: usize,
     pub chunk: Chunk,
 }
 
@@ -18,8 +17,8 @@ pub struct Closure {
 }
 
 impl Function {
-    pub fn new(name: String, arity: usize, chunk: Chunk) -> Function {
-        Function { name, arity, chunk }
+    pub fn new(name: String, chunk: Chunk) -> Function {
+        Function { name, chunk }
     }
 }
 

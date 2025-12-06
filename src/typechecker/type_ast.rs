@@ -100,6 +100,13 @@ pub enum UnaryOp {
     Negate,
     Not,
 }
+
+#[derive(Debug)]
+pub enum LogicalOp {
+    Or,
+    And,
+}
+
 #[derive(Debug)]
 pub enum BinaryOp {
     Concat,
@@ -109,14 +116,18 @@ pub enum BinaryOp {
     Multiply,
     Divide,
 
-    Less,
-    LessEqual,
-    Greater,
-    GreaterEqual,
-    EqualEqual,
+    LessNumber,
+    LessEqualNumber,
+    GreaterNumber,
+    GreaterEqualNumber,
+    EqualEqualNumber,
 
-    And,
-    Or,
+    LessString,
+    LessEqualString,
+    GreaterString,
+    GreaterEqualString,
+    EqualEqualString,
+    EqualEqual,
 }
 #[derive(Debug)]
 pub enum ExprKind {
@@ -129,6 +140,11 @@ pub enum ExprKind {
     Binary {
         left: Box<TypedExpr>,
         operator: BinaryOp,
+        right: Box<TypedExpr>,
+    },
+    Logical {
+        left: Box<TypedExpr>,
+        operator: LogicalOp,
         right: Box<TypedExpr>,
     },
     Assign {
@@ -173,7 +189,7 @@ pub enum StmtKind {
     Function {
         target: ResolvedVar,
         name: Box<str>, // reduces memory usage by 8 bytes
-        body: Box<[TypedStmt]>,
+        body: Box<TypedStmt>,
         captures: Box<[ResolvedVar]>,
     },
 }

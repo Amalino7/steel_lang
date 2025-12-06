@@ -148,15 +148,45 @@ impl VM {
                     let a = self.stack.pop();
                     self.stack.push(Value::Boolean(a == b));
                 }
-                Opcode::Greater => {
+                Opcode::GreaterNumber => {
                     let b = self.stack.pop();
                     let a = self.stack.pop();
-                    self.stack.push(Value::Boolean(a > b));
+                    match (a, b) {
+                        (Value::Number(a), Value::Number(b)) => {
+                            self.stack.push(Value::Boolean(a > b))
+                        }
+                        _ => unreachable!("Can only compare numbers"),
+                    }
                 }
-                Opcode::Less => {
+                Opcode::LessNumber => {
                     let b = self.stack.pop();
                     let a = self.stack.pop();
-                    self.stack.push(Value::Boolean(a < b))
+                    match (a, b) {
+                        (Value::Number(a), Value::Number(b)) => {
+                            self.stack.push(Value::Boolean(a < b))
+                        }
+                        _ => unreachable!("Can only compare numbers"),
+                    }
+                }
+                Opcode::GreaterString => {
+                    let b = self.stack.pop();
+                    let a = self.stack.pop();
+                    match (a, b) {
+                        (Value::String(a), Value::String(b)) => {
+                            self.stack.push(Value::Boolean(a.as_str() > b.as_str()))
+                        }
+                        _ => unreachable!("Can only compare strings"),
+                    }
+                }
+                Opcode::LessString => {
+                    let b = self.stack.pop();
+                    let a = self.stack.pop();
+                    match (a, b) {
+                        (Value::String(a), Value::String(b)) => {
+                            self.stack.push(Value::Boolean(a.as_str() < b.as_str()))
+                        }
+                        _ => unreachable!("Can only compare strings"),
+                    }
                 }
                 Opcode::Pop => {
                     self.stack.pop();
@@ -290,6 +320,26 @@ impl VM {
                         _ => unreachable!("Expected closure on stack"),
                     }
                 }
+                Opcode::EqualString => {
+                    let b = self.stack.pop();
+                    let a = self.stack.pop();
+                    match (a, b) {
+                        (Value::String(a), Value::String(b)) => {
+                            self.stack.push(Value::Boolean(a.as_str() == b.as_str()))
+                        }
+                        _ => unreachable!("Can only compare strings"),
+                    }
+                }
+                Opcode::EqualNumber => {
+                    let b = self.stack.pop();
+                    let a = self.stack.pop();
+                    match (a, b) {
+                        (Value::Number(a), Value::Number(b)) => {
+                            self.stack.push(Value::Boolean(a == b))
+                        }
+                        _ => unreachable!("Can only compare numbers"),
+                    }
+                }
             }
         }
     }
@@ -341,7 +391,7 @@ mod tests {
     #[test]
     fn test_simple_add() {
         let mut vm = VM::new(0, GarbageCollector::new());
-        let mut function = Function::new("Main".to_string(), 0, Chunk::new());
+        let mut function = Function::new("Main".to_string(), Chunk::new());
         function.chunk.write_constant(Value::Number(1.0), 1);
         function.chunk.write_constant(Value::Number(2.0), 2);
         function.chunk.write_op(Opcode::Add as u8, 3);
@@ -353,7 +403,7 @@ mod tests {
     fn test_complex_arithmetic() {
         let mut vm = VM::new(0, GarbageCollector::new());
 
-        let mut function = Function::new("Main".to_string(), 0, Chunk::new());
+        let mut function = Function::new("Main".to_string(), Chunk::new());
         function.chunk.write_constant(Value::Number(6.9), 1);
         function.chunk.write_constant(Value::Number(4.0), 2);
         function.chunk.write_constant(Value::Number(3.0), 3);
@@ -373,7 +423,7 @@ mod tests {
     #[test]
     fn test_constant_long() {
         let mut vm = VM::new(0, GarbageCollector::new());
-        let mut function = Function::new("Main".to_string(), 0, Chunk::new());
+        let mut function = Function::new("Main".to_string(), Chunk::new());
         function.chunk.write_constant(Value::Number(0.0), 1);
         for i in 1..300 {
             function.chunk.write_constant(Value::Number(i as f64), 1);
@@ -385,7 +435,7 @@ mod tests {
     #[test]
     fn test_boolean() {
         let mut vm = VM::new(0, GarbageCollector::new());
-        let mut function = Function::new("Main".to_string(), 0, Chunk::new());
+        let mut function = Function::new("Main".to_string(), Chunk::new());
         function.chunk.write_constant(Value::Boolean(true), 1);
         function.chunk.write_op(Opcode::Return as u8, 1);
         assert_eq!(vm.run(function), Value::Boolean(true));
