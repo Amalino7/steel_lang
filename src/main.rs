@@ -75,8 +75,8 @@ pub fn execute_source(source: &str, debug: bool, mode: &str, force: bool) {
         disassemble_chunk(&func.chunk, "main_script");
         println!("===================");
     }
-    let global_count = match typed_ast.stmt {
-        StmtKind::Global { global_count, stmt } => global_count,
+    let global_count = match typed_ast.kind {
+        StmtKind::Global { global_count, .. } => global_count,
         _ => panic!("Global statement expected"),
     };
 

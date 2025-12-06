@@ -151,7 +151,7 @@ mod tests {
         })
     }
 
-    fn var(name: &'static str, line: u32, id: usize) -> Box<Expr<'static>> {
+    fn var(name: &'static str, line: u32) -> Box<Expr<'static>> {
         Box::new(Expr::Variable {
             name: Token::new(TokenType::Identifier, line, name),
         })
@@ -247,7 +247,7 @@ mod tests {
                         line: 3,
                         lexeme: ">",
                     },
-                    left: var("a", 3, 1),
+                    left: var("a", 3),
                     right: number(0.0, 3),
                 }),
                 operator: Token {
@@ -261,7 +261,7 @@ mod tests {
                         line: 3,
                         lexeme: "<",
                     },
-                    left: var("a", 3, 2),
+                    left: var("a", 3),
                     right: number(20.0, 3),
                 }),
             },
@@ -279,7 +279,7 @@ mod tests {
                             line: 4,
                             lexeme: "+",
                         },
-                        left: var("a", 4, 4),
+                        left: var("a", 4),
                         right: number(1.0, 4),
                     }),
                 })],

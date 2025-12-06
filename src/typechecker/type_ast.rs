@@ -92,7 +92,7 @@ impl Display for Type {
 #[derive(Debug)]
 pub struct TypedExpr {
     pub ty: Type,
-    pub expr: ExprKind,
+    pub kind: ExprKind,
     pub line: u32,
 }
 #[derive(Debug)]
@@ -158,23 +158,24 @@ pub enum ExprKind {
 }
 #[derive(Debug)]
 pub struct TypedStmt {
-    pub stmt: StmtKind,
+    pub kind: StmtKind,
     pub line: u32,
+    pub type_info: Type,
 }
 #[derive(Debug)]
 pub enum StmtKind {
     Global {
         global_count: u32,
-        stmt: Vec<TypedStmt>,
+        stmts: Vec<TypedStmt>,
     },
-    Expr(TypedExpr),
+    Expression(TypedExpr),
     Return(TypedExpr),
     Let {
         target: ResolvedVar,
         value: TypedExpr,
     },
     Block {
-        stmts: Vec<TypedStmt>,
+        body: Vec<TypedStmt>,
         variable_count: u8,
     },
     If {
@@ -192,27 +193,4 @@ pub enum StmtKind {
         body: Box<TypedStmt>,
         captures: Box<[ResolvedVar]>,
     },
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::compiler::analysis::ResolvedVar;
-    use crate::parser::ast::{Expr, Stmt};
-    use crate::stdlib::debug_size;
-    use crate::typechecker::type_ast::{ExprKind, StmtKind, TypedExpr, TypedStmt};
-
-    #[test]
-    fn test_ast_size() {
-        debug_size::<TypedStmt>();
-        debug_size::<StmtKind>();
-        debug_size::<TypedExpr>();
-        debug_size::<ExprKind>();
-        debug_size::<ResolvedVar>();
-
-        // Old
-        debug_size::<Stmt>();
-        debug_size::<Expr>();
-
-        debug_size::<Box<str>>();
-    }
 }

@@ -205,10 +205,7 @@ impl Display for Stmt<'_> {
             }
             Stmt::While { condition, body } => write!(f, "while {} then {}", condition, body),
             Stmt::Function {
-                name,
-                params,
-                body,
-                type_,
+                name, params, body, ..
             } => {
                 write!(
                     f,

@@ -23,7 +23,7 @@ impl<'src> TypeChecker<'src> {
                     if operand_type == Type::Boolean {
                         Ok(TypedExpr {
                             ty: operand_type,
-                            expr: ExprKind::Unary {
+                            kind: ExprKind::Unary {
                                 operator: UnaryOp::Not,
                                 operand: Box::new(typed_operand),
                             },
@@ -41,7 +41,7 @@ impl<'src> TypeChecker<'src> {
                     if operand_type == Type::Number {
                         Ok(TypedExpr {
                             ty: operand_type,
-                            expr: ExprKind::Unary {
+                            kind: ExprKind::Unary {
                                 operator: UnaryOp::Negate,
                                 operand: Box::new(typed_operand),
                             },
@@ -70,7 +70,7 @@ impl<'src> TypeChecker<'src> {
                 if let Some((ctx, resolved)) = var {
                     Ok(TypedExpr {
                         ty: ctx.type_info.clone(),
-                        expr: ExprKind::GetVar(resolved),
+                        kind: ExprKind::GetVar(resolved),
                         line: name.line,
                     })
                 } else {
@@ -91,7 +91,7 @@ impl<'src> TypeChecker<'src> {
 
                 Ok(TypedExpr {
                     ty,
-                    expr: ExprKind::Literal(literal.clone()),
+                    kind: ExprKind::Literal(literal.clone()),
                     line: *line,
                 })
             }
@@ -119,7 +119,7 @@ impl<'src> TypeChecker<'src> {
                     // Assignments evaluate to the assigned value
                     Ok(TypedExpr {
                         ty: typed_value.ty.clone(),
-                        expr: ExprKind::Assign {
+                        kind: ExprKind::Assign {
                             target: resolved,
                             value: Box::new(typed_value),
                         },
@@ -169,7 +169,7 @@ impl<'src> TypeChecker<'src> {
 
                 Ok(TypedExpr {
                     ty: Type::Boolean,
-                    expr: ExprKind::Logical {
+                    kind: ExprKind::Logical {
                         left: Box::new(left_typed),
                         operator: op,
                         right: Box::new(right_typed),
@@ -208,7 +208,7 @@ impl<'src> TypeChecker<'src> {
                     Ok(TypedExpr {
                         ty: func.return_type.clone(),
                         line: callee_typed.line,
-                        expr: ExprKind::Call {
+                        kind: ExprKind::Call {
                             callee: Box::new(callee_typed),
                             arguments: typed_args,
                         },
@@ -247,7 +247,7 @@ impl<'src> TypeChecker<'src> {
 
                     Ok(TypedExpr {
                         ty: Type::Number,
-                        expr: ExprKind::Binary {
+                        kind: ExprKind::Binary {
                             left: Box::new(left_typed),
                             operator: op,
                             right: Box::new(right_typed),
@@ -271,7 +271,7 @@ impl<'src> TypeChecker<'src> {
                 if left_type == Type::Number && right_type == Type::Number {
                     Ok(TypedExpr {
                         ty: Type::Number,
-                        expr: ExprKind::Binary {
+                        kind: ExprKind::Binary {
                             left: Box::new(left_typed),
                             operator: BinaryOp::Add,
                             right: Box::new(right_typed),
@@ -281,7 +281,7 @@ impl<'src> TypeChecker<'src> {
                 } else if left_type == Type::String && right_type == Type::String {
                     Ok(TypedExpr {
                         ty: Type::String,
-                        expr: ExprKind::Binary {
+                        kind: ExprKind::Binary {
                             left: Box::new(left_typed),
                             operator: BinaryOp::Concat,
                             right: Box::new(right_typed),
@@ -318,7 +318,7 @@ impl<'src> TypeChecker<'src> {
 
                     Ok(TypedExpr {
                         ty: Type::Boolean,
-                        expr: ExprKind::Binary {
+                        kind: ExprKind::Binary {
                             left: Box::new(left_typed),
                             operator: op,
                             right: Box::new(right_typed),
@@ -344,7 +344,7 @@ impl<'src> TypeChecker<'src> {
 
                     let binary_expr = TypedExpr {
                         ty: Type::Boolean,
-                        expr: ExprKind::Binary {
+                        kind: ExprKind::Binary {
                             left: Box::new(left_typed),
                             operator: op,
                             right: Box::new(right_typed),
@@ -355,7 +355,7 @@ impl<'src> TypeChecker<'src> {
                     if operator.token_type == TokenType::BangEqual {
                         Ok(TypedExpr {
                             ty: Type::Boolean,
-                            expr: ExprKind::Unary {
+                            kind: ExprKind::Unary {
                                 operator: UnaryOp::Not,
                                 operand: Box::new(binary_expr),
                             },

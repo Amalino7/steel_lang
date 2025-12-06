@@ -173,7 +173,7 @@ impl<'src> Parser<'src> {
 
     fn call(&mut self) -> Result<Expr<'src>, ParserError<'src>> {
         let mut expr = self.primary()?;
-        if match_token_type!(self, TokT::LeftParen) {
+        while match_token_type!(self, TokT::LeftParen) {
             let args = self.arguments()?;
             expr = Expr::Call {
                 callee: Box::new(expr),

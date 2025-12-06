@@ -93,16 +93,17 @@ impl<'src> TypeChecker<'src> {
         let global_count = self.variable_scope.last().unwrap().variables.len() as u32;
         self.end_scope();
 
-        self.check_returns(ast, &mut errors);
+        self.check_returns(&typed_ast, &mut errors);
         if !errors.is_empty() {
             Err(errors)
         } else {
             Ok(TypedStmt {
-                stmt: StmtKind::Global {
+                kind: StmtKind::Global {
                     global_count,
-                    stmt: typed_ast,
+                    stmts: typed_ast,
                 },
                 line: 1,
+                type_info: Type::Void,
             })
         }
     }
@@ -167,6 +168,12 @@ impl<'src> TypeChecker<'src> {
                 return if scope.scope_type == ScopeType::Global {
                     Some((&var, ResolvedVar::Global(var.index as u16)))
                 } else if is_closure {
+                    // Find if the closure is already declared.
+                    for (i, closure) in self.closures.iter().enumerate() {
+                        if *closure == name {
+                            return Some((&var, ResolvedVar::Closure(i as u8)));
+                        }
+                    }
                     self.closures.push(name);
                     Some((&var, ResolvedVar::Closure((self.closures.len() - 1) as u8)))
                 } else {

@@ -33,8 +33,9 @@ impl<'src> TypeChecker<'src> {
     pub(crate) fn check_stmt(&mut self, stmt: &Stmt<'src>) -> Result<TypedStmt, TypeCheckerError> {
         match stmt {
             Stmt::Expression(expr) => Ok(TypedStmt {
-                stmt: StmtKind::Expr(self.infer_expression(expr)?),
+                kind: StmtKind::Expression(self.infer_expression(expr)?),
                 line: stmt.get_line(),
+                type_info: Type::Void,
             }),
             Stmt::Let {
                 identifier,
@@ -63,13 +64,14 @@ impl<'src> TypeChecker<'src> {
                 }
 
                 Ok(TypedStmt {
-                    stmt: StmtKind::Let {
+                    kind: StmtKind::Let {
                         target: self
                             .lookup_variable(identifier.lexeme)
                             .expect("variable just declared")
                             .1,
                         value: value_node,
                     },
+                    type_info: Type::Void,
                     line: identifier.line,
                 })
             }
@@ -84,10 +86,11 @@ impl<'src> TypeChecker<'src> {
                 self.end_scope();
 
                 Ok(TypedStmt {
-                    stmt: StmtKind::Block {
-                        stmts,
+                    kind: StmtKind::Block {
+                        body: stmts,
                         variable_count,
                     },
+                    type_info: Type::Void,
                     line: brace_token.line,
                 })
             }
@@ -113,11 +116,12 @@ impl<'src> TypeChecker<'src> {
                 }
 
                 Ok(TypedStmt {
-                    stmt: StmtKind::If {
+                    kind: StmtKind::If {
                         condition: cond_type,
                         then_branch: Box::new(then_branch),
                         else_branch,
                     },
+                    type_info: Type::Void,
                     line: condition.get_line(),
                 })
             }
@@ -134,10 +138,11 @@ impl<'src> TypeChecker<'src> {
                 }
 
                 Ok(TypedStmt {
-                    stmt: StmtKind::While {
+                    kind: StmtKind::While {
                         condition: cond_type,
                         body: Box::new(body),
                     },
+                    type_info: Type::Void,
                     line: condition.get_line(),
                 })
             }
@@ -187,18 +192,20 @@ impl<'src> TypeChecker<'src> {
                         captures.push(var_ctx);
                     }
                     Ok(TypedStmt {
-                        stmt: StmtKind::Function {
+                        kind: StmtKind::Function {
                             target: func_location,
                             name: Box::from(String::from(name.lexeme)),
                             body: Box::from(TypedStmt {
-                                stmt: StmtKind::Block {
-                                    stmts: func_body,
+                                kind: StmtKind::Block {
+                                    body: func_body,
                                     variable_count: 0,
                                 },
                                 line: name.line,
+                                type_info: Type::Void,
                             }),
                             captures: Box::from(captures),
                         },
+                        type_info: type_,
                         line: name.line,
                     })
                 } else {
@@ -217,8 +224,9 @@ impl<'src> TypeChecker<'src> {
                         })
                     } else {
                         Ok(TypedStmt {
-                            stmt: StmtKind::Return(return_type),
+                            kind: StmtKind::Return(return_type),
                             line: expr.get_line(),
+                            type_info: Type::Void,
                         })
                     }
                 } else {

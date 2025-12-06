@@ -26,7 +26,6 @@ impl<'a> Compiler<'a> {
     }
 
     pub fn compile(mut self, typed_ast: &TypedStmt) -> Function {
-        // Compile functions first
         self.compile_stmt(typed_ast);
 
         self.chunk().write_constant(Value::Nil, 0);
@@ -34,8 +33,8 @@ impl<'a> Compiler<'a> {
         self.function
     }
     fn compile_stmt(&mut self, stmt: &TypedStmt) {
-        match &stmt.stmt {
-            StmtKind::Expr(e) => {
+        match &stmt.kind {
+            StmtKind::Expression(e) => {
                 self.compile_expr(e);
                 self.emit_op(Opcode::Pop, stmt.line);
             }
@@ -58,7 +57,7 @@ impl<'a> Compiler<'a> {
                 }
             }
             StmtKind::Block {
-                stmts,
+                body: stmts,
                 variable_count,
             } => {
                 for stmt in stmts {
@@ -113,7 +112,7 @@ impl<'a> Compiler<'a> {
                 captures,
             } => {
                 let line = stmt.line;
-                let mut func_compiler = Compiler::new(name.to_string(), self.gc);
+                let func_compiler = Compiler::new(name.to_string(), self.gc);
 
                 let compiled_fn = func_compiler.compile(body);
                 let constant = Value::Function(self.gc.alloc(compiled_fn));
@@ -124,8 +123,10 @@ impl<'a> Compiler<'a> {
                 for capture in captures.iter().rev() {
                     self.emit_var_access(capture, line)
                 }
-                self.emit_op(Opcode::MakeClosure, line);
-                self.emit_byte(captures.len() as u8, line);
+                if !captures.is_empty() {
+                    self.emit_op(Opcode::MakeClosure, line);
+                    self.emit_byte(captures.len() as u8, line);
+                }
 
                 match target {
                     ResolvedVar::Local(_) => {
@@ -146,8 +147,17 @@ impl<'a> Compiler<'a> {
                 self.compile_expr(val);
                 self.emit_op(Opcode::Return, stmt.line);
             }
-            StmtKind::Global { global_count, stmt } => {
+            StmtKind::Global { stmts: stmt, .. } => {
                 for stmt in stmt {
+                    if let StmtKind::Function { .. } = &stmt.kind {
+                        self.compile_stmt(stmt);
+                    }
+                }
+
+                for stmt in stmt {
+                    if let StmtKind::Function { .. } = &stmt.kind {
+                        continue;
+                    }
                     self.compile_stmt(stmt);
                 }
             }
@@ -198,7 +208,7 @@ impl<'a> Compiler<'a> {
 
     fn compile_expr(&mut self, expr: &TypedExpr) {
         let line = expr.line;
-        match &expr.expr {
+        match &expr.kind {
             ExprKind::Binary {
                 left,
                 right,
