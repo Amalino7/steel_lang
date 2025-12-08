@@ -55,6 +55,7 @@ impl<'src> TypeChecker<'src> {
                 }
                 Ok(())
             }
+            StmtKind::StructDecl { .. } => Ok(()),
         }
     }
     fn stmt_returns(&mut self, stmt: &TypedStmt) -> Result<bool, TypeCheckerError> {
@@ -86,6 +87,7 @@ impl<'src> TypeChecker<'src> {
             StmtKind::Function { .. } => false,
             StmtKind::Return(_) => true,
             StmtKind::Global { .. } => false,
+            StmtKind::StructDecl { .. } => false,
         })
     }
 }

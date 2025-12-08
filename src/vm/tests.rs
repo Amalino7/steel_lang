@@ -213,6 +213,7 @@ mod tests {
         let src = r#"let g_counter = 0;
         // 2. Function with shadowing and recursion
         func complex(n: number): number {
+            g_counter+=1;
             let g_counter = "string shadow"; // Shadow global with different type
 
             if n <= 0 {
@@ -226,6 +227,8 @@ mod tests {
 
             return 1 + complex(n - 1);
         }
+        print(complex(10));
+        assert(g_counter, 2);
 
         // 4. Block scoping torture
         {
@@ -247,6 +250,7 @@ mod tests {
         // 5. String concatenation edge cases
         let empty = "";
         let combined = empty + "start" + empty + "end";
+        assert(combined, "startend");
         print(combined);
          "#;
         execute_source(src, false, "run", true);
@@ -564,6 +568,84 @@ mod tests {
             assert(a, "something");
             "#;
 
+        execute_source(src, false, "run", true);
+    }
+
+    #[test]
+    fn test_structs() {
+        let src = r#"
+            struct Point {
+                x: number,
+                y: number,
+            }
+            let p1 = Point{x: 1, y: 2};
+            assert(p1.x, 1);
+            assert(p1.y, 2);
+
+            func make_point(x: number, y: number): Point {
+                return Point { x: x, y: y };
+            }
+
+            func print_point(p: Point): void {
+                println("{", p.x,",", p.y,"}");
+            }
+
+            let p2 = make_point(10, 20);
+            println(p2.x); // Prints 10
+            println(p2.x + p2.y);
+            assert(p2.x + p2.y, 30);
+            p2.x = 100;
+            print_point(p2);
+            assert(p2.x, 100);
+        "#;
+        execute_source(src, false, "run", true);
+    }
+
+    #[test]
+    fn test_struct_function_fields() {
+        let src = r#"
+            struct Point {
+                x: number,
+                y: number,
+                add:func(number, number): number,
+            }
+
+            func add(a: number, b: number): number {
+                 return a + b;
+            }
+
+            let p1 = Point {x: 1, y: 2, add: add};
+            assert(p1.x, 1);
+            assert(p1.y, 2);
+            assert(p1.add(6,7), 13);
+            println(p1.add(6,7));
+        "#;
+        execute_source(src, false, "run", true);
+    }
+
+    #[test]
+    fn test_complex_structs() {
+        let src = r#"
+            struct Point {
+                x: number,
+                y: number,
+            }
+            struct Rectangle {
+                width: number,
+                height: number,
+                corner: Point,
+            }
+            let rect = Rectangle{width: 10, height: 20, corner: Point{x: 1, y: 2}};
+            assert(rect.corner.x, 1);
+            assert(rect.corner.y, 2);
+            assert(rect.width, 10);
+            assert(rect.height, 20);
+            rect.corner.x = 100;
+            rect.corner.y = 200;
+            assert(rect.corner.x, 100);
+            assert(rect.corner.y, 200);
+            println(rect.corner.x, rect.corner.y, rect.width, rect.height);
+            "#;
         execute_source(src, false, "run", true);
     }
 }

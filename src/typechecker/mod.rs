@@ -2,8 +2,9 @@ use crate::compiler::analysis::ResolvedVar;
 use crate::parser::ast::Stmt;
 use crate::stdlib::NativeDef;
 use crate::typechecker::error::TypeCheckerError;
-use crate::typechecker::type_ast::{StmtKind, Type, TypedStmt};
+use crate::typechecker::type_ast::{StmtKind, StructType, Type, TypedStmt};
 use std::collections::HashMap;
+use std::rc::Rc;
 
 pub mod error;
 mod expressions;
@@ -48,6 +49,7 @@ struct Scope<'src> {
 
 pub struct TypeChecker<'src> {
     current_function: FunctionContext,
+    structs: HashMap<&'src str, Rc<StructType>>,
     variable_scope: Vec<Scope<'src>>,
     natives: &'src [NativeDef],
     closures: Vec<&'src str>,
@@ -59,6 +61,7 @@ impl<'src> TypeChecker<'src> {
     pub fn new() -> Self {
         TypeChecker {
             current_function: FunctionContext::None,
+            structs: HashMap::new(),
             variable_scope: vec![],
             natives: &[],
             closures: vec![],
@@ -67,20 +70,24 @@ impl<'src> TypeChecker<'src> {
     pub fn new_with_natives(natives: &'src [NativeDef]) -> Self {
         TypeChecker {
             current_function: FunctionContext::None,
+            structs: HashMap::new(),
             variable_scope: vec![],
             natives,
             closures: vec![],
         }
     }
 
-    pub fn check(&mut self, ast: &mut [Stmt<'src>]) -> Result<TypedStmt, Vec<TypeCheckerError>> {
+    pub fn check(&mut self, ast: &[Stmt<'src>]) -> Result<TypedStmt, Vec<TypeCheckerError>> {
         let mut errors = vec![];
+
+        self.declare_global_structs(ast, &mut errors);
+
         self.begin_scope();
         let mut typed_ast = vec![];
 
         self.register_globals(self.natives);
         self.declare_global_functions(ast, &mut errors); // First pass declare all global functions.
-        for stmt in ast.iter_mut() {
+        for stmt in ast.iter() {
             match self.check_stmt(stmt) {
                 Ok(stmt) => {
                     typed_ast.push(stmt);
@@ -107,6 +114,7 @@ impl<'src> TypeChecker<'src> {
             })
         }
     }
+
     fn begin_function_scope(&mut self) {
         self.variable_scope.push(Scope {
             variables: Default::default(),

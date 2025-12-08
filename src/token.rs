@@ -66,6 +66,9 @@ pub enum TokenType {
     False,
     Let,
     While,
+    Struct,
+    Impl,
+    Self_,
 
     // Reports errors.
     Error,
@@ -119,6 +122,9 @@ impl Display for TokenType {
             TokenType::StarEqual => f.write_str("*="),
             TokenType::SlashEqual => f.write_str("/="),
             TokenType::EOF => f.write_str("nothing"),
+            TokenType::Struct => f.write_str("struct"),
+            TokenType::Impl => f.write_str("impl"),
+            TokenType::Self_ => f.write_str("self"),
         }
     }
 }

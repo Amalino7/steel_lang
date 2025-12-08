@@ -161,6 +161,7 @@ impl<'a> Compiler<'a> {
                     self.compile_stmt(stmt);
                 }
             }
+            StmtKind::StructDecl { .. } => {}
         }
     }
 
@@ -324,6 +325,33 @@ impl<'a> Compiler<'a> {
                     arguments.len() as u8,
                     arguments.last().map(|e| e.line).unwrap_or(callee.line),
                 );
+            }
+            ExprKind::StructInit { args, name } => {
+                let str_name = self.gc.alloc(name.to_string());
+
+                self.chunk()
+                    .write_constant(Value::String(str_name), line as usize);
+                for arg in args.iter().rev() {
+                    self.compile_expr(arg);
+                }
+                self.emit_op(Opcode::StructAlloc, line);
+                self.emit_byte(args.len() as u8, line);
+            }
+
+            ExprKind::GetField { object, index } => {
+                self.compile_expr(object);
+                self.emit_op(Opcode::GetField, line);
+                self.emit_byte(*index, line);
+            }
+            ExprKind::SetField {
+                object,
+                index,
+                value,
+            } => {
+                self.compile_expr(value);
+                self.compile_expr(object);
+                self.emit_op(Opcode::SetField, line);
+                self.emit_byte(*index, line);
             }
         }
     }

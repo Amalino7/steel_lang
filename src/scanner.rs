@@ -213,6 +213,9 @@ fn keywords() -> HashMap<&'static str, TokenType> {
         ("return", TokenType::Return),
         ("let", TokenType::Let),
         ("while", TokenType::While),
+        ("struct", TokenType::Struct),
+        ("impl", TokenType::Impl),
+        ("self", TokenType::Self_),
     ])
 }
 

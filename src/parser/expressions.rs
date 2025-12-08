@@ -48,6 +48,12 @@ impl<'src> Parser<'src> {
                     identifier: name,
                     value: Box::new(value),
                 });
+            } else if let Expr::Get { object, field } = expr {
+                return Ok(Expr::Set {
+                    object,
+                    field,
+                    value: Box::new(value),
+                });
             }
             return Err(self.error_current("Invalid assignment target."));
         } else if match_token_type!(
@@ -173,11 +179,22 @@ impl<'src> Parser<'src> {
 
     fn call(&mut self) -> Result<Expr<'src>, ParserError<'src>> {
         let mut expr = self.primary()?;
-        while match_token_type!(self, TokT::LeftParen) {
-            let args = self.arguments()?;
-            expr = Expr::Call {
-                callee: Box::new(expr),
-                arguments: args,
+        loop {
+            if match_token_type!(self, TokT::LeftParen) {
+                let args = self.arguments()?;
+                expr = Expr::Call {
+                    callee: Box::new(expr),
+                    arguments: args,
+                };
+            } else if match_token_type!(self, TokT::Dot) {
+                self.consume(TokT::Identifier, "Expected property name after '.'.")?;
+                let field = self.previous_token.clone();
+                expr = Expr::Get {
+                    object: Box::new(expr),
+                    field,
+                };
+            } else {
+                break;
             }
         }
         Ok(expr)
@@ -198,6 +215,24 @@ impl<'src> Parser<'src> {
 
         Ok(args)
     }
+
+    fn struct_initializer(&mut self, name: Token<'src>) -> Result<Expr<'src>, ParserError<'src>> {
+        self.consume(TokT::LeftBrace, "Expected '{' before struct initializer.")?;
+        let mut fields = vec![];
+
+        while !check_token_type!(self, TokT::RightBrace) {
+            self.consume(TokT::Identifier, "Expected field name")?;
+            let field_name = self.previous_token.clone();
+            self.consume(TokT::Colon, "Expected ':' after field name")?;
+            let expr = self.expression()?;
+
+            fields.push((field_name, expr));
+            match_token_type!(self, TokT::Comma); // Optional trailing comma.
+        }
+        self.consume(TokT::RightBrace, "Expected '}' after struct body.")?;
+        Ok(Expr::StructInitializer { name, fields })
+    }
+
     fn primary(&mut self) -> Result<Expr<'src>, ParserError<'src>> {
         self.advance()?;
         match self.previous_token.token_type {
@@ -214,9 +249,15 @@ impl<'src> Parser<'src> {
             TokT::String => self.literal(Literal::String(String::from(
                 &self.previous_token.lexeme[1..self.previous_token.lexeme.len() - 1],
             ))), // TODO Add string parsing
-            TokT::Identifier => Ok(Expr::Variable {
-                name: self.previous_token.clone(),
-            }),
+            TokT::Identifier => {
+                if self.current_token.token_type == TokT::LeftBrace {
+                    self.struct_initializer(self.previous_token.clone())
+                } else {
+                    Ok(Expr::Variable {
+                        name: self.previous_token.clone(),
+                    })
+                }
+            }
             TokT::LeftParen => {
                 let expr = self.expression()?;
                 self.consume(TokT::RightParen, "Expect ')' after expression.")?;
@@ -224,7 +265,7 @@ impl<'src> Parser<'src> {
                     expression: Box::new(expr),
                 })
             }
-            _ => Err(self.error_current("Expect expression.")),
+            _ => Err(self.error_previous("Expect expression.")),
         }
     }
     fn literal(&mut self, literal: Literal) -> Result<Expr<'src>, ParserError<'src>> {

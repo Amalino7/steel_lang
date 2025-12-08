@@ -3,7 +3,7 @@ use crate::vm::byte_utils::{byte_to_opcode, read_16_bytes, read_24_bytes};
 use crate::vm::bytecode::Opcode;
 use crate::vm::gc::{GarbageCollector, Gc};
 use crate::vm::stack::Stack;
-use crate::vm::value::{Closure, Function, Value};
+use crate::vm::value::{Closure, Function, Instance, Value};
 use std::process::exit;
 
 mod byte_utils;
@@ -336,8 +336,57 @@ impl VM {
                         _ => unreachable!("Can only compare numbers"),
                     }
                 }
+                Opcode::StructAlloc => {
+                    let count = chunk.instructions[current_frame.ip] as usize;
+                    current_frame.ip += 1;
+
+                    let mut fields = Vec::with_capacity(count);
+                    for _ in 0..count {
+                        fields.push(self.stack.pop());
+                    }
+
+                    let name = self.stack.pop();
+
+                    let instance = self.alloc_struct(Instance { name, fields }, &current_frame);
+                    self.stack.push(instance);
+                }
+
+                Opcode::GetField => {
+                    let index = chunk.instructions[current_frame.ip] as usize;
+                    current_frame.ip += 1;
+
+                    let instance_val = self.stack.pop();
+                    if let Value::Instance(instance) = instance_val {
+                        self.stack.push(instance.fields[index].clone());
+                    } else {
+                        panic!("GetField on non-instance");
+                    }
+                }
+                Opcode::SetField => unsafe {
+                    let index = chunk.instructions[current_frame.ip] as usize;
+                    current_frame.ip += 1;
+
+                    let instance_val = self.stack.pop();
+                    let value = self.stack.pop();
+                    if let Value::Instance(mut instance) = instance_val {
+                        instance.deref_mut().fields[index] = value;
+                        self.stack.push(value);
+                    } else {
+                        panic!("SetField on non-instance");
+                    }
+                },
             }
         }
+    }
+
+    fn alloc_struct(&mut self, instance: Instance, current_frame: &CallFrame) -> Value {
+        let instance = self.gc.alloc(instance);
+        if self.gc.should_collect() {
+            self.gc.mark(instance);
+            self.mark_roots(current_frame);
+            self.gc.collect();
+        }
+        Value::Instance(instance)
     }
 
     fn alloc_closure(

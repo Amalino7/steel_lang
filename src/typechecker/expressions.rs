@@ -3,8 +3,13 @@ use crate::parser::ast::{Expr, Literal};
 use crate::token::{Token, TokenType};
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::error::TypeCheckerError::AssignmentToCapturedVariable;
-use crate::typechecker::type_ast::{BinaryOp, ExprKind, LogicalOp, Type, TypedExpr, UnaryOp};
+use crate::typechecker::type_ast::{
+    BinaryOp, ExprKind, LogicalOp, StructType, Type, TypedExpr, UnaryOp,
+};
 use crate::typechecker::TypeChecker;
+use std::cmp::min;
+use std::collections::HashSet;
+use std::rc::Rc;
 
 impl<'src> TypeChecker<'src> {
     pub(crate) fn infer_expression(
@@ -180,7 +185,9 @@ impl<'src> TypeChecker<'src> {
             Expr::Call { callee, arguments } => {
                 let callee_typed = self.infer_expression(callee)?;
                 if let Type::Function(func) = callee_typed.ty.clone() {
-                    if func.param_types.len() != arguments.len() {
+                    if (func.param_types.len() != arguments.len() && !func.is_vararg)
+                        || (func.is_vararg && arguments.len() < func.param_types.len())
+                    {
                         return Err(TypeCheckerError::IncorrectArity {
                             callee_name: callee.to_string(),
                             expected: func.param_types.len(),
@@ -191,8 +198,9 @@ impl<'src> TypeChecker<'src> {
 
                     let mut typed_args = Vec::with_capacity(arguments.len());
 
-                    for (i, arg) in arguments.iter().enumerate() {
+                    for (mut i, arg) in arguments.iter().enumerate() {
                         let arg_typed = self.infer_expression(arg)?;
+                        i = min(i, func.param_types.len() - 1);
 
                         if func.param_types[i] != Type::Any && arg_typed.ty != func.param_types[i] {
                             return Err(TypeCheckerError::FunctionParameterTypeMismatch {
@@ -217,6 +225,127 @@ impl<'src> TypeChecker<'src> {
                     Err(TypeCheckerError::CalleeIsNotAFunction {
                         found: callee_typed.ty,
                         line: callee_typed.line,
+                    })
+                }
+            }
+            Expr::StructInitializer { name, fields } => {
+                let struct_type = self
+                    .structs
+                    .get(name.lexeme)
+                    .ok_or(TypeCheckerError::UndefinedType {
+                        name: name.lexeme.to_string(),
+                        line: name.line,
+                    })?
+                    .clone();
+
+                let mut args = vec![];
+                let mut defined_fields = HashSet::new();
+                for (field, expr) in fields {
+                    let arg_type = self.infer_expression(expr)?;
+                    let (idx, _) = self.check_field_type(&struct_type, field, &arg_type)?;
+                    args.push((idx, arg_type));
+
+                    defined_fields.insert(field.lexeme);
+                }
+                args.sort_by(|a, b| a.0.cmp(&b.0));
+
+                for field in struct_type.fields.keys() {
+                    if !defined_fields.contains(field.as_str()) {
+                        return Err(TypeCheckerError::MissingField {
+                            struct_name: struct_type.name.clone(),
+                            field_name: field.to_string(),
+                            line: name.line,
+                        });
+                    }
+                }
+
+                Ok(TypedExpr {
+                    ty: Type::Struct(struct_type),
+                    kind: ExprKind::StructInit {
+                        name: Box::from(name.lexeme),
+                        args: args.into_iter().map(|(_, arg)| arg).collect(),
+                    },
+                    line: name.line,
+                })
+            }
+            Expr::Get { object, field } => {
+                let object = self.infer_expression(object)?;
+                if let Type::Struct(struct_def) = object.ty.clone() {
+                    let field_type = struct_def.fields.get(field.lexeme);
+                    match field_type {
+                        None => Err(TypeCheckerError::UndefinedField {
+                            struct_name: struct_def.name.clone(),
+                            field_name: field.lexeme.to_string(),
+                            line: field.line,
+                        }),
+                        Some((idx, field_type)) => Ok(TypedExpr {
+                            ty: field_type.clone(),
+                            kind: ExprKind::GetField {
+                                object: Box::new(object),
+                                index: *idx as u8,
+                            },
+                            line: field.line,
+                        }),
+                    }
+                } else {
+                    Err(TypeCheckerError::TypeHasNoFields {
+                        found: object.ty.clone(),
+                        line: object.line,
+                    })
+                }
+            }
+            Expr::Set {
+                object,
+                field,
+                value,
+            } => {
+                let object = self.infer_expression(object)?;
+                let value = self.infer_expression(value)?;
+                if let Type::Struct(struct_def) = object.ty.clone() {
+                    let (field_idx, field_type) =
+                        self.check_field_type(&struct_def, field, &value)?;
+
+                    Ok(TypedExpr {
+                        ty: field_type,
+                        kind: ExprKind::SetField {
+                            object: Box::new(object),
+                            index: field_idx as u8,
+                            value: Box::new(value),
+                        },
+                        line: field.line,
+                    })
+                } else {
+                    Err(TypeCheckerError::TypeHasNoFields {
+                        found: object.ty.clone(),
+                        line: object.line,
+                    })
+                }
+            }
+        }
+    }
+
+    fn check_field_type(
+        &self,
+        struct_def: &Rc<StructType>,
+        field: &Token,
+        field_value: &TypedExpr,
+    ) -> Result<(usize, Type), TypeCheckerError> {
+        let field_type = struct_def.fields.get(field.lexeme);
+        match field_type {
+            None => Err(TypeCheckerError::UndefinedField {
+                struct_name: struct_def.name.clone(),
+                field_name: field.lexeme.to_string(),
+                line: field.line,
+            }),
+            Some((id, field_type)) => {
+                if field_type == &field_value.ty {
+                    Ok((*id, field_type.clone()))
+                } else {
+                    Err(TypeCheckerError::TypeMismatch {
+                        expected: field_type.clone(),
+                        found: field_value.ty.clone(),
+                        line: field.line,
+                        message: "Expected the same type but found something else.",
                     })
                 }
             }

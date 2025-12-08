@@ -16,6 +16,11 @@ pub struct Closure {
     pub captures: Vec<Value>,
 }
 
+pub struct Instance {
+    pub name: Value, // Name of the struct useful for debugging
+    pub fields: Vec<Value>,
+}
+
 impl Function {
     pub fn new(name: String, chunk: Chunk) -> Function {
         Function { name, chunk }
@@ -30,6 +35,7 @@ pub enum Value {
     Function(Gc<Function>),
     NativeFunction(NativeFn),
     Boolean(bool),
+    Instance(Gc<Instance>),
     Nil,
 }
 
@@ -66,6 +72,7 @@ impl Display for Value {
             Value::Function(func) => write!(f, "<fn {}>", func.name.as_str()),
             Value::NativeFunction(_) => write!(f, "<native fn>"),
             Value::Closure(closure) => write!(f, "<closure {}>", closure.function.name.as_str()),
+            Value::Instance(instance) => write!(f, "<instance {}>", instance.name),
         }
     }
 }

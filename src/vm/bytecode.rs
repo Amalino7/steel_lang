@@ -40,6 +40,10 @@ pub enum Opcode {
     MakeClosure,
     GetCapture,
 
+    StructAlloc,
+    GetField,
+    SetField,
+
     Return,
     Halt,
 }

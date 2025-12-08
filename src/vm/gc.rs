@@ -1,4 +1,4 @@
-use crate::vm::value::{Closure, Function, Value};
+use crate::vm::value::{Closure, Function, Instance, Value};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::collections::VecDeque;
 use std::fmt::{Debug, Formatter};
@@ -150,6 +150,9 @@ impl GarbageCollector {
             Value::Closure(closure) => {
                 self.mark(*closure);
             }
+            Value::Instance(instance) => {
+                self.mark(*instance);
+            }
         }
     }
 
@@ -223,6 +226,15 @@ impl Trace for Closure {
         for capture in self.captures.iter() {
             gc.mark_value(capture)
         }
+    }
+}
+
+impl Trace for Instance {
+    fn trace(&self, gc: &mut GarbageCollector) {
+        for field in &self.fields {
+            gc.mark_value(field);
+        }
+        gc.mark_value(&self.name);
     }
 }
 

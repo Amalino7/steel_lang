@@ -114,6 +114,18 @@ pub fn disassemble_instruction(
             offset += 1;
             println!("GetCapture {}", bytecode[offset]);
         }
+        Opcode::StructAlloc => {
+            offset += 1;
+            println!("StructAlloc {}", bytecode[offset]);
+        }
+        Opcode::GetField => {
+            offset += 1;
+            println!("GetField {}", bytecode[offset]);
+        }
+        Opcode::SetField => {
+            offset += 1;
+            println!("SetField {}", bytecode[offset]);
+        }
         Opcode::EqualString => println!("EqualString"),
         Opcode::EqualNumber => println!("EqualNumber"),
     };

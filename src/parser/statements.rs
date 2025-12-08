@@ -2,6 +2,7 @@ use crate::parser::ast::{Expr, Literal, Stmt, TypeAst};
 use crate::parser::error::ParserError;
 use crate::parser::TokT;
 use crate::parser::{check_token_type, match_token_type, Parser};
+use crate::token::{Token, TokenType};
 
 impl<'src> Parser<'src> {
     pub(super) fn declaration(&mut self) -> Result<Stmt<'src>, ParserError<'src>> {
@@ -9,13 +10,15 @@ impl<'src> Parser<'src> {
             self.let_declaration()
         } else if match_token_type!(self, TokT::Func) {
             self.func_declaration()
+        } else if match_token_type!(self, TokT::Struct) {
+            self.struct_declaration()
         } else {
             self.statement()
         }
     }
     fn let_declaration(&mut self) -> Result<Stmt<'src>, ParserError<'src>> {
         if !match_token_type!(self, TokT::Identifier) {
-            Err(self.error_current("Expected variable name."))
+            Err(self.error_current("Expected variable field."))
         } else {
             let name = self.previous_token.clone();
             let type_info = if match_token_type!(self, TokT::Colon) {
@@ -24,7 +27,7 @@ impl<'src> Parser<'src> {
                 TypeAst::Infer // The type will be inferred by the compiler later on.
             };
 
-            self.consume(TokT::Equal, "Expected '=' after variable name.")?;
+            self.consume(TokT::Equal, "Expected '=' after variable field.")?;
             let expr = self.expression()?;
             self.consume(TokT::Semicolon, "Expected ';' after variable declaration.")?;
             Ok(Stmt::Let {
@@ -36,10 +39,10 @@ impl<'src> Parser<'src> {
     }
     fn func_declaration(&mut self) -> Result<Stmt<'src>, ParserError<'src>> {
         if !match_token_type!(self, TokT::Identifier) {
-            Err(self.error_current("Expected function name."))
+            Err(self.error_current("Expected function field."))
         } else {
             let name = self.previous_token.clone();
-            self.consume(TokT::LeftParen, "Expected '(' after function name.")?;
+            self.consume(TokT::LeftParen, "Expected '(' after function field.")?;
             let mut params = vec![];
             let mut param_types = vec![];
 
@@ -47,12 +50,12 @@ impl<'src> Parser<'src> {
                 loop {
                     self.consume(
                         TokT::Identifier,
-                        "Expected the name of the function parameter.",
+                        "Expected the field of the function parameter.",
                     )?;
                     params.push(self.previous_token.clone());
                     self.consume(
                         TokT::Colon,
-                        "Expected ':' after parameter name. Syntax: 'name: type",
+                        "Expected ':' after parameter field. Syntax: 'field: type",
                     )?;
                     param_types.push(self.type_block()?);
 
@@ -67,7 +70,11 @@ impl<'src> Parser<'src> {
             let return_type = if match_token_type!(self, TokT::Colon) {
                 self.type_block()?
             } else {
-                TypeAst::Named("void")
+                TypeAst::Named(Token::new(
+                    TokenType::Identifier,
+                    self.previous_token.line,
+                    "void",
+                ))
             };
 
             self.consume(TokT::LeftBrace, "Expected '{' before function body.")?;
@@ -116,7 +123,11 @@ impl<'src> Parser<'src> {
                 let return_type = if match_token_type!(self, TokT::Colon) {
                     self.type_block()?
                 } else {
-                    TypeAst::Named("void")
+                    TypeAst::Named(Token::new(
+                        TokenType::Identifier,
+                        self.previous_token.line,
+                        "void",
+                    ))
                 };
                 Ok(TypeAst::Function {
                     param_types: Box::from(argument_types),
@@ -126,12 +137,12 @@ impl<'src> Parser<'src> {
             TokT::Identifier => {
                 self.consume(
                     TokT::Identifier,
-                    "Expected the name of the return type of the function.",
+                    "Expected the field of the return type of the function.",
                 )?;
 
-                Ok(TypeAst::Named(self.previous_token.lexeme))
+                Ok(TypeAst::Named(self.previous_token.clone()))
             }
-            _ => Err(self.error_current("Expected the name of the return type of the function.")),
+            _ => Err(self.error_current("Expected the field of the return type of the function.")),
         }
     }
 
@@ -198,5 +209,23 @@ impl<'src> Parser<'src> {
             condition,
             body: Box::new(body),
         })
+    }
+
+    fn struct_declaration(&mut self) -> Result<Stmt<'src>, ParserError<'src>> {
+        self.consume(TokT::Identifier, "Expected struct name.")?;
+        let name = self.previous_token.clone();
+        self.consume(TokT::LeftBrace, "Expected '{' before struct body.")?;
+        let mut fields = vec![];
+
+        while !check_token_type!(self, TokT::RightBrace) {
+            self.consume(TokT::Identifier, "Expected field name")?;
+            let field_name = self.previous_token.clone();
+            self.consume(TokT::Colon, "Expected ':' after field name")?;
+            let field_type = self.type_block()?;
+            fields.push((field_name, field_type));
+            match_token_type!(self, TokT::Comma); // Optional trailing comma.
+        }
+        self.consume(TokT::RightBrace, "Expected '}' after struct body.")?;
+        Ok(Stmt::Struct { name, fields })
     }
 }

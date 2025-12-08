@@ -1,8 +1,10 @@
 use crate::parser::ast::Stmt;
 use crate::typechecker::error::TypeCheckerError;
-use crate::typechecker::type_ast::{StmtKind, Type, TypedStmt};
+use crate::typechecker::type_ast::{StmtKind, StructType, Type, TypedStmt};
 use crate::typechecker::{FunctionContext, TypeChecker};
+use std::collections::HashMap;
 use std::mem::replace;
+use std::rc::Rc;
 
 impl<'src> TypeChecker<'src> {
     pub(crate) fn declare_global_functions(
@@ -18,14 +20,47 @@ impl<'src> TypeChecker<'src> {
                 body: _,
             } = stmt
             {
-                let res = self.declare_variable(
-                    name.lexeme,
-                    Type::from_ast(type_info).expect("Structs not yet supported."),
-                );
+                let func_type = Type::from_ast(type_info, &self.structs);
+                if let Err(e) = func_type {
+                    errors.push(e);
+                    continue;
+                }
+
+                let res = self.declare_variable(name.lexeme, func_type.unwrap());
 
                 if let Err(e) = res {
                     errors.push(e);
                 }
+            }
+        }
+    }
+
+    pub(crate) fn declare_global_structs(
+        &mut self,
+        ast: &[Stmt<'src>],
+        errors: &mut Vec<TypeCheckerError>,
+    ) {
+        for stmt in ast {
+            if let Stmt::Struct { name, fields } = stmt {
+                let mut field_types = HashMap::new();
+                for (i, (name, type_ast)) in fields.into_iter().enumerate() {
+                    let field_type = Type::from_ast(&type_ast, &self.structs);
+                    match field_type {
+                        Ok(field_type) => {
+                            field_types.insert(name.lexeme.to_string(), (i, field_type));
+                        }
+                        Err(err) => {
+                            // Using Unknown to minimise the number of errors.
+                            field_types.insert(name.lexeme.to_string(), (i, Type::Unknown));
+                            errors.push(err);
+                        }
+                    }
+                }
+                let struct_type = StructType {
+                    fields: field_types,
+                    name: name.lexeme.to_string(),
+                };
+                self.structs.insert(name.lexeme, Rc::new(struct_type));
             }
         }
     }
@@ -44,11 +79,7 @@ impl<'src> TypeChecker<'src> {
             } => {
                 let value_node = self.infer_expression(value)?;
 
-                let type_info =
-                    Type::from_ast(type_info).ok_or(TypeCheckerError::UndefinedType {
-                        name: type_info.to_string(),
-                        line: identifier.line,
-                    })?;
+                let type_info = Type::from_ast(type_info, &self.structs)?;
 
                 if type_info == Type::Unknown {
                     self.declare_variable(identifier.lexeme, value_node.ty.clone())?;
@@ -153,7 +184,7 @@ impl<'src> TypeChecker<'src> {
                 type_,
             } => {
                 // global functions are already declared
-                let type_ = Type::from_ast(type_).expect("Structs not yet supported.");
+                let type_ = Type::from_ast(type_, &self.structs)?;
                 if self.variable_scope.len() != 1 {
                     self.declare_variable(name.lexeme, type_.clone())?;
                 }
@@ -234,6 +265,25 @@ impl<'src> TypeChecker<'src> {
                         line: expr.get_line(),
                     })
                 }
+            }
+
+            Stmt::Struct { name, .. } => {
+                // structs already defined
+                if self.variable_scope.len() != 1 {
+                    Err(TypeCheckerError::StructOutsideOfGlobalScope {
+                        name: name.lexeme.to_string(),
+                        line: name.line,
+                    })
+                } else {
+                    Ok(TypedStmt {
+                        kind: StmtKind::StructDecl {},
+                        line: name.line,
+                        type_info: Type::Void,
+                    })
+                }
+            }
+            Stmt::Impl { .. } => {
+                todo!("Implement impls")
             }
         }
     }

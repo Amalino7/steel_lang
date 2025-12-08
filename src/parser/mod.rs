@@ -88,7 +88,7 @@ impl<'src> Parser<'src> {
     }
     fn error_previous(&mut self, message: &'static str) -> ParserError<'src> {
         ParserError::ParseError {
-            token: self.current_token.clone(),
+            token: self.previous_token.clone(),
             message,
         }
     }
@@ -237,7 +237,7 @@ mod tests {
                 lexeme: "a",
             },
             value: *number(10.0, 2),
-            type_info: TypeAst::Named("number"),
+            type_info: TypeAst::Named(Token::new(TokenType::Identifier, 2, "number")),
         });
         expected.push(Stmt::While {
             condition: Expr::Logical {
