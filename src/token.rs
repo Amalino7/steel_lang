@@ -3,12 +3,12 @@ use std::fmt::{Display, Formatter};
 #[derive(Debug, Clone, PartialEq)]
 pub struct Token<'src> {
     pub token_type: TokenType,
-    pub line: usize,
+    pub line: u32,
     pub(crate) lexeme: &'src str,
 }
 
 impl<'src> Token<'src> {
-    pub fn new(token_type: TokenType, line: usize, lexeme: &'src str) -> Self {
+    pub fn new(token_type: TokenType, line: u32, lexeme: &'src str) -> Self {
         Self {
             token_type,
             line,
@@ -43,8 +43,6 @@ pub enum TokenType {
     GreaterEqual,
     Less,
     LessEqual,
-
-    Concat, // String concatenation only in typechecker.
 
     // Assignment arithmetic operators.
     PlusEqual,
@@ -120,7 +118,6 @@ impl Display for TokenType {
             TokenType::MinusEqual => f.write_str("-="),
             TokenType::StarEqual => f.write_str("*="),
             TokenType::SlashEqual => f.write_str("/="),
-            TokenType::Concat => f.write_str("+"),
             TokenType::EOF => f.write_str("nothing"),
         }
     }

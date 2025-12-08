@@ -1,4 +1,4 @@
-use crate::parser::ast::{Expr, Literal, Stmt, Type};
+use crate::parser::ast::{Expr, Literal, Stmt, TypeAst};
 use crate::parser::error::ParserError;
 use crate::parser::TokT;
 use crate::parser::{check_token_type, match_token_type, Parser};
@@ -19,17 +19,9 @@ impl<'src> Parser<'src> {
         } else {
             let name = self.previous_token.clone();
             let type_info = if match_token_type!(self, TokT::Colon) {
-                self.consume(
-                    TokT::Identifier,
-                    "Expected the name of the variable type. Syntax: 'name: type'.",
-                )?;
-                if let Some(t) = Type::from_identifier(self.previous_token.clone()) {
-                    t
-                } else {
-                    return Err(self.error_previous("Expected valid type identifier."));
-                }
+                self.type_block()?
             } else {
-                Type::Unknown // The type will be inferred by the compiler later on.
+                TypeAst::Infer // The type will be inferred by the compiler later on.
             };
 
             self.consume(TokT::Equal, "Expected '=' after variable name.")?;
@@ -39,7 +31,6 @@ impl<'src> Parser<'src> {
                 identifier: name,
                 value: expr,
                 type_info,
-                id: self.get_node_id(),
             })
         }
     }
@@ -76,7 +67,7 @@ impl<'src> Parser<'src> {
             let return_type = if match_token_type!(self, TokT::Colon) {
                 self.type_block()?
             } else {
-                Type::Void
+                TypeAst::Named("void")
             };
 
             self.consume(TokT::LeftBrace, "Expected '{' before function body.")?;
@@ -87,18 +78,17 @@ impl<'src> Parser<'src> {
             }
 
             Ok(Stmt::Function {
-                type_: Type::Function {
-                    param_types,
+                type_: TypeAst::Function {
+                    param_types: param_types.into_boxed_slice(),
                     return_type: Box::new(return_type),
                 },
                 name,
                 params,
                 body,
-                id: self.get_node_id(),
             })
         }
     }
-    fn type_block(&mut self) -> Result<Type, ParserError<'src>> {
+    fn type_block(&mut self) -> Result<TypeAst<'src>, ParserError<'src>> {
         match self.current_token.token_type {
             TokT::Func => {
                 self.consume(TokT::Func, "Expected 'func' keyword.")?;
@@ -126,10 +116,10 @@ impl<'src> Parser<'src> {
                 let return_type = if match_token_type!(self, TokT::Colon) {
                     self.type_block()?
                 } else {
-                    Type::Void
+                    TypeAst::Named("void")
                 };
-                Ok(Type::Function {
-                    param_types: argument_types,
+                Ok(TypeAst::Function {
+                    param_types: Box::from(argument_types),
                     return_type: Box::new(return_type),
                 })
             }
@@ -139,11 +129,7 @@ impl<'src> Parser<'src> {
                     "Expected the name of the return type of the function.",
                 )?;
 
-                if let Some(t) = Type::from_identifier(self.previous_token.clone()) {
-                    Ok(t)
-                } else {
-                    Err(self.error_previous("Expected valid type identifier"))
-                }
+                Ok(TypeAst::Named(self.previous_token.lexeme))
             }
             _ => Err(self.error_current("Expected the name of the return type of the function.")),
         }
@@ -176,6 +162,7 @@ impl<'src> Parser<'src> {
     }
     fn block(&mut self) -> Result<Stmt<'src>, ParserError<'src>> {
         self.consume(TokT::LeftBrace, "Expected '{' before block.")?;
+        let brace_token = self.previous_token.clone();
         let mut statements = vec![];
         while !check_token_type!(self, TokT::RightBrace) {
             statements.push(self.declaration()?);
@@ -184,7 +171,7 @@ impl<'src> Parser<'src> {
         self.consume(TokT::RightBrace, "Expected '}' after block.")?;
         Ok(Stmt::Block {
             body: statements,
-            id: self.get_node_id(),
+            brace_token,
         })
     }
     fn if_statement(&mut self) -> Result<Stmt<'src>, ParserError<'src>> {

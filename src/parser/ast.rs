@@ -10,19 +10,14 @@ pub enum Literal {
     Void,
 }
 
-#[derive(Debug, PartialEq, Clone)]
-pub enum Type {
-    Number,
-    String,
-    Boolean,
-    Void,
+#[derive(Clone, Debug, PartialEq)]
+pub enum TypeAst<'src> {
+    Named(&'src str),
     Function {
-        param_types: Vec<Type>,
-        return_type: Box<Type>,
+        param_types: Box<[TypeAst<'src>]>,
+        return_type: Box<TypeAst<'src>>,
     },
-    Unknown,
-
-    Any, //TODO repalce with generic types, this is for native functions.
+    Infer,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -38,19 +33,17 @@ pub enum Expr<'src> {
     },
     Variable {
         name: Token<'src>,
-        id: usize,
     },
     Grouping {
         expression: Box<Expr<'src>>,
     },
     Literal {
         literal: Literal,
-        line: usize,
+        line: u32,
     },
     Assignment {
         identifier: Token<'src>,
         value: Box<Expr<'src>>,
-        id: usize,
     },
     Logical {
         left: Box<Expr<'src>>,
@@ -69,12 +62,11 @@ pub enum Stmt<'src> {
     Let {
         identifier: Token<'src>,
         value: Expr<'src>,
-        type_info: Type,
-        id: usize,
+        type_info: TypeAst<'src>,
     },
     Block {
+        brace_token: Token<'src>,
         body: Vec<Stmt<'src>>,
-        id: usize,
     },
     If {
         condition: Expr<'src>,
@@ -89,55 +81,9 @@ pub enum Stmt<'src> {
         name: Token<'src>,
         params: Vec<Token<'src>>,
         body: Vec<Stmt<'src>>,
-        type_: Type,
-        id: usize,
+        type_: TypeAst<'src>,
     },
     Return(Expr<'src>),
-}
-
-impl Type {
-    pub fn from_identifier(identifier: Token) -> Option<Type> {
-        let name = identifier.lexeme;
-        if name == "number" {
-            Some(Type::Number)
-        } else if name == "string" {
-            Some(Type::String)
-        } else if name == "boolean" {
-            Some(Type::Boolean)
-        } else if name == "void" {
-            Some(Type::Void)
-        } else {
-            None
-        }
-    }
-}
-
-impl Display for Type {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Type::Number => write!(f, "Number"),
-            Type::Boolean => write!(f, "Bool"),
-            Type::String => write!(f, "String"),
-            Type::Void => write!(f, "Void"),
-            Type::Function {
-                param_types,
-                return_type,
-            } => {
-                write!(
-                    f,
-                    "fn({}) -> {}",
-                    param_types
-                        .iter()
-                        .map(|t| format!("{}", t))
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                    return_type
-                )
-            }
-            Type::Unknown => write!(f, "Unknown"),
-            Type::Any => write!(f, "any"),
-        }
-    }
 }
 
 impl Display for Literal {
@@ -201,6 +147,29 @@ impl Display for Expr<'_> {
         }
     }
 }
+impl Display for TypeAst<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            TypeAst::Named(name) => write!(f, "{}", name),
+            TypeAst::Function {
+                param_types: params,
+                return_type,
+            } => {
+                write!(
+                    f,
+                    "fn({}) -> {}",
+                    params
+                        .iter()
+                        .map(|t| format!("{}", t))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    return_type
+                )
+            }
+            TypeAst::Infer => write!(f, "_"),
+        }
+    }
+}
 
 impl Display for Stmt<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
@@ -212,7 +181,7 @@ impl Display for Stmt<'_> {
                 type_info,
                 ..
             } => write!(f, "let {}: {} = {}", identifier.lexeme, type_info, value),
-            Stmt::Block { body, id: _ } => {
+            Stmt::Block { body, .. } => {
                 write!(f, "do\n")?;
                 for statement in body {
                     write!(f, " {}\n", statement)?;
@@ -236,22 +205,17 @@ impl Display for Stmt<'_> {
             }
             Stmt::While { condition, body } => write!(f, "while {} then {}", condition, body),
             Stmt::Function {
-                name,
-                params,
-                body,
-                type_,
-                id: _,
+                name, params, body, ..
             } => {
                 write!(
                     f,
-                    "func {}({}) = {} do {} end",
+                    "func {}({}) do {} end",
                     name.lexeme,
                     params
                         .iter()
                         .map(|e| e.lexeme)
                         .collect::<Vec<_>>()
                         .join(","),
-                    type_,
                     body.iter()
                         .map(|e| e.to_string())
                         .collect::<Vec<_>>()
@@ -264,7 +228,7 @@ impl Display for Stmt<'_> {
 }
 
 impl Expr<'_> {
-    pub fn get_line(&self) -> usize {
+    pub fn get_line(&self) -> u32 {
         match self {
             Expr::Unary { operator, .. } => operator.line,
             Expr::Binary { operator, .. } => operator.line,
@@ -279,11 +243,11 @@ impl Expr<'_> {
 }
 
 impl Stmt<'_> {
-    pub fn get_line(&self) -> usize {
+    pub fn get_line(&self) -> u32 {
         match self {
             Stmt::Expression(expr) => expr.get_line(),
             Stmt::Let { identifier, .. } => identifier.line,
-            Stmt::Block { body, id: _ } => {
+            Stmt::Block { body, .. } => {
                 if let Some(first_stmt) = body.first() {
                     first_stmt.get_line()
                 } else {

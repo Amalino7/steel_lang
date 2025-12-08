@@ -7,7 +7,6 @@ use std::ops::{Add, Div, Mul, Neg, Not, Sub};
 #[derive(Debug)]
 pub struct Function {
     pub name: String,
-    pub arity: usize,
     pub chunk: Chunk,
 }
 
@@ -18,12 +17,12 @@ pub struct Closure {
 }
 
 impl Function {
-    pub fn new(name: String, arity: usize, chunk: Chunk) -> Function {
-        Function { name, arity, chunk }
+    pub fn new(name: String, chunk: Chunk) -> Function {
+        Function { name, chunk }
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Copy)]
+#[derive(Clone, Debug, Copy)]
 pub enum Value {
     Number(f64),
     String(Gc<String>),
@@ -41,6 +40,18 @@ impl PartialOrd for Value {
         match (self, other) {
             (Value::Number(l), Value::Number(r)) => l.partial_cmp(r),
             _ => None,
+        }
+    }
+}
+
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Value::Number(l), Value::Number(r)) => l == r,
+            (Value::String(l), Value::String(r)) => l.as_str() == r.as_str(),
+            (Value::Boolean(l), Value::Boolean(r)) => l == r,
+            (Value::Nil, Value::Nil) => true,
+            _ => false,
         }
     }
 }

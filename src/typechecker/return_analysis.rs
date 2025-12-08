@@ -1,31 +1,27 @@
-use crate::parser::ast::{Stmt, Type};
 use crate::typechecker::error::TypeCheckerError;
+use crate::typechecker::type_ast::{StmtKind, Type, TypedStmt};
 use crate::typechecker::TypeChecker;
 
 impl<'src> TypeChecker<'src> {
-    pub(crate) fn check_returns(
-        &mut self,
-        stmt: &mut [Stmt<'src>],
-        errors: &mut Vec<TypeCheckerError>,
-    ) {
-        for stmt in stmt.iter_mut() {
+    pub(crate) fn check_returns(&mut self, stmt: &[TypedStmt], errors: &mut Vec<TypeCheckerError>) {
+        for stmt in stmt {
             let res = self.check_stmt_returns(stmt);
             if let Err(e) = res {
                 errors.push(e);
             }
         }
     }
-    fn check_stmt_returns(&mut self, stmt: &mut Stmt<'src>) -> Result<(), TypeCheckerError> {
-        match stmt {
-            Stmt::Expression(_) => Ok(()),
-            Stmt::Let { .. } => Ok(()),
-            Stmt::Block { body, id: _ } => {
+    fn check_stmt_returns(&mut self, stmt: &TypedStmt) -> Result<(), TypeCheckerError> {
+        match &stmt.kind {
+            StmtKind::Expression(_) => Ok(()),
+            StmtKind::Let { .. } => Ok(()),
+            StmtKind::Block { body, .. } => {
                 for stmt in body {
                     self.check_stmt_returns(stmt)?;
                 }
                 Ok(())
             }
-            Stmt::If {
+            StmtKind::If {
                 then_branch,
                 else_branch,
                 ..
@@ -35,58 +31,61 @@ impl<'src> TypeChecker<'src> {
                 }
                 self.check_stmt_returns(then_branch)
             }
-            Stmt::While { body, .. } => self.check_stmt_returns(body),
-            Stmt::Function { body, type_, .. } => {
-                let mut returns = false;
-                let return_type = if let Type::Function { return_type, .. } = type_ {
-                    return_type.clone()
+            StmtKind::While { body, .. } => self.check_stmt_returns(body),
+            StmtKind::Function { body, .. } => {
+                let return_type = if let Type::Function(func) = &stmt.type_info {
+                    func.return_type.clone()
                 } else {
                     unreachable!()
                 };
 
-                for stmt in body {
-                    if returns {
-                        return Err(TypeCheckerError::UnreachableCode {
-                            line: stmt.get_line(),
-                        });
-                    }
+                self.check_stmt_returns(body)?;
+                let does_return = self.stmt_returns(body)?;
 
-                    self.check_stmt_returns(stmt)?;
-                    if self.stmt_returns(stmt) {
-                        returns = true;
-                    }
-                }
-
-                if !returns && *return_type != Type::Void {
-                    Err(TypeCheckerError::MissingReturnStatement {
-                        line: stmt.get_line(),
-                    })
+                if !does_return && return_type != Type::Void {
+                    Err(TypeCheckerError::MissingReturnStatement { line: stmt.line })
                 } else {
                     Ok(())
                 }
             }
-            Stmt::Return(_) => Ok(()),
+            StmtKind::Return(_) => Ok(()),
+            StmtKind::Global { stmts, .. } => {
+                for stmt in stmts {
+                    self.check_stmt_returns(stmt)?;
+                }
+                Ok(())
+            }
         }
     }
-    fn stmt_returns(&mut self, stmt: &mut Stmt<'src>) -> bool {
-        match stmt {
-            Stmt::Expression(_) => false,
-            Stmt::Let { .. } => false,
-            Stmt::Block { body, id: _id } => body.iter_mut().any(|e| self.stmt_returns(e)),
-            Stmt::If {
+    fn stmt_returns(&mut self, stmt: &TypedStmt) -> Result<bool, TypeCheckerError> {
+        Ok(match &stmt.kind {
+            StmtKind::Expression(_) => false,
+            StmtKind::Let { .. } => false,
+            StmtKind::Block { body, .. } => {
+                let mut does_return = false;
+                for stmt in body {
+                    if does_return {
+                        return Err(TypeCheckerError::UnreachableCode { line: stmt.line });
+                    }
+                    does_return |= self.stmt_returns(stmt)?;
+                }
+                does_return
+            }
+            StmtKind::If {
                 then_branch,
                 else_branch,
                 ..
             } => {
                 if let Some(else_branch) = else_branch {
-                    self.stmt_returns(else_branch) && self.stmt_returns(then_branch)
+                    self.stmt_returns(else_branch)? && self.stmt_returns(then_branch)?
                 } else {
                     false
                 }
             }
-            Stmt::While { .. } => false,
-            Stmt::Function { .. } => false,
-            Stmt::Return(_) => true,
-        }
+            StmtKind::While { .. } => false,
+            StmtKind::Function { .. } => false,
+            StmtKind::Return(_) => true,
+            StmtKind::Global { .. } => false,
+        })
     }
 }

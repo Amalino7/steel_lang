@@ -1,4 +1,4 @@
-use crate::parser::ast::Type;
+use crate::typechecker::type_ast::Type;
 use crate::vm::value::{NativeFn, Value};
 
 pub struct NativeDef {
@@ -11,10 +11,7 @@ pub fn get_natives() -> Vec<NativeDef> {
     vec![
         NativeDef {
             name: "print",
-            type_: Type::Function {
-                param_types: vec![Type::Any],
-                return_type: Box::new(Type::Void),
-            },
+            type_: Type::new_function(vec![Type::Any], Type::Void),
             func: |args| {
                 for arg in args {
                     print!("{} ", arg);
@@ -25,10 +22,7 @@ pub fn get_natives() -> Vec<NativeDef> {
         },
         NativeDef {
             name: "assert",
-            type_: Type::Function {
-                param_types: vec![Type::Any, Type::Any],
-                return_type: Box::new(Type::Void),
-            },
+            type_: Type::new_function(vec![Type::Any, Type::Any], Type::Void),
             func: |args| {
                 if args[0] != args[1] {
                     panic!("Assertion failed: {} != {}", args[0], args[1]);
@@ -38,10 +32,7 @@ pub fn get_natives() -> Vec<NativeDef> {
         },
         NativeDef {
             name: "clock",
-            type_: Type::Function {
-                param_types: vec![],
-                return_type: Box::new(Type::Number),
-            },
+            type_: Type::new_function(vec![], Type::Number),
             func: |_| {
                 use std::time::{SystemTime, UNIX_EPOCH};
                 let start = SystemTime::now();

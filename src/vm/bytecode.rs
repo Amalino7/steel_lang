@@ -15,9 +15,17 @@ pub enum Opcode {
     Not,
     Concat,
 
-    Equal,
-    Greater,
-    Less,
+    EqualString,
+    EqualNumber,
+
+    Equal, // Generic TODO remove when not needed
+
+    GreaterString,
+    LessString,
+
+    GreaterNumber,
+    LessNumber,
+
     Pop,
     JumpIfFalse,
     Jump,
