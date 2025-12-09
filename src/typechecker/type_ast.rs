@@ -57,6 +57,19 @@ impl Type {
         }
     }
 
+    pub fn get_name(&self) -> Option<&str> {
+        match self {
+            Type::Number => Some("number"),
+            Type::String => Some("string"),
+            Type::Boolean => Some("boolean"),
+            Type::Void => Some("void"),
+            Type::Function(_) => None,
+            Type::Unknown => None,
+            Type::Struct(name) => Some(name.as_str()),
+            Type::Any => None,
+        }
+    }
+
     pub fn new_function(param_types: Vec<Type>, return_type: Type) -> Type {
         Type::Function(Rc::new(FunctionType {
             is_vararg: false,
@@ -201,6 +214,10 @@ pub enum ExprKind {
         target: ResolvedVar,
         value: Box<TypedExpr>,
     },
+    MethodGet {
+        object: Box<TypedExpr>,
+        method: ResolvedVar,
+    },
     Call {
         callee: Box<TypedExpr>, // 8 bytes
         arguments: Vec<TypedExpr>,
@@ -214,6 +231,9 @@ pub struct TypedStmt {
 }
 #[derive(Debug)]
 pub enum StmtKind {
+    Impl {
+        methods: Vec<TypedStmt>,
+    }, // Might add meta-information later
     StructDecl {},
     Global {
         global_count: u32,

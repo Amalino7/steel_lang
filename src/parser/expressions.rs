@@ -258,6 +258,9 @@ impl<'src> Parser<'src> {
                     })
                 }
             }
+            TokT::Self_ => Ok(Expr::Variable {
+                name: self.previous_token.clone(),
+            }),
             TokT::LeftParen => {
                 let expr = self.expression()?;
                 self.consume(TokT::RightParen, "Expect ')' after expression.")?;

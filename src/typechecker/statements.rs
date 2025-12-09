@@ -1,7 +1,9 @@
 use crate::parser::ast::Stmt;
+use crate::token::Token;
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::type_ast::{StmtKind, StructType, Type, TypedStmt};
 use crate::typechecker::{FunctionContext, TypeChecker};
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::mem::replace;
 use std::rc::Rc;
@@ -119,7 +121,7 @@ impl<'src> TypeChecker<'src> {
                 Ok(TypedStmt {
                     kind: StmtKind::Let {
                         target: self
-                            .lookup_variable(identifier.lexeme)
+                            .lookup_variable(Cow::from(identifier.lexeme))
                             .expect("variable just declared")
                             .1,
                         value: value_node,
@@ -211,59 +213,7 @@ impl<'src> TypeChecker<'src> {
                     self.declare_variable(name.lexeme, type_.clone())?;
                 }
 
-                let enclosing_function_context = self.current_function.clone();
-                if let Type::Function(func) = &type_ {
-                    self.current_function = FunctionContext::Function(func.return_type.clone());
-
-                    let prev_closures = replace(&mut self.closures, vec![]);
-                    self.begin_function_scope();
-
-                    self.declare_variable(name.lexeme, type_.clone())?;
-                    // Declare parameters.
-                    for (i, param) in params.iter().enumerate() {
-                        self.declare_variable(param.lexeme, func.param_types[i].clone())?;
-                    }
-
-                    let func_body = body
-                        .iter()
-                        .map(|stmt| self.check_stmt(stmt))
-                        .collect::<Result<Vec<TypedStmt>, TypeCheckerError>>()?;
-
-                    self.end_scope();
-                    self.current_function = enclosing_function_context;
-
-                    let (_, func_location) = self
-                        .lookup_variable(name.lexeme)
-                        .expect("Variable was just added to the scope.");
-
-                    let old_closures = replace(&mut self.closures, prev_closures);
-                    let mut captures = vec![];
-                    for clos_var in old_closures {
-                        let (_, var_ctx) = self
-                            .lookup_variable(clos_var)
-                            .expect("Variable should exist in upper scope.");
-                        captures.push(var_ctx);
-                    }
-                    Ok(TypedStmt {
-                        kind: StmtKind::Function {
-                            target: func_location,
-                            name: Box::from(String::from(name.lexeme)),
-                            body: Box::from(TypedStmt {
-                                kind: StmtKind::Block {
-                                    body: func_body,
-                                    variable_count: 0,
-                                },
-                                line: name.line,
-                                type_info: Type::Void,
-                            }),
-                            captures: Box::from(captures),
-                        },
-                        type_info: type_,
-                        line: name.line,
-                    })
-                } else {
-                    unreachable!()
-                }
+                self.check_function(name, params, body, type_, Cow::Borrowed(name.lexeme))
             }
             Stmt::Return(expr) => {
                 let return_type = self.infer_expression(expr)?;
@@ -304,9 +254,106 @@ impl<'src> TypeChecker<'src> {
                     })
                 }
             }
-            Stmt::Impl { .. } => {
-                todo!("Implement impls")
+            Stmt::Impl { name, methods } => {
+                let mut typed_methods = vec![];
+                for method in methods {
+                    match method {
+                        Stmt::Function {
+                            name: func_name,
+                            params,
+                            body,
+                            type_,
+                        } => {
+                            let type_info = Type::from_ast(type_, &self.structs)?;
+                            let mangled_name = format!("{}.{}", name.lexeme, func_name.lexeme);
+                            self.declare_mangled(
+                                mangled_name.to_string(),
+                                func_name.lexeme,
+                                type_info.clone(),
+                            )?;
+                            let typed_method = self.check_function(
+                                func_name,
+                                params,
+                                body,
+                                type_info,
+                                Cow::Owned(mangled_name),
+                            )?;
+                            typed_methods.push(typed_method);
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+                Ok(TypedStmt {
+                    kind: StmtKind::Impl {
+                        methods: typed_methods,
+                    },
+                    line: name.line,
+                    type_info: Type::Void,
+                })
             }
+        }
+    }
+
+    fn check_function(
+        &mut self,
+        name: &Token<'src>,
+        params: &Vec<Token<'src>>,
+        body: &Vec<Stmt<'src>>,
+        type_: Type,
+        full_name: Cow<'src, str>,
+    ) -> Result<TypedStmt, TypeCheckerError> {
+        let enclosing_function_context = self.current_function.clone();
+        if let Type::Function(func) = &type_ {
+            self.current_function = FunctionContext::Function(func.return_type.clone());
+
+            let prev_closures = replace(&mut self.closures, vec![]);
+            self.begin_function_scope();
+
+            self.declare_variable(name.lexeme, type_.clone())?;
+            // Declare parameters.
+            for (i, param) in params.iter().enumerate() {
+                self.declare_variable(param.lexeme, func.param_types[i].clone())?;
+            }
+
+            let func_body = body
+                .iter()
+                .map(|stmt| self.check_stmt(stmt))
+                .collect::<Result<Vec<TypedStmt>, TypeCheckerError>>()?;
+
+            self.end_scope();
+            self.current_function = enclosing_function_context;
+
+            let (_, func_location) = self
+                .lookup_variable(full_name)
+                .expect("Variable was just added to the scope.");
+
+            let old_closures = replace(&mut self.closures, prev_closures);
+            let mut captures = vec![];
+            for clos_var in old_closures {
+                let (_, var_ctx) = self
+                    .lookup_variable(clos_var)
+                    .expect("Variable should exist in upper scope.");
+                captures.push(var_ctx);
+            }
+            Ok(TypedStmt {
+                kind: StmtKind::Function {
+                    target: func_location,
+                    name: Box::from(String::from(name.lexeme)),
+                    body: Box::from(TypedStmt {
+                        kind: StmtKind::Block {
+                            body: func_body,
+                            variable_count: 0,
+                        },
+                        line: name.line,
+                        type_info: Type::Void,
+                    }),
+                    captures: Box::from(captures),
+                },
+                type_info: type_,
+                line: name.line,
+            })
+        } else {
+            unreachable!()
         }
     }
 }

@@ -703,4 +703,68 @@ mod tests {
         "#;
         execute_source(src, false, "run", true);
     }
+    #[test]
+    fn test_struct_methods() {
+        let src = r#"
+            struct Point {
+                x: number,
+                y: number,
+            }
+            impl Point {
+                func add(self, other: Point): Point {
+                    return Point{x: self.x + other.x, y: self.y + other.y};
+                }
+            }
+            impl number {
+                func abs(self): number {
+                    if self < 0 {
+                        return -self;
+                    }
+                    return self;
+                }
+            }
+
+            impl void {
+                func lmao(self): void {
+                    println("Someone called a method on nothing!!");
+                }
+            }
+
+            let p1 = Point{x: 1, y: 2};
+            let p2 = Point{x: 3, y: 4};
+            let p3 = p1.add(p2);
+            assert(p3.x, 4);
+            assert(p3.y, 6);
+            println(p3.x," ", p3.y);
+            println((-14).abs());
+            assert(10.abs(), 10);
+            "#;
+        execute_source(src, false, "run", true);
+    }
+
+    #[test]
+    fn test_method_on_nothing() {
+        let src = r#"
+            impl void {
+                func lmao(self): void {
+                    println("Someone called a method on nothing!!");
+                }
+            }
+
+            impl number {
+                func static_0(other: string): number {
+                    return 0;
+                }
+            }
+
+            func ah(): void {}
+
+            println(number.static_0(""));
+            let a = ah();
+            a.lmao();
+            println(2.static_0());
+            println(2 + 4).lmao().lmao().lmao().lmao().lmao();
+        "#;
+        execute_source(src, false, "run", true);
+    }
 }

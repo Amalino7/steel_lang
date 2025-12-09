@@ -3,6 +3,7 @@ use crate::parser::ast::Stmt;
 use crate::stdlib::NativeDef;
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::type_ast::{StmtKind, StructType, Type, TypedStmt};
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 pub mod error;
@@ -41,7 +42,7 @@ enum ScopeType {
     Block,
 }
 struct Scope<'src> {
-    variables: HashMap<&'src str, VariableContext<'src>>,
+    variables: HashMap<Cow<'src, str>, VariableContext<'src>>,
     scope_type: ScopeType,
     last_index: usize,
 }
@@ -51,7 +52,7 @@ pub struct TypeChecker<'src> {
     structs: HashMap<&'src str, StructType>,
     variable_scope: Vec<Scope<'src>>,
     natives: &'src [NativeDef],
-    closures: Vec<&'src str>,
+    closures: Vec<Cow<'src, str>>,
 }
 
 impl<'src> TypeChecker<'src> {
@@ -150,6 +151,22 @@ impl<'src> TypeChecker<'src> {
         }
     }
 
+    fn declare_mangled(
+        &mut self,
+        mangled_name: String,
+        surface_name: &'src str,
+        type_info: Type,
+    ) -> Result<(), TypeCheckerError> {
+        if let Some(scope) = self.variable_scope.last_mut() {
+            scope.variables.insert(
+                Cow::Owned(mangled_name),
+                VariableContext::new(surface_name, type_info, scope.last_index),
+            );
+            scope.last_index += 1;
+        }
+        Ok(())
+    }
+
     fn declare_variable(
         &mut self,
         name: &'src str,
@@ -157,7 +174,7 @@ impl<'src> TypeChecker<'src> {
     ) -> Result<(), TypeCheckerError> {
         if let Some(scope) = self.variable_scope.last_mut() {
             scope.variables.insert(
-                name,
+                Cow::Borrowed(name),
                 VariableContext::new(name, type_info, scope.last_index),
             );
             scope.last_index += 1;
@@ -167,11 +184,11 @@ impl<'src> TypeChecker<'src> {
 
     fn lookup_variable(
         &mut self,
-        name: &'src str,
+        name: Cow<'src, str>,
     ) -> Option<(&VariableContext<'src>, ResolvedVar)> {
         let mut is_closure = false;
         for scope in self.variable_scope.iter().rev() {
-            if let Some(var) = scope.variables.get(name) {
+            if let Some(var) = scope.variables.get(&name) {
                 return if scope.scope_type == ScopeType::Global {
                     Some((&var, ResolvedVar::Global(var.index as u16)))
                 } else if is_closure {

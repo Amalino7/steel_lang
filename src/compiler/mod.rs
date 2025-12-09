@@ -105,6 +105,11 @@ impl<'a> Compiler<'a> {
                 self.patch_jump(exit_jump);
                 self.emit_op(Opcode::Pop, body.line);
             }
+            StmtKind::Impl { methods } => {
+                for method in methods {
+                    self.compile_stmt(method);
+                }
+            }
             StmtKind::Function {
                 target,
                 name,
@@ -316,15 +321,26 @@ impl<'a> Compiler<'a> {
                 }
             }
             ExprKind::Call { callee, arguments } => {
-                self.compile_expr(callee);
-                for arg in arguments {
-                    self.compile_expr(arg);
+                if let ExprKind::MethodGet { object, method } = &callee.kind {
+                    self.emit_var_access(method, line);
+                    self.compile_expr(object);
+                    for arg in arguments {
+                        self.compile_expr(arg);
+                    }
+
+                    self.emit_op(Opcode::Call, line);
+                    self.emit_byte((arguments.len() + 1) as u8, line);
+                } else {
+                    self.compile_expr(callee);
+                    for arg in arguments {
+                        self.compile_expr(arg);
+                    }
+                    self.emit_op(Opcode::Call, callee.line);
+                    self.emit_byte(
+                        arguments.len() as u8,
+                        arguments.last().map(|e| e.line).unwrap_or(callee.line),
+                    );
                 }
-                self.emit_op(Opcode::Call, callee.line);
-                self.emit_byte(
-                    arguments.len() as u8,
-                    arguments.last().map(|e| e.line).unwrap_or(callee.line),
-                );
             }
             ExprKind::StructInit { args, name } => {
                 let str_name = self.gc.alloc(name.to_string());
@@ -352,6 +368,10 @@ impl<'a> Compiler<'a> {
                 self.compile_expr(object);
                 self.emit_op(Opcode::SetField, line);
                 self.emit_byte(*index, line);
+            }
+
+            ExprKind::MethodGet { .. } => {
+                todo!("Bound methods not done")
             }
         }
     }

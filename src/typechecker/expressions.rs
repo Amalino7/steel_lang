@@ -7,6 +7,7 @@ use crate::typechecker::type_ast::{
     BinaryOp, ExprKind, LogicalOp, StructType, Type, TypedExpr, UnaryOp,
 };
 use crate::typechecker::TypeChecker;
+use std::borrow::Cow;
 use std::cmp::min;
 use std::collections::HashSet;
 
@@ -70,7 +71,7 @@ impl<'src> TypeChecker<'src> {
             } => self.check_binary_expression(operator, left, right),
 
             Expr::Variable { name } => {
-                let var = self.lookup_variable(name.lexeme);
+                let var = self.lookup_variable(Cow::from(name.lexeme));
                 if let Some((ctx, resolved)) = var {
                     Ok(TypedExpr {
                         ty: ctx.type_info.clone(),
@@ -101,7 +102,7 @@ impl<'src> TypeChecker<'src> {
             }
             Expr::Assignment { identifier, value } => {
                 let typed_value = self.infer_expression(value)?;
-                let var_lookup = self.lookup_variable(identifier.lexeme);
+                let var_lookup = self.lookup_variable(Cow::from(identifier.lexeme));
 
                 if let Some((ctx, resolved)) = var_lookup {
                     if typed_value.ty != ctx.type_info {
@@ -277,11 +278,12 @@ impl<'src> TypeChecker<'src> {
 
                     let field_type = struct_def.fields.get(field.lexeme);
                     match field_type {
-                        None => Err(TypeCheckerError::UndefinedField {
-                            struct_name: struct_def.name.to_string(),
-                            field_name: field.lexeme.to_string(),
-                            line: field.line,
-                        }),
+                        None => self.handle_method(field, object),
+                        // None => Err(TypeCheckerError::UndefinedField {
+                        //     struct_name: struct_def.name.to_string(),
+                        //     field_name: field.lexeme.to_string(),
+                        //     line: field.line,
+                        // }),
                         Some((idx, field_type)) => Ok(TypedExpr {
                             ty: field_type.clone(),
                             kind: ExprKind::GetField {
@@ -292,10 +294,12 @@ impl<'src> TypeChecker<'src> {
                         }),
                     }
                 } else {
-                    Err(TypeCheckerError::TypeHasNoFields {
-                        found: object.ty.clone(),
-                        line: object.line,
-                    })
+                    self.handle_method(field, object)
+                    // name.some_func();
+                    // Err(TypeCheckerError::TypeHasNoFields {
+                    //     found: object.ty.clone(),
+                    //     line: object.line,
+                    // })
                 }
             }
             Expr::Set {
@@ -331,6 +335,53 @@ impl<'src> TypeChecker<'src> {
                 }
             }
         }
+    }
+
+    fn handle_method(
+        &mut self,
+        field: &Token,
+        object: TypedExpr,
+    ) -> Result<TypedExpr, TypeCheckerError> {
+        let type_name = object
+            .ty
+            .get_name()
+            .ok_or(TypeCheckerError::TypeHasNoFields {
+                found: object.ty.clone(),
+                line: object.line,
+            })?;
+        let mangled_name = format!("{}.{}", type_name, field.lexeme);
+        let method = self.lookup_variable(Cow::Owned(mangled_name)).ok_or(
+            TypeCheckerError::UndefinedMethod {
+                line: field.line,
+                found: Type::Number,
+                method_name: field.lexeme.to_string(),
+            },
+        )?;
+
+        // Edge case -> static functions
+        let ty = match &method.0.type_info {
+            Type::Function(func) => {
+                let return_type = func.return_type.clone();
+                // TODO reduce allocations?
+                let params = func
+                    .param_types
+                    .iter()
+                    .skip(1)
+                    .map(|ty| ty.clone())
+                    .collect();
+                Type::new_function(params, return_type)
+            }
+            ty => ty.clone(),
+        };
+
+        Ok(TypedExpr {
+            ty,
+            kind: ExprKind::MethodGet {
+                object: Box::new(object),
+                method: method.1,
+            },
+            line: field.line,
+        })
     }
 
     fn check_field_type(

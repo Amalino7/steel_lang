@@ -63,6 +63,11 @@ pub enum TypeCheckerError {
         name: String,
         line: u32,
     },
+    UndefinedMethod {
+        line: u32,
+        found: Type,
+        method_name: String,
+    },
 }
 impl std::fmt::Display for TypeCheckerError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -166,6 +171,17 @@ impl std::fmt::Display for TypeCheckerError {
                     f,
                     "[line {}] Error: Struct '{}' is outside of global scope.",
                     line, name
+                )
+            }
+            TypeCheckerError::UndefinedMethod {
+                line,
+                found,
+                method_name,
+            } => {
+                write!(
+                    f,
+                    "[line {}] Error: Undefined method '{}' on type {}.",
+                    line, method_name, found
                 )
             }
         }
