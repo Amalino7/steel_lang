@@ -4,7 +4,6 @@ use crate::stdlib::NativeDef;
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::type_ast::{StmtKind, StructType, Type, TypedStmt};
 use std::collections::HashMap;
-use std::rc::Rc;
 
 pub mod error;
 mod expressions;
@@ -49,7 +48,7 @@ struct Scope<'src> {
 
 pub struct TypeChecker<'src> {
     current_function: FunctionContext,
-    structs: HashMap<&'src str, Rc<StructType>>,
+    structs: HashMap<&'src str, StructType>,
     variable_scope: Vec<Scope<'src>>,
     natives: &'src [NativeDef],
     closures: Vec<&'src str>,

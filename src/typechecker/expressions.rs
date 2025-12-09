@@ -9,7 +9,6 @@ use crate::typechecker::type_ast::{
 use crate::typechecker::TypeChecker;
 use std::cmp::min;
 use std::collections::HashSet;
-use std::rc::Rc;
 
 impl<'src> TypeChecker<'src> {
     pub(crate) fn infer_expression(
@@ -252,7 +251,7 @@ impl<'src> TypeChecker<'src> {
                 for field in struct_type.fields.keys() {
                     if !defined_fields.contains(field.as_str()) {
                         return Err(TypeCheckerError::MissingField {
-                            struct_name: struct_type.name.clone(),
+                            struct_name: struct_type.name.to_string(),
                             field_name: field.to_string(),
                             line: name.line,
                         });
@@ -260,7 +259,7 @@ impl<'src> TypeChecker<'src> {
                 }
 
                 Ok(TypedExpr {
-                    ty: Type::Struct(struct_type),
+                    ty: Type::Struct(struct_type.name),
                     kind: ExprKind::StructInit {
                         name: Box::from(name.lexeme),
                         args: args.into_iter().map(|(_, arg)| arg).collect(),
@@ -271,10 +270,15 @@ impl<'src> TypeChecker<'src> {
             Expr::Get { object, field } => {
                 let object = self.infer_expression(object)?;
                 if let Type::Struct(struct_def) = object.ty.clone() {
+                    let struct_def = self
+                        .structs
+                        .get(struct_def.as_str())
+                        .expect("Should have errored earlier");
+
                     let field_type = struct_def.fields.get(field.lexeme);
                     match field_type {
                         None => Err(TypeCheckerError::UndefinedField {
-                            struct_name: struct_def.name.clone(),
+                            struct_name: struct_def.name.to_string(),
                             field_name: field.lexeme.to_string(),
                             line: field.line,
                         }),
@@ -302,6 +306,11 @@ impl<'src> TypeChecker<'src> {
                 let object = self.infer_expression(object)?;
                 let value = self.infer_expression(value)?;
                 if let Type::Struct(struct_def) = object.ty.clone() {
+                    let struct_def = self
+                        .structs
+                        .get(struct_def.as_str())
+                        .expect("Should have errored earlier");
+
                     let (field_idx, field_type) =
                         self.check_field_type(&struct_def, field, &value)?;
 
@@ -326,14 +335,14 @@ impl<'src> TypeChecker<'src> {
 
     fn check_field_type(
         &self,
-        struct_def: &Rc<StructType>,
+        struct_def: &StructType,
         field: &Token,
         field_value: &TypedExpr,
     ) -> Result<(usize, Type), TypeCheckerError> {
         let field_type = struct_def.fields.get(field.lexeme);
         match field_type {
             None => Err(TypeCheckerError::UndefinedField {
-                struct_name: struct_def.name.clone(),
+                struct_name: struct_def.name.to_string(),
                 field_name: field.lexeme.to_string(),
                 line: field.line,
             }),

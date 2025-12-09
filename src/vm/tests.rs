@@ -644,8 +644,63 @@ mod tests {
             rect.corner.y = 200;
             assert(rect.corner.x, 100);
             assert(rect.corner.y, 200);
-            println(rect.corner.x, rect.corner.y, rect.width, rect.height);
+            println(rect.corner.x," ", rect.corner.y," ", rect.width," ", rect.height);
             "#;
+        execute_source(src, false, "run", true);
+    }
+    #[test]
+    fn test_recursive_structs() {
+        let src = r#"
+            struct Node {
+                value: number,
+                next: Node,
+            }
+            // let head = Node{value: 1, next: null};
+            // let tail = Node{value: 2, next: head};
+            // head.next = tail;
+            // assert(head.next.value, 2);
+            "#;
+        execute_source(src, false, "run", true);
+    }
+
+    #[test]
+    fn test_different_types_in_struct() {
+        let src = r#"
+            struct Point {
+                x: number,
+                y: string,
+            }
+            let p1 = Point{x: 1, y: "2"};
+            assert(p1.x, 1);
+            assert(p1.y, "2");
+            println(p1.x," ", p1.y);
+            "#;
+        execute_source(src, false, "run", true);
+    }
+
+    #[test]
+    fn test_initialization_order() {
+        let src = r#"
+            struct Vec5 {
+                x: number,
+                y: number,
+                z: number,
+                w: number,
+                v: number,
+            }
+            let v = Vec5{v: 1, w: 2, x: 3, y: 4, z: 5};
+            assert(v.v, 1);
+            assert(v.w, 2);
+            assert(v.x, 3);
+            assert(v.y, 4);
+            assert(v.z, 5);
+            let v1 = Vec5{w: 2, v: 1,z: 1 + 4, y: 4, x: 3};
+            assert(v1.v, 1);
+            assert(v1.w, 2);
+            assert(v1.x, 3);
+            assert(v1.y, 4);
+            assert(v1.z, 5);
+        "#;
         execute_source(src, false, "run", true);
     }
 }

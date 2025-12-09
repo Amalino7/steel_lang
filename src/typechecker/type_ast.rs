@@ -16,7 +16,7 @@ pub struct FunctionType {
 #[derive(Debug, PartialEq, Clone)]
 pub struct StructType {
     pub fields: HashMap<String, (usize, Type)>,
-    pub name: String,
+    pub name: Rc<String>,
 }
 #[derive(Debug, PartialEq, Clone)]
 pub enum Type {
@@ -26,14 +26,14 @@ pub enum Type {
     Void,
     Function(Rc<FunctionType>),
     Unknown,
-    Struct(Rc<StructType>),
+    Struct(Rc<String>),
     Any, //TODO replace with generic types, this is for native functions.
 }
 
 impl Type {
     pub fn from_identifier(
         name: &Token,
-        structs: &HashMap<&'_ str, Rc<StructType>>,
+        structs: &HashMap<&'_ str, StructType>,
     ) -> Result<Type, TypeCheckerError> {
         let line = name.line;
         let name = name.lexeme;
@@ -46,12 +46,14 @@ impl Type {
         } else if name == "void" {
             Ok(Type::Void)
         } else {
-            Ok(Type::Struct(Rc::clone(structs.get(name).ok_or(
-                TypeCheckerError::UndefinedType {
+            let struct_name = structs.get(name);
+            match struct_name {
+                None => Err(TypeCheckerError::UndefinedType {
                     name: name.to_string(),
                     line,
-                },
-            )?)))
+                }),
+                Some(struct_type) => Ok(Type::Struct(struct_type.name.clone())),
+            }
         }
     }
 
@@ -73,7 +75,7 @@ impl Type {
 
     pub fn from_ast(
         type_ast: &TypeAst<'_>,
-        structs: &HashMap<&'_ str, Rc<StructType>>,
+        structs: &HashMap<&str, StructType>,
     ) -> Result<Type, TypeCheckerError> {
         match type_ast {
             TypeAst::Named(name) => Self::from_identifier(name, structs),
@@ -118,18 +120,8 @@ impl Display for Type {
             }
             Type::Unknown => write!(f, "Unknown"),
             Type::Any => write!(f, "any"),
-            Type::Struct(struct_type) => {
-                write!(f, "struct {} ", struct_type.name,)?;
-                write!(
-                    f,
-                    "{{ {} }}",
-                    struct_type
-                        .fields
-                        .keys()
-                        .map(|k| format!("{}: {}", k, struct_type.fields[k].1))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )
+            Type::Struct(name) => {
+                write!(f, "struct {} ", name,)
             }
         }
     }

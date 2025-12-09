@@ -40,6 +40,20 @@ impl<'src> TypeChecker<'src> {
         ast: &[Stmt<'src>],
         errors: &mut Vec<TypeCheckerError>,
     ) {
+        // declare structs by name
+        for stmt in ast.iter() {
+            if let Stmt::Struct { name, .. } = stmt {
+                self.structs.insert(
+                    name.lexeme,
+                    StructType {
+                        name: Rc::new(name.lexeme.to_string()),
+                        fields: HashMap::new(),
+                    },
+                );
+            }
+        }
+
+        // define fields for structs
         for stmt in ast {
             if let Stmt::Struct { name, fields } = stmt {
                 let mut field_types = HashMap::new();
@@ -56,11 +70,19 @@ impl<'src> TypeChecker<'src> {
                         }
                     }
                 }
-                let struct_type = StructType {
-                    fields: field_types,
-                    name: name.lexeme.to_string(),
-                };
-                self.structs.insert(name.lexeme, Rc::new(struct_type));
+                let struct_def =
+                    self.structs
+                        .get_mut(name.lexeme)
+                        .ok_or(TypeCheckerError::UndefinedType {
+                            name: name.lexeme.to_string(),
+                            line: name.line,
+                        });
+                match struct_def {
+                    Ok(struct_def) => {
+                        struct_def.fields = field_types;
+                    }
+                    Err(err) => errors.push(err),
+                }
             }
         }
     }
