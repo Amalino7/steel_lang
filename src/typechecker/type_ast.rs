@@ -8,6 +8,7 @@ use std::rc::Rc;
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct FunctionType {
+    pub is_static: bool,
     pub is_vararg: bool,
     pub param_types: Vec<Type>,
     pub return_type: Type,
@@ -72,6 +73,7 @@ impl Type {
 
     pub fn new_function(param_types: Vec<Type>, return_type: Type) -> Type {
         Type::Function(Rc::new(FunctionType {
+            is_static: true,
             is_vararg: false,
             param_types,
             return_type,
@@ -80,6 +82,7 @@ impl Type {
 
     pub fn new_vararg(param_types: Vec<Type>, return_type: Type) -> Type {
         Type::Function(Rc::new(FunctionType {
+            is_static: true,
             is_vararg: true,
             param_types,
             return_type,
@@ -107,6 +110,43 @@ impl Type {
                 ))
             }
             TypeAst::Infer => Ok(Type::Unknown),
+        }
+    }
+    pub fn from_method_ast(
+        type_ast: &TypeAst<'_>,
+        self_type: &Token,
+        structs: &HashMap<&str, StructType>,
+    ) -> Result<Type, TypeCheckerError> {
+        match type_ast {
+            TypeAst::Function {
+                param_types,
+                return_type,
+            } => {
+                let first_param_type = param_types.first();
+                let mut result_param_type = vec![];
+
+                let is_instance_method = if let Some(TypeAst::Named(name)) = first_param_type {
+                    name.lexeme == "Self"
+                } else {
+                    false
+                };
+
+                if is_instance_method {
+                    result_param_type.push(Type::from_identifier(self_type, structs)?);
+                }
+
+                for param_type in param_types.iter().skip(0 + is_instance_method as usize) {
+                    result_param_type.push(Self::from_ast(param_type, structs)?);
+                }
+
+                Ok(Type::Function(Rc::new(FunctionType {
+                    is_static: !is_instance_method,
+                    is_vararg: false,
+                    return_type: Self::from_ast(return_type.as_ref(), structs)?,
+                    param_types: result_param_type,
+                })))
+            }
+            _ => unreachable!(),
         }
     }
 }

@@ -38,24 +38,33 @@ impl<'src> Parser<'src> {
         Ok(left)
     }
 
+    fn handle_assigment(
+        &mut self,
+        expr: Expr<'src>,
+        value: Expr<'src>,
+    ) -> Result<Expr<'src>, ParserError<'src>> {
+        if let Expr::Variable { name, .. } = expr {
+            Ok(Expr::Assignment {
+                identifier: name,
+                value: Box::new(value),
+            })
+        } else if let Expr::Get { object, field } = expr {
+            Ok(Expr::Set {
+                object,
+                field,
+                value: Box::new(value),
+            })
+        } else {
+            Err(self.error_current("Invalid assignment target."))
+        }
+    }
+
     fn assignment(&mut self) -> Result<Expr<'src>, ParserError<'src>> {
         let expr = self.equality()?;
 
         if match_token_type!(self, TokT::Equal) {
             let value = self.assignment()?;
-            if let Expr::Variable { name, .. } = expr {
-                return Ok(Expr::Assignment {
-                    identifier: name,
-                    value: Box::new(value),
-                });
-            } else if let Expr::Get { object, field } = expr {
-                return Ok(Expr::Set {
-                    object,
-                    field,
-                    value: Box::new(value),
-                });
-            }
-            return Err(self.error_current("Invalid assignment target."));
+            return self.handle_assigment(expr, value);
         } else if match_token_type!(
             self,
             TokT::PlusEqual,
@@ -63,42 +72,36 @@ impl<'src> Parser<'src> {
             TokT::StarEqual,
             TokT::SlashEqual
         ) {
-            if let Expr::Variable { name, .. } = expr {
-                let op = self.previous_token.clone();
-                let left = Expr::Variable { name: name.clone() };
-                let right = self.assignment()?;
+            let op = self.previous_token.clone();
+            let left = expr.clone();
+            let right = self.assignment()?;
 
-                let binary = match op.token_type {
-                    TokT::PlusEqual => Expr::Binary {
-                        left: Box::new(left),
-                        operator: Token::new(TokT::Plus, op.line, op.lexeme),
-                        right: Box::new(right),
-                    },
-                    TokT::MinusEqual => Expr::Binary {
-                        left: Box::new(left),
-                        operator: Token::new(TokT::Minus, op.line, op.lexeme),
-                        right: Box::new(right),
-                    },
-                    TokT::StarEqual => Expr::Binary {
-                        left: Box::new(left),
-                        operator: Token::new(TokT::Star, op.line, op.lexeme),
-                        right: Box::new(right),
-                    },
-                    TokT::SlashEqual => Expr::Binary {
-                        left: Box::new(left),
-                        operator: Token::new(TokT::Slash, op.line, op.lexeme),
-                        right: Box::new(right),
-                    },
-                    _ => unreachable!(),
-                };
+            let binary = match op.token_type {
+                TokT::PlusEqual => Expr::Binary {
+                    left: Box::new(left),
+                    operator: Token::new(TokT::Plus, op.line, op.lexeme),
+                    right: Box::new(right),
+                },
+                TokT::MinusEqual => Expr::Binary {
+                    left: Box::new(left),
+                    operator: Token::new(TokT::Minus, op.line, op.lexeme),
+                    right: Box::new(right),
+                },
+                TokT::StarEqual => Expr::Binary {
+                    left: Box::new(left),
+                    operator: Token::new(TokT::Star, op.line, op.lexeme),
+                    right: Box::new(right),
+                },
+                TokT::SlashEqual => Expr::Binary {
+                    left: Box::new(left),
+                    operator: Token::new(TokT::Slash, op.line, op.lexeme),
+                    right: Box::new(right),
+                },
+                _ => unreachable!(),
+            };
 
-                let target = Expr::Assignment {
-                    identifier: name,
-                    value: Box::new(binary),
-                };
-                return Ok(target);
-            }
-            return Err(self.error_current("Invalid assignment target."));
+            let target = self.handle_assigment(expr, binary)?;
+            return Ok(target);
         }
         Ok(expr)
     }
@@ -250,7 +253,7 @@ impl<'src> Parser<'src> {
                 &self.previous_token.lexeme[1..self.previous_token.lexeme.len() - 1],
             ))), // TODO Add string parsing
             TokT::Identifier => {
-                if self.current_token.token_type == TokT::LeftBrace {
+                if self.allow_struct_init && self.current_token.token_type == TokT::LeftBrace {
                     self.struct_initializer(self.previous_token.clone())
                 } else {
                     Ok(Expr::Variable {
@@ -262,7 +265,12 @@ impl<'src> Parser<'src> {
                 name: self.previous_token.clone(),
             }),
             TokT::LeftParen => {
-                let expr = self.expression()?;
+                let previous_allow = self.allow_struct_init;
+                self.allow_struct_init = true;
+                let expr = self.expression();
+                self.allow_struct_init = previous_allow;
+                let expr = expr?;
+
                 self.consume(TokT::RightParen, "Expect ')' after expression.")?;
                 Ok(Expr::Grouping {
                     expression: Box::new(expr),

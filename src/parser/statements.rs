@@ -4,18 +4,12 @@ use crate::parser::TokT;
 use crate::parser::{check_token_type, match_token_type, Parser};
 use crate::token::{Token, TokenType};
 
-#[derive(PartialEq)]
-enum FuncContext<'src> {
-    Func,
-    Method(Token<'src>),
-}
-
 impl<'src> Parser<'src> {
     pub(super) fn declaration(&mut self) -> Result<Stmt<'src>, ParserError<'src>> {
         if match_token_type!(self, TokT::Let) {
             self.let_declaration()
         } else if match_token_type!(self, TokT::Func) {
-            self.func_declaration(FuncContext::Func)
+            self.func_declaration(false)
         } else if match_token_type!(self, TokT::Struct) {
             self.struct_declaration()
         } else if match_token_type!(self, TokT::Impl) {
@@ -45,10 +39,7 @@ impl<'src> Parser<'src> {
             })
         }
     }
-    fn func_declaration(
-        &mut self,
-        func_context: FuncContext<'src>,
-    ) -> Result<Stmt<'src>, ParserError<'src>> {
+    fn func_declaration(&mut self, is_method: bool) -> Result<Stmt<'src>, ParserError<'src>> {
         self.consume(
             TokT::Identifier,
             "Expected function name. Syntax: 'func name(params) : return_type { body }",
@@ -61,14 +52,12 @@ impl<'src> Parser<'src> {
 
         if !check_token_type!(self, TokT::RightParen) {
             loop {
-                if let FuncContext::Method(type_name) = &func_context
-                    && match_token_type!(self, TokT::Self_)
-                {
+                if is_method && match_token_type!(self, TokT::Self_) {
                     params.push(self.previous_token.clone());
                     param_types.push(TypeAst::Named(Token {
                         token_type: TokenType::Identifier,
                         line: self.previous_token.line,
-                        lexeme: type_name.lexeme,
+                        lexeme: "Self",
                     }));
                 } else {
                     self.consume(
@@ -209,7 +198,10 @@ impl<'src> Parser<'src> {
         })
     }
     fn if_statement(&mut self) -> Result<Stmt<'src>, ParserError<'src>> {
-        let condition = self.expression()?;
+        self.allow_struct_init = false;
+        let condition = self.expression();
+        self.allow_struct_init = true;
+        let condition = condition?;
         let then_branch = self.block()?;
         let mut else_branch = None;
         if match_token_type!(self, TokT::Else) {
@@ -226,7 +218,11 @@ impl<'src> Parser<'src> {
         })
     }
     fn while_statement(&mut self) -> Result<Stmt<'src>, ParserError<'src>> {
-        let condition = self.expression()?;
+        self.allow_struct_init = false;
+        let condition = self.expression();
+        self.allow_struct_init = true;
+        let condition = condition?;
+
         let body = self.block()?;
         Ok(Stmt::While {
             condition,
@@ -258,7 +254,7 @@ impl<'src> Parser<'src> {
         self.consume(TokT::LeftBrace, "Expected '{' before impl block.")?;
         let mut methods = vec![];
         while match_token_type!(self, TokT::Func) {
-            let method = self.func_declaration(FuncContext::Method(name.clone()))?;
+            let method = self.func_declaration(true)?;
             methods.push(method);
         }
         self.consume(TokT::RightBrace, "Expected '}' after impl block.")?;

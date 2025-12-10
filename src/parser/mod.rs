@@ -13,6 +13,7 @@ pub struct Parser<'src> {
     scanner: Scanner<'src>,
     previous_token: Token<'src>,
     current_token: Token<'src>,
+    allow_struct_init: bool,
 }
 macro_rules! check_token_type {
     ($parser:expr, $( $token_type:pat $(,)?)*) => {
@@ -45,6 +46,7 @@ impl<'src> Parser<'src> {
             scanner,
             previous_token: start_token.clone(),
             current_token: start_token,
+            allow_struct_init: true,
         }
     }
     fn advance(&mut self) -> Result<(), ParserError<'src>> {

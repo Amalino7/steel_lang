@@ -211,4 +211,16 @@ impl<'src> TypeChecker<'src> {
         }
         None
     }
+
+    fn does_type_exist(&self, name: &str) -> bool {
+        if self.structs.contains_key(name)
+            || name == "string"
+            || name == "number"
+            || name == "boolean"
+        {
+            true
+        } else {
+            false
+        }
+    }
 }

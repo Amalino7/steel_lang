@@ -68,6 +68,10 @@ pub enum TypeCheckerError {
         found: Type,
         method_name: String,
     },
+    StaticMethodOnInstance {
+        method_name: String,
+        line: u32,
+    },
 }
 impl std::fmt::Display for TypeCheckerError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -182,6 +186,13 @@ impl std::fmt::Display for TypeCheckerError {
                     f,
                     "[line {}] Error: Undefined method '{}' on type {}.",
                     line, method_name, found
+                )
+            }
+            TypeCheckerError::StaticMethodOnInstance { method_name, line } => {
+                write!(
+                    f,
+                    "[line {}] Error: Cannot call static method '{}' on instance.",
+                    line, method_name
                 )
             }
         }

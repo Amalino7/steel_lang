@@ -741,6 +741,34 @@ mod tests {
             "#;
         execute_source(src, false, "run", true);
     }
+    #[test]
+    fn test_counter() {
+        let src = r#"
+            struct Counter {
+                value: number,
+            }
+            impl Counter {
+                func inc(self): Counter {
+                    self.value +=1;
+                    return self;
+                }
+                func new(): Counter {
+                    return Counter{value: 0};
+                }
+
+                func add(stg: Counter, other: number) {
+                    stg.value += other;
+                }
+            }
+
+            let c = Counter.new();
+            c.inc().inc().inc().inc();
+            assert(c.value, 4);
+            Counter.add(c, 10);
+            println(c.value);
+        "#;
+        execute_source(src, false, "run", true);
+    }
 
     #[test]
     fn test_method_on_nothing() {
@@ -762,9 +790,39 @@ mod tests {
             println(number.static_0(""));
             let a = ah();
             a.lmao();
-            println(2.static_0());
             println(2 + 4).lmao().lmao().lmao().lmao().lmao();
         "#;
+        execute_source(src, false, "run", true);
+    }
+
+    #[test]
+    fn test_different_method_calls() {
+        let src = r#"
+            struct Point {
+                x: number,
+                y: number,
+            }
+            impl Point {
+                // normal method
+                func add(self, other: Point): Point {
+                    return Point{x: self.x + other.x, y: self.y + other.y};
+                }
+                // static method
+                func add2(one: Point, two: Point): Point {
+                    return one.add(two);
+                }
+            }
+            let instance1 = Point{x: 1, y: 2};
+            let instance2 = Point{x: 3, y: 4};
+            let result = Point.add2(instance1, instance2); // static
+            assert(result.x, 4); assert(result.y, 6);
+            let result2 = instance1.add(instance2); // normal
+            assert(result2.x, 4); assert(result2.y, 6);
+            let result3 = Point.add(instance1, instance2); // UFCS
+            assert(result3.x, 4); assert(result3.y, 6);
+            // let result4 = instance1.add2(instance2); //illegal
+            "#;
+
         execute_source(src, false, "run", true);
     }
 }

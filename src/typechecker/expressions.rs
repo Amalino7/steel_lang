@@ -10,6 +10,7 @@ use crate::typechecker::TypeChecker;
 use std::borrow::Cow;
 use std::cmp::min;
 use std::collections::HashSet;
+use std::rc::Rc;
 
 impl<'src> TypeChecker<'src> {
     pub(crate) fn infer_expression(
@@ -269,8 +270,14 @@ impl<'src> TypeChecker<'src> {
                 })
             }
             Expr::Get { object, field } => {
-                let object = self.infer_expression(object)?;
-                if let Type::Struct(struct_def) = object.ty.clone() {
+                if let Expr::Variable { name } = object.as_ref() {
+                    if self.does_type_exist(name.lexeme) {
+                        return self.handle_static_method_access(name, field);
+                    }
+                }
+                let object_typed = self.infer_expression(object)?;
+
+                if let Type::Struct(struct_def) = object_typed.ty.clone() {
                     let struct_def = self
                         .structs
                         .get(struct_def.as_str())
@@ -278,28 +285,18 @@ impl<'src> TypeChecker<'src> {
 
                     let field_type = struct_def.fields.get(field.lexeme);
                     match field_type {
-                        None => self.handle_method(field, object),
-                        // None => Err(TypeCheckerError::UndefinedField {
-                        //     struct_name: struct_def.name.to_string(),
-                        //     field_name: field.lexeme.to_string(),
-                        //     line: field.line,
-                        // }),
+                        None => self.handle_instance_method(field, object_typed),
                         Some((idx, field_type)) => Ok(TypedExpr {
                             ty: field_type.clone(),
                             kind: ExprKind::GetField {
-                                object: Box::new(object),
+                                object: Box::new(object_typed),
                                 index: *idx as u8,
                             },
                             line: field.line,
                         }),
                     }
                 } else {
-                    self.handle_method(field, object)
-                    // name.some_func();
-                    // Err(TypeCheckerError::TypeHasNoFields {
-                    //     found: object.ty.clone(),
-                    //     line: object.line,
-                    // })
+                    self.handle_instance_method(field, object_typed)
                 }
             }
             Expr::Set {
@@ -335,53 +332,6 @@ impl<'src> TypeChecker<'src> {
                 }
             }
         }
-    }
-
-    fn handle_method(
-        &mut self,
-        field: &Token,
-        object: TypedExpr,
-    ) -> Result<TypedExpr, TypeCheckerError> {
-        let type_name = object
-            .ty
-            .get_name()
-            .ok_or(TypeCheckerError::TypeHasNoFields {
-                found: object.ty.clone(),
-                line: object.line,
-            })?;
-        let mangled_name = format!("{}.{}", type_name, field.lexeme);
-        let method = self.lookup_variable(Cow::Owned(mangled_name)).ok_or(
-            TypeCheckerError::UndefinedMethod {
-                line: field.line,
-                found: Type::Number,
-                method_name: field.lexeme.to_string(),
-            },
-        )?;
-
-        // Edge case -> static functions
-        let ty = match &method.0.type_info {
-            Type::Function(func) => {
-                let return_type = func.return_type.clone();
-                // TODO reduce allocations?
-                let params = func
-                    .param_types
-                    .iter()
-                    .skip(1)
-                    .map(|ty| ty.clone())
-                    .collect();
-                Type::new_function(params, return_type)
-            }
-            ty => ty.clone(),
-        };
-
-        Ok(TypedExpr {
-            ty,
-            kind: ExprKind::MethodGet {
-                object: Box::new(object),
-                method: method.1,
-            },
-            line: field.line,
-        })
     }
 
     fn check_field_type(
@@ -566,5 +516,91 @@ impl<'src> TypeChecker<'src> {
                 unreachable!("Ast should be checked for invalid operators before this point.")
             }
         }
+    }
+
+    fn handle_static_method_access(
+        &mut self,
+        type_name: &Token,
+        method_name: &Token,
+    ) -> Result<TypedExpr, TypeCheckerError> {
+        let mangled_name = format!("{}.{}", type_name.lexeme, method_name.lexeme);
+
+        let method = self
+            .lookup_variable(Cow::Owned(mangled_name.clone()))
+            .ok_or(TypeCheckerError::UndefinedMethod {
+                line: method_name.line,
+                found: Type::Struct(Rc::from(String::from(type_name.lexeme))),
+                method_name: method_name.lexeme.to_string(),
+            })?;
+
+        let (ctx, resolved_var) = method;
+
+        Ok(TypedExpr {
+            ty: ctx.type_info.clone(),
+            kind: ExprKind::GetVar(resolved_var),
+            line: method_name.line,
+        })
+    }
+
+    fn handle_instance_method(
+        &mut self,
+        field: &Token,
+        object: TypedExpr,
+    ) -> Result<TypedExpr, TypeCheckerError> {
+        let type_name = object
+            .ty
+            .get_name()
+            .ok_or(TypeCheckerError::TypeHasNoFields {
+                found: object.ty.clone(),
+                line: object.line,
+            })?;
+        let mangled_name = format!("{}.{}", type_name, field.lexeme);
+        let method = self.lookup_variable(Cow::Owned(mangled_name)).ok_or(
+            TypeCheckerError::UndefinedMethod {
+                line: field.line,
+                found: Type::Number,
+                method_name: field.lexeme.to_string(),
+            },
+        )?;
+
+        // Edge case -> static functions
+        let ty = match &method.0.type_info {
+            Type::Function(func) => {
+                let return_type = func.return_type.clone();
+
+                // light requirements
+                if func.param_types.is_empty() || func.param_types[0] != object.ty {
+                    return Err(TypeCheckerError::StaticMethodOnInstance {
+                        method_name: field.lexeme.to_string(),
+                        line: field.line,
+                    });
+                }
+                // Stronger syntax to be decided
+                if func.is_static {
+                    return Err(TypeCheckerError::StaticMethodOnInstance {
+                        method_name: field.lexeme.to_string(),
+                        line: field.line,
+                    });
+                }
+
+                let params = func
+                    .param_types
+                    .iter()
+                    .skip(1)
+                    .map(|ty| ty.clone())
+                    .collect();
+                Type::new_function(params, return_type)
+            }
+            ty => ty.clone(),
+        };
+
+        Ok(TypedExpr {
+            ty,
+            kind: ExprKind::MethodGet {
+                object: Box::new(object),
+                method: method.1,
+            },
+            line: field.line,
+        })
     }
 }

@@ -264,7 +264,8 @@ impl<'src> TypeChecker<'src> {
                             body,
                             type_,
                         } => {
-                            let type_info = Type::from_ast(type_, &self.structs)?;
+                            let type_info = Type::from_method_ast(type_, name, &self.structs)?;
+
                             let mangled_name = format!("{}.{}", name.lexeme, func_name.lexeme);
                             self.declare_mangled(
                                 mangled_name.to_string(),
