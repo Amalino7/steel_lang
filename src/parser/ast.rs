@@ -270,8 +270,12 @@ impl Display for Stmt<'_> {
                 }
                 write!(f, "}}")
             }
-            Stmt::Impl { .. } => {
-                todo!("Implement impl printing")
+            Stmt::Impl { name, methods } => {
+                write!(f, "Impl {} {{", name.lexeme)?;
+                for method in methods {
+                    write!(f, "{}\n", method)?;
+                }
+                write!(f, "}}")
             }
         }
     }
