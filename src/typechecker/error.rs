@@ -45,6 +45,33 @@ pub enum TypeCheckerError {
         name: String,
         line: u32,
     },
+    TypeHasNoFields {
+        found: Type,
+        line: u32,
+    },
+    UndefinedField {
+        struct_name: String,
+        field_name: String,
+        line: u32,
+    },
+    MissingField {
+        struct_name: String,
+        field_name: String,
+        line: u32,
+    },
+    StructOutsideOfGlobalScope {
+        name: String,
+        line: u32,
+    },
+    UndefinedMethod {
+        line: u32,
+        found: Type,
+        method_name: String,
+    },
+    StaticMethodOnInstance {
+        method_name: String,
+        line: u32,
+    },
 }
 impl std::fmt::Display for TypeCheckerError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -117,6 +144,56 @@ impl std::fmt::Display for TypeCheckerError {
             }
             TypeCheckerError::UndefinedType { name, line } => {
                 write!(f, "[line {}] Error: Undefined type '{}'.", line, name)
+            }
+            TypeCheckerError::TypeHasNoFields { found, line } => {
+                write!(f, "[line {}] Error: Type '{}' has no fields.", line, found)
+            }
+            TypeCheckerError::UndefinedField {
+                struct_name,
+                field_name,
+                line,
+            } => {
+                write!(
+                    f,
+                    "[line {}] Error: Struct '{}' has no field '{}'.",
+                    line, struct_name, field_name
+                )
+            }
+            TypeCheckerError::MissingField {
+                struct_name,
+                field_name,
+                line,
+            } => {
+                write!(
+                    f,
+                    "[line {}] Error: Struct '{}' is missing field '{}' from its initializer.",
+                    line, struct_name, field_name
+                )
+            }
+            TypeCheckerError::StructOutsideOfGlobalScope { name, line } => {
+                write!(
+                    f,
+                    "[line {}] Error: Struct '{}' is outside of global scope.",
+                    line, name
+                )
+            }
+            TypeCheckerError::UndefinedMethod {
+                line,
+                found,
+                method_name,
+            } => {
+                write!(
+                    f,
+                    "[line {}] Error: Undefined method '{}' on type {}.",
+                    line, method_name, found
+                )
+            }
+            TypeCheckerError::StaticMethodOnInstance { method_name, line } => {
+                write!(
+                    f,
+                    "[line {}] Error: Cannot call static method '{}' on instance.",
+                    line, method_name
+                )
             }
         }
     }

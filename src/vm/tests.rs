@@ -213,6 +213,7 @@ mod tests {
         let src = r#"let g_counter = 0;
         // 2. Function with shadowing and recursion
         func complex(n: number): number {
+            g_counter+=1;
             let g_counter = "string shadow"; // Shadow global with different type
 
             if n <= 0 {
@@ -226,6 +227,8 @@ mod tests {
 
             return 1 + complex(n - 1);
         }
+        print(complex(10));
+        assert(g_counter, 2);
 
         // 4. Block scoping torture
         {
@@ -247,6 +250,7 @@ mod tests {
         // 5. String concatenation edge cases
         let empty = "";
         let combined = empty + "start" + empty + "end";
+        assert(combined, "startend");
         print(combined);
          "#;
         execute_source(src, false, "run", true);
@@ -564,6 +568,310 @@ mod tests {
             assert(a, "something");
             "#;
 
+        execute_source(src, false, "run", true);
+    }
+
+    #[test]
+    fn test_structs() {
+        let src = r#"
+            struct Point {
+                x: number,
+                y: number,
+            }
+            let p1 = Point{x: 1, y: 2};
+            assert(p1.x, 1);
+            assert(p1.y, 2);
+
+            func make_point(x: number, y: number): Point {
+                return Point { x: x, y: y };
+            }
+
+            func print_point(p: Point): void {
+                println("{", p.x,",", p.y,"}");
+            }
+
+            let p2 = make_point(10, 20);
+            println(p2.x); // Prints 10
+            println(p2.x + p2.y);
+            assert(p2.x + p2.y, 30);
+            p2.x = 100;
+            print_point(p2);
+            assert(p2.x, 100);
+        "#;
+        execute_source(src, false, "run", true);
+    }
+
+    #[test]
+    fn test_struct_function_fields() {
+        let src = r#"
+            struct Point {
+                x: number,
+                y: number,
+                add:func(number, number): number,
+            }
+
+            func add(a: number, b: number): number {
+                 return a + b;
+            }
+
+            let p1 = Point {x: 1, y: 2, add: add};
+            assert(p1.x, 1);
+            assert(p1.y, 2);
+            assert(p1.add(6,7), 13);
+            println(p1.add(6,7));
+        "#;
+        execute_source(src, false, "run", true);
+    }
+
+    #[test]
+    fn test_complex_structs() {
+        let src = r#"
+            struct Point {
+                x: number,
+                y: number,
+            }
+            struct Rectangle {
+                width: number,
+                height: number,
+                corner: Point,
+            }
+            let rect = Rectangle{width: 10, height: 20, corner: Point{x: 1, y: 2}};
+            assert(rect.corner.x, 1);
+            assert(rect.corner.y, 2);
+            assert(rect.width, 10);
+            assert(rect.height, 20);
+            rect.corner.x = 100;
+            rect.corner.y = 200;
+            assert(rect.corner.x, 100);
+            assert(rect.corner.y, 200);
+            println(rect.corner.x," ", rect.corner.y," ", rect.width," ", rect.height);
+            "#;
+        execute_source(src, false, "run", true);
+    }
+    #[test]
+    fn test_recursive_structs() {
+        let src = r#"
+            struct Node {
+                value: number,
+                next: Node,
+            }
+            // let head = Node{value: 1, next: null};
+            // let tail = Node{value: 2, next: head};
+            // head.next = tail;
+            // assert(head.next.value, 2);
+            "#;
+        execute_source(src, false, "run", true);
+    }
+
+    #[test]
+    fn test_different_types_in_struct() {
+        let src = r#"
+            struct Point {
+                x: number,
+                y: string,
+            }
+            let p1 = Point{x: 1, y: "2"};
+            assert(p1.x, 1);
+            assert(p1.y, "2");
+            println(p1.x," ", p1.y);
+            "#;
+        execute_source(src, false, "run", true);
+    }
+
+    #[test]
+    fn test_initialization_order() {
+        let src = r#"
+            struct Vec5 {
+                x: number,
+                y: number,
+                z: number,
+                w: number,
+                v: number,
+            }
+            let v = Vec5{v: 1, w: 2, x: 3, y: 4, z: 5};
+            assert(v.v, 1);
+            assert(v.w, 2);
+            assert(v.x, 3);
+            assert(v.y, 4);
+            assert(v.z, 5);
+            let v1 = Vec5{w: 2, v: 1,z: 1 + 4, y: 4, x: 3};
+            assert(v1.v, 1);
+            assert(v1.w, 2);
+            assert(v1.x, 3);
+            assert(v1.y, 4);
+            assert(v1.z, 5);
+        "#;
+        execute_source(src, false, "run", true);
+    }
+    #[test]
+    fn test_struct_methods() {
+        let src = r#"
+            struct Point {
+                x: number,
+                y: number,
+            }
+            impl Point {
+                func add(self, other: Point): Point {
+                    return Point{x: self.x + other.x, y: self.y + other.y};
+                }
+            }
+            impl number {
+                func abs(self): number {
+                    if self < 0 {
+                        return -self;
+                    }
+                    return self;
+                }
+            }
+
+            impl void {
+                func lmao(self): void {
+                    println("Someone called a method on nothing!!");
+                }
+            }
+
+            let p1 = Point{x: 1, y: 2};
+            let p2 = Point{x: 3, y: 4};
+            let p3 = p1.add(p2);
+            assert(p3.x, 4);
+            assert(p3.y, 6);
+            println(p3.x," ", p3.y);
+            println((-14).abs());
+            assert(10.abs(), 10);
+            "#;
+        execute_source(src, false, "run", true);
+    }
+    #[test]
+    fn test_counter() {
+        let src = r#"
+            struct Counter {
+                value: number,
+            }
+            impl Counter {
+                func inc(self): Counter {
+                    self.value +=1;
+                    return self;
+                }
+                func new(): Counter {
+                    return Counter{value: 0};
+                }
+
+                func add(stg: Counter, other: number) {
+                    stg.value += other;
+                }
+            }
+
+            let c = Counter.new();
+            c.inc().inc().inc().inc();
+            assert(c.value, 4);
+            Counter.add(c, 10);
+            println(c.value);
+        "#;
+        execute_source(src, false, "run", true);
+    }
+
+    #[test]
+    fn test_method_on_nothing() {
+        let src = r#"
+            impl void {
+                func lmao(self): void {
+                    println("Someone called a method on nothing!!");
+                }
+            }
+
+            impl number {
+                func static_0(other: string): number {
+                    return 0;
+                }
+            }
+
+            func ah(): void {}
+
+            println(number.static_0(""));
+            let a = ah();
+            a.lmao();
+            println(2 + 4).lmao().lmao().lmao().lmao().lmao();
+        "#;
+        execute_source(src, false, "run", true);
+    }
+
+    #[test]
+    fn test_different_method_calls() {
+        let src = r#"
+            struct Point {
+                x: number,
+                y: number,
+            }
+            impl Point {
+                // normal method
+                func add(self, other: Point): Point {
+                    return Point{x: self.x + other.x, y: self.y + other.y};
+                }
+                // static method
+                func add2(one: Point, two: Point): Point {
+                    return one.add(two);
+                }
+            }
+            let instance1 = Point{x: 1, y: 2};
+            let instance2 = Point{x: 3, y: 4};
+            let result = Point.add2(instance1, instance2); // static
+            assert(result.x, 4); assert(result.y, 6);
+            let result2 = instance1.add(instance2); // normal
+            assert(result2.x, 4); assert(result2.y, 6);
+            let result3 = Point.add(instance1, instance2); // UFCS
+            assert(result3.x, 4); assert(result3.y, 6);
+            // let result4 = instance1.add2(instance2); //illegal
+            "#;
+
+        execute_source(src, false, "run", true);
+    }
+
+    #[test]
+    fn test_recursive_method() {
+        let src = r#"
+            struct Fiber {}
+            impl Fiber {
+                func fib(self, num: number): number{
+                    if num <= 1 {
+                        return num;
+                    }
+                    return self.fib(num - 1) + self.fib(num - 2);
+                }
+            }
+            let res = Fiber{}.fib(20);
+            let fib = Fiber{}.fib;
+            assert(fib(20), 6765);
+            assert(res, 6765);
+            println(res);
+            "#;
+        execute_source(src, false, "run", true);
+    }
+    #[test]
+    fn test_bound_method() {
+        let src = r#"
+            func _10xer(op: func()){
+                let i = 0;
+                while i < 10 {
+                    op();
+                    i+=1;
+                }
+            }
+
+            struct Counter{val: number}
+            impl Counter {
+                func inc(self): void {
+                    self.val += 1;
+                }
+            }
+            let c = Counter{val: 0};
+            c.inc();
+            assert(c.val, 1);
+            let inc = c.inc;
+            inc();
+            _10xer(inc);
+            println(c.val);
+            assert(c.val, 11);
+            "#;
         execute_source(src, false, "run", true);
     }
 }

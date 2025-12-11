@@ -2,7 +2,8 @@ use crate::compiler::analysis::ResolvedVar;
 use crate::parser::ast::Stmt;
 use crate::stdlib::NativeDef;
 use crate::typechecker::error::TypeCheckerError;
-use crate::typechecker::type_ast::{StmtKind, Type, TypedStmt};
+use crate::typechecker::type_ast::{StmtKind, StructType, Type, TypedStmt};
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 pub mod error;
@@ -41,16 +42,17 @@ enum ScopeType {
     Block,
 }
 struct Scope<'src> {
-    variables: HashMap<&'src str, VariableContext<'src>>,
+    variables: HashMap<Cow<'src, str>, VariableContext<'src>>,
     scope_type: ScopeType,
     last_index: usize,
 }
 
 pub struct TypeChecker<'src> {
     current_function: FunctionContext,
+    structs: HashMap<&'src str, StructType>,
     variable_scope: Vec<Scope<'src>>,
     natives: &'src [NativeDef],
-    closures: Vec<&'src str>,
+    closures: Vec<Cow<'src, str>>,
 }
 
 impl<'src> TypeChecker<'src> {
@@ -59,6 +61,7 @@ impl<'src> TypeChecker<'src> {
     pub fn new() -> Self {
         TypeChecker {
             current_function: FunctionContext::None,
+            structs: HashMap::new(),
             variable_scope: vec![],
             natives: &[],
             closures: vec![],
@@ -67,20 +70,24 @@ impl<'src> TypeChecker<'src> {
     pub fn new_with_natives(natives: &'src [NativeDef]) -> Self {
         TypeChecker {
             current_function: FunctionContext::None,
+            structs: HashMap::new(),
             variable_scope: vec![],
             natives,
             closures: vec![],
         }
     }
 
-    pub fn check(&mut self, ast: &mut [Stmt<'src>]) -> Result<TypedStmt, Vec<TypeCheckerError>> {
+    pub fn check(&mut self, ast: &[Stmt<'src>]) -> Result<TypedStmt, Vec<TypeCheckerError>> {
         let mut errors = vec![];
+
+        self.declare_global_structs(ast, &mut errors);
+
         self.begin_scope();
         let mut typed_ast = vec![];
 
         self.register_globals(self.natives);
         self.declare_global_functions(ast, &mut errors); // First pass declare all global functions.
-        for stmt in ast.iter_mut() {
+        for stmt in ast.iter() {
             match self.check_stmt(stmt) {
                 Ok(stmt) => {
                     typed_ast.push(stmt);
@@ -107,6 +114,7 @@ impl<'src> TypeChecker<'src> {
             })
         }
     }
+
     fn begin_function_scope(&mut self) {
         self.variable_scope.push(Scope {
             variables: Default::default(),
@@ -143,6 +151,22 @@ impl<'src> TypeChecker<'src> {
         }
     }
 
+    fn declare_mangled(
+        &mut self,
+        mangled_name: String,
+        surface_name: &'src str,
+        type_info: Type,
+    ) -> Result<(), TypeCheckerError> {
+        if let Some(scope) = self.variable_scope.last_mut() {
+            scope.variables.insert(
+                Cow::Owned(mangled_name),
+                VariableContext::new(surface_name, type_info, scope.last_index),
+            );
+            scope.last_index += 1;
+        }
+        Ok(())
+    }
+
     fn declare_variable(
         &mut self,
         name: &'src str,
@@ -150,7 +174,7 @@ impl<'src> TypeChecker<'src> {
     ) -> Result<(), TypeCheckerError> {
         if let Some(scope) = self.variable_scope.last_mut() {
             scope.variables.insert(
-                name,
+                Cow::Borrowed(name),
                 VariableContext::new(name, type_info, scope.last_index),
             );
             scope.last_index += 1;
@@ -160,11 +184,11 @@ impl<'src> TypeChecker<'src> {
 
     fn lookup_variable(
         &mut self,
-        name: &'src str,
+        name: Cow<'src, str>,
     ) -> Option<(&VariableContext<'src>, ResolvedVar)> {
         let mut is_closure = false;
         for scope in self.variable_scope.iter().rev() {
-            if let Some(var) = scope.variables.get(name) {
+            if let Some(var) = scope.variables.get(&name) {
                 return if scope.scope_type == ScopeType::Global {
                     Some((&var, ResolvedVar::Global(var.index as u16)))
                 } else if is_closure {
@@ -186,5 +210,17 @@ impl<'src> TypeChecker<'src> {
             }
         }
         None
+    }
+
+    fn does_type_exist(&self, name: &str) -> bool {
+        if self.structs.contains_key(name)
+            || name == "string"
+            || name == "number"
+            || name == "boolean"
+        {
+            true
+        } else {
+            false
+        }
     }
 }

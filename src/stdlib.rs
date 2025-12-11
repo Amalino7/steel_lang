@@ -10,13 +10,23 @@ pub struct NativeDef {
 pub fn get_natives() -> Vec<NativeDef> {
     vec![
         NativeDef {
-            name: "print",
-            type_: Type::new_function(vec![Type::Any], Type::Void),
+            name: "println",
+            type_: Type::new_vararg(vec![Type::Any], Type::Void),
             func: |args| {
                 for arg in args {
-                    print!("{} ", arg);
+                    print!("{}", arg);
                 }
                 println!();
+                Value::Nil
+            },
+        },
+        NativeDef {
+            name: "print",
+            type_: Type::new_vararg(vec![Type::Any], Type::Void),
+            func: |args| {
+                for arg in args {
+                    print!("{}", arg);
+                }
                 Value::Nil
             },
         },

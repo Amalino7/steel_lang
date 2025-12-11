@@ -13,6 +13,7 @@ pub struct Parser<'src> {
     scanner: Scanner<'src>,
     previous_token: Token<'src>,
     current_token: Token<'src>,
+    allow_struct_init: bool,
 }
 macro_rules! check_token_type {
     ($parser:expr, $( $token_type:pat $(,)?)*) => {
@@ -45,6 +46,7 @@ impl<'src> Parser<'src> {
             scanner,
             previous_token: start_token.clone(),
             current_token: start_token,
+            allow_struct_init: true,
         }
     }
     fn advance(&mut self) -> Result<(), ParserError<'src>> {
@@ -88,7 +90,7 @@ impl<'src> Parser<'src> {
     }
     fn error_previous(&mut self, message: &'static str) -> ParserError<'src> {
         ParserError::ParseError {
-            token: self.current_token.clone(),
+            token: self.previous_token.clone(),
             message,
         }
     }
@@ -237,7 +239,7 @@ mod tests {
                 lexeme: "a",
             },
             value: *number(10.0, 2),
-            type_info: TypeAst::Named("number"),
+            type_info: TypeAst::Named(Token::new(TokenType::Identifier, 2, "number")),
         });
         expected.push(Stmt::While {
             condition: Expr::Logical {

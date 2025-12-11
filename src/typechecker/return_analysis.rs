@@ -15,12 +15,9 @@ impl<'src> TypeChecker<'src> {
         match &stmt.kind {
             StmtKind::Expression(_) => Ok(()),
             StmtKind::Let { .. } => Ok(()),
-            StmtKind::Block { body, .. } => {
-                for stmt in body {
-                    self.check_stmt_returns(stmt)?;
-                }
-                Ok(())
-            }
+            StmtKind::Block { body, .. } => body
+                .iter()
+                .try_for_each(|stmt| self.check_stmt_returns(stmt)),
             StmtKind::If {
                 then_branch,
                 else_branch,
@@ -49,12 +46,13 @@ impl<'src> TypeChecker<'src> {
                 }
             }
             StmtKind::Return(_) => Ok(()),
-            StmtKind::Global { stmts, .. } => {
-                for stmt in stmts {
-                    self.check_stmt_returns(stmt)?;
-                }
-                Ok(())
-            }
+            StmtKind::Global { stmts, .. } => stmts
+                .iter()
+                .try_for_each(|stmt| self.check_stmt_returns(stmt)),
+            StmtKind::StructDecl { .. } => Ok(()),
+            StmtKind::Impl { methods } => methods
+                .iter()
+                .try_for_each(|method| self.check_stmt_returns(method)),
         }
     }
     fn stmt_returns(&mut self, stmt: &TypedStmt) -> Result<bool, TypeCheckerError> {
@@ -86,6 +84,8 @@ impl<'src> TypeChecker<'src> {
             StmtKind::Function { .. } => false,
             StmtKind::Return(_) => true,
             StmtKind::Global { .. } => false,
+            StmtKind::StructDecl { .. } => false,
+            StmtKind::Impl { .. } => false,
         })
     }
 }

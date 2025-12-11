@@ -12,7 +12,7 @@ pub enum Literal {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum TypeAst<'src> {
-    Named(&'src str),
+    Named(Token<'src>),
     Function {
         param_types: Box<[TypeAst<'src>]>,
         return_type: Box<TypeAst<'src>>,
@@ -25,6 +25,10 @@ pub enum Expr<'src> {
     Unary {
         operator: Token<'src>,
         expression: Box<Expr<'src>>,
+    },
+    StructInitializer {
+        name: Token<'src>,
+        fields: Vec<(Token<'src>, Expr<'src>)>,
     },
     Binary {
         operator: Token<'src>,
@@ -54,6 +58,15 @@ pub enum Expr<'src> {
         callee: Box<Expr<'src>>,
         arguments: Vec<Expr<'src>>,
     },
+    Get {
+        object: Box<Expr<'src>>,
+        field: Token<'src>,
+    },
+    Set {
+        object: Box<Expr<'src>>,
+        field: Token<'src>,
+        value: Box<Expr<'src>>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -82,6 +95,14 @@ pub enum Stmt<'src> {
         params: Vec<Token<'src>>,
         body: Vec<Stmt<'src>>,
         type_: TypeAst<'src>,
+    },
+    Struct {
+        name: Token<'src>,
+        fields: Vec<(Token<'src>, TypeAst<'src>)>,
+    },
+    Impl {
+        name: Token<'src>,
+        methods: Vec<Stmt<'src>>,
     },
     Return(Expr<'src>),
 }
@@ -144,13 +165,31 @@ impl Display for Expr<'_> {
                         .join(",")
                 )
             }
+
+            Expr::Get { object, field } => {
+                write!(f, "{}.{}", object, field.lexeme)
+            }
+            Expr::Set {
+                object,
+                field: name,
+                value,
+            } => {
+                write!(f, "{}.{} = {}", object, name.lexeme, value)
+            }
+            Expr::StructInitializer { name, fields } => {
+                write!(f, "{} {{", name.lexeme)?;
+                for (name, value) in fields {
+                    write!(f, "{} : {},", name.lexeme, value)?;
+                }
+                write!(f, "}}")
+            }
         }
     }
 }
 impl Display for TypeAst<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            TypeAst::Named(name) => write!(f, "{}", name),
+            TypeAst::Named(name) => write!(f, "{}", name.lexeme),
             TypeAst::Function {
                 param_types: params,
                 return_type,
@@ -223,6 +262,21 @@ impl Display for Stmt<'_> {
                 )
             }
             Stmt::Return(expr) => write!(f, "return {}", expr),
+
+            Stmt::Struct { name, fields } => {
+                write!(f, "Struct {} {{", name.lexeme)?;
+                for field in fields {
+                    write!(f, "{} : {}, ", field.0.lexeme, field.1)?;
+                }
+                write!(f, "}}")
+            }
+            Stmt::Impl { name, methods } => {
+                write!(f, "Impl {} {{", name.lexeme)?;
+                for method in methods {
+                    write!(f, "{}\n", method)?;
+                }
+                write!(f, "}}")
+            }
         }
     }
 }
@@ -238,6 +292,9 @@ impl Expr<'_> {
             Expr::Assignment { identifier, .. } => identifier.line,
             Expr::Logical { operator, .. } => operator.line,
             Expr::Call { callee, .. } => callee.get_line(),
+            Expr::Get { field, .. } => field.line,
+            Expr::Set { value, .. } => value.get_line(),
+            Expr::StructInitializer { name, .. } => name.line,
         }
     }
 }
@@ -258,6 +315,8 @@ impl Stmt<'_> {
             Stmt::While { condition, .. } => condition.get_line(),
             Stmt::Function { name, .. } => name.line,
             Stmt::Return(expr) => expr.get_line(),
+            Stmt::Struct { name, .. } => name.line,
+            Stmt::Impl { name, .. } => name.line,
         }
     }
 }

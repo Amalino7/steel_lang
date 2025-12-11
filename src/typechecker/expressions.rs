@@ -3,8 +3,14 @@ use crate::parser::ast::{Expr, Literal};
 use crate::token::{Token, TokenType};
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::error::TypeCheckerError::AssignmentToCapturedVariable;
-use crate::typechecker::type_ast::{BinaryOp, ExprKind, LogicalOp, Type, TypedExpr, UnaryOp};
+use crate::typechecker::type_ast::{
+    BinaryOp, ExprKind, LogicalOp, StructType, Type, TypedExpr, UnaryOp,
+};
 use crate::typechecker::TypeChecker;
+use std::borrow::Cow;
+use std::cmp::min;
+use std::collections::HashSet;
+use std::rc::Rc;
 
 impl<'src> TypeChecker<'src> {
     pub(crate) fn infer_expression(
@@ -66,7 +72,7 @@ impl<'src> TypeChecker<'src> {
             } => self.check_binary_expression(operator, left, right),
 
             Expr::Variable { name } => {
-                let var = self.lookup_variable(name.lexeme);
+                let var = self.lookup_variable(Cow::from(name.lexeme));
                 if let Some((ctx, resolved)) = var {
                     Ok(TypedExpr {
                         ty: ctx.type_info.clone(),
@@ -97,7 +103,7 @@ impl<'src> TypeChecker<'src> {
             }
             Expr::Assignment { identifier, value } => {
                 let typed_value = self.infer_expression(value)?;
-                let var_lookup = self.lookup_variable(identifier.lexeme);
+                let var_lookup = self.lookup_variable(Cow::from(identifier.lexeme));
 
                 if let Some((ctx, resolved)) = var_lookup {
                     if typed_value.ty != ctx.type_info {
@@ -180,7 +186,9 @@ impl<'src> TypeChecker<'src> {
             Expr::Call { callee, arguments } => {
                 let callee_typed = self.infer_expression(callee)?;
                 if let Type::Function(func) = callee_typed.ty.clone() {
-                    if func.param_types.len() != arguments.len() {
+                    if (func.param_types.len() != arguments.len() && !func.is_vararg)
+                        || (func.is_vararg && arguments.len() < func.param_types.len())
+                    {
                         return Err(TypeCheckerError::IncorrectArity {
                             callee_name: callee.to_string(),
                             expected: func.param_types.len(),
@@ -191,8 +199,9 @@ impl<'src> TypeChecker<'src> {
 
                     let mut typed_args = Vec::with_capacity(arguments.len());
 
-                    for (i, arg) in arguments.iter().enumerate() {
+                    for (mut i, arg) in arguments.iter().enumerate() {
                         let arg_typed = self.infer_expression(arg)?;
+                        i = min(i, func.param_types.len() - 1);
 
                         if func.param_types[i] != Type::Any && arg_typed.ty != func.param_types[i] {
                             return Err(TypeCheckerError::FunctionParameterTypeMismatch {
@@ -217,6 +226,136 @@ impl<'src> TypeChecker<'src> {
                     Err(TypeCheckerError::CalleeIsNotAFunction {
                         found: callee_typed.ty,
                         line: callee_typed.line,
+                    })
+                }
+            }
+            Expr::StructInitializer { name, fields } => {
+                let struct_type = self
+                    .structs
+                    .get(name.lexeme)
+                    .ok_or(TypeCheckerError::UndefinedType {
+                        name: name.lexeme.to_string(),
+                        line: name.line,
+                    })?
+                    .clone();
+
+                let mut args = vec![];
+                let mut defined_fields = HashSet::new();
+                for (field, expr) in fields {
+                    let arg_type = self.infer_expression(expr)?;
+                    let (idx, _) = self.check_field_type(&struct_type, field, &arg_type)?;
+                    args.push((idx, arg_type));
+
+                    defined_fields.insert(field.lexeme);
+                }
+                args.sort_by(|a, b| a.0.cmp(&b.0));
+
+                for field in struct_type.fields.keys() {
+                    if !defined_fields.contains(field.as_str()) {
+                        return Err(TypeCheckerError::MissingField {
+                            struct_name: struct_type.name.to_string(),
+                            field_name: field.to_string(),
+                            line: name.line,
+                        });
+                    }
+                }
+
+                Ok(TypedExpr {
+                    ty: Type::Struct(struct_type.name),
+                    kind: ExprKind::StructInit {
+                        name: Box::from(name.lexeme),
+                        args: args.into_iter().map(|(_, arg)| arg).collect(),
+                    },
+                    line: name.line,
+                })
+            }
+            Expr::Get { object, field } => {
+                if let Expr::Variable { name } = object.as_ref() {
+                    if self.does_type_exist(name.lexeme) {
+                        return self.handle_static_method_access(name, field);
+                    }
+                }
+                let object_typed = self.infer_expression(object)?;
+
+                if let Type::Struct(struct_def) = object_typed.ty.clone() {
+                    let struct_def = self
+                        .structs
+                        .get(struct_def.as_str())
+                        .expect("Should have errored earlier");
+
+                    let field_type = struct_def.fields.get(field.lexeme);
+                    match field_type {
+                        None => self.handle_instance_method(field, object_typed),
+                        Some((idx, field_type)) => Ok(TypedExpr {
+                            ty: field_type.clone(),
+                            kind: ExprKind::GetField {
+                                object: Box::new(object_typed),
+                                index: *idx as u8,
+                            },
+                            line: field.line,
+                        }),
+                    }
+                } else {
+                    self.handle_instance_method(field, object_typed)
+                }
+            }
+            Expr::Set {
+                object,
+                field,
+                value,
+            } => {
+                let object = self.infer_expression(object)?;
+                let value = self.infer_expression(value)?;
+                if let Type::Struct(struct_def) = object.ty.clone() {
+                    let struct_def = self
+                        .structs
+                        .get(struct_def.as_str())
+                        .expect("Should have errored earlier");
+
+                    let (field_idx, field_type) =
+                        self.check_field_type(&struct_def, field, &value)?;
+
+                    Ok(TypedExpr {
+                        ty: field_type,
+                        kind: ExprKind::SetField {
+                            object: Box::new(object),
+                            index: field_idx as u8,
+                            value: Box::new(value),
+                        },
+                        line: field.line,
+                    })
+                } else {
+                    Err(TypeCheckerError::TypeHasNoFields {
+                        found: object.ty.clone(),
+                        line: object.line,
+                    })
+                }
+            }
+        }
+    }
+
+    fn check_field_type(
+        &self,
+        struct_def: &StructType,
+        field: &Token,
+        field_value: &TypedExpr,
+    ) -> Result<(usize, Type), TypeCheckerError> {
+        let field_type = struct_def.fields.get(field.lexeme);
+        match field_type {
+            None => Err(TypeCheckerError::UndefinedField {
+                struct_name: struct_def.name.to_string(),
+                field_name: field.lexeme.to_string(),
+                line: field.line,
+            }),
+            Some((id, field_type)) => {
+                if field_type == &field_value.ty {
+                    Ok((*id, field_type.clone()))
+                } else {
+                    Err(TypeCheckerError::TypeMismatch {
+                        expected: field_type.clone(),
+                        found: field_value.ty.clone(),
+                        line: field.line,
+                        message: "Expected the same type but found something else.",
                     })
                 }
             }
@@ -377,5 +516,91 @@ impl<'src> TypeChecker<'src> {
                 unreachable!("Ast should be checked for invalid operators before this point.")
             }
         }
+    }
+
+    fn handle_static_method_access(
+        &mut self,
+        type_name: &Token,
+        method_name: &Token,
+    ) -> Result<TypedExpr, TypeCheckerError> {
+        let mangled_name = format!("{}.{}", type_name.lexeme, method_name.lexeme);
+
+        let method = self
+            .lookup_variable(Cow::Owned(mangled_name.clone()))
+            .ok_or(TypeCheckerError::UndefinedMethod {
+                line: method_name.line,
+                found: Type::Struct(Rc::from(String::from(type_name.lexeme))),
+                method_name: method_name.lexeme.to_string(),
+            })?;
+
+        let (ctx, resolved_var) = method;
+
+        Ok(TypedExpr {
+            ty: ctx.type_info.clone(),
+            kind: ExprKind::GetVar(resolved_var),
+            line: method_name.line,
+        })
+    }
+
+    fn handle_instance_method(
+        &mut self,
+        field: &Token,
+        object: TypedExpr,
+    ) -> Result<TypedExpr, TypeCheckerError> {
+        let type_name = object
+            .ty
+            .get_name()
+            .ok_or(TypeCheckerError::TypeHasNoFields {
+                found: object.ty.clone(),
+                line: object.line,
+            })?;
+        let mangled_name = format!("{}.{}", type_name, field.lexeme);
+        let method = self.lookup_variable(Cow::Owned(mangled_name)).ok_or(
+            TypeCheckerError::UndefinedMethod {
+                line: field.line,
+                found: Type::Number,
+                method_name: field.lexeme.to_string(),
+            },
+        )?;
+
+        // Edge case -> static functions
+        let ty = match &method.0.type_info {
+            Type::Function(func) => {
+                let return_type = func.return_type.clone();
+
+                // light requirements
+                if func.param_types.is_empty() || func.param_types[0] != object.ty {
+                    return Err(TypeCheckerError::StaticMethodOnInstance {
+                        method_name: field.lexeme.to_string(),
+                        line: field.line,
+                    });
+                }
+                // Stronger syntax to be decided
+                if func.is_static {
+                    return Err(TypeCheckerError::StaticMethodOnInstance {
+                        method_name: field.lexeme.to_string(),
+                        line: field.line,
+                    });
+                }
+
+                let params = func
+                    .param_types
+                    .iter()
+                    .skip(1)
+                    .map(|ty| ty.clone())
+                    .collect();
+                Type::new_function(params, return_type)
+            }
+            ty => ty.clone(),
+        };
+
+        Ok(TypedExpr {
+            ty,
+            kind: ExprKind::MethodGet {
+                object: Box::new(object),
+                method: method.1,
+            },
+            line: field.line,
+        })
     }
 }
