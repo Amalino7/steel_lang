@@ -21,6 +21,12 @@ pub struct Instance {
     pub fields: Vec<Value>,
 }
 
+#[derive(Debug, Clone)]
+pub struct BoundMethod {
+    pub receiver: Value,
+    pub method: Gc<Function>,
+}
+
 impl Function {
     pub fn new(name: String, chunk: Chunk) -> Function {
         Function { name, chunk }
@@ -29,14 +35,15 @@ impl Function {
 
 #[derive(Clone, Debug, Copy)]
 pub enum Value {
+    Nil,
     Number(f64),
+    Boolean(bool),
     String(Gc<String>),
     Closure(Gc<Closure>),
     Function(Gc<Function>),
     NativeFunction(NativeFn),
-    Boolean(bool),
+    BoundMethod(Gc<BoundMethod>),
     Instance(Gc<Instance>),
-    Nil,
 }
 
 pub type NativeFn = fn(&[Value]) -> Value;
@@ -73,6 +80,12 @@ impl Display for Value {
             Value::NativeFunction(_) => write!(f, "<native fn>"),
             Value::Closure(closure) => write!(f, "<closure {}>", closure.function.name.as_str()),
             Value::Instance(instance) => write!(f, "<instance {}>", instance.name),
+            Value::BoundMethod(bound_method) => write!(
+                f,
+                "<bound method {} of {}>",
+                bound_method.method.name.as_str(),
+                bound_method.receiver
+            ),
         }
     }
 }

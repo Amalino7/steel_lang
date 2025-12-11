@@ -3,7 +3,7 @@ use crate::vm::byte_utils::{byte_to_opcode, read_16_bytes, read_24_bytes};
 use crate::vm::bytecode::Opcode;
 use crate::vm::gc::{GarbageCollector, Gc};
 use crate::vm::stack::Stack;
-use crate::vm::value::{Closure, Function, Instance, Value};
+use crate::vm::value::{BoundMethod, Closure, Function, Instance, Value};
 use std::process::exit;
 
 mod byte_utils;
@@ -268,6 +268,25 @@ impl VM {
                             current_frame = frame;
                             chunk = &current_frame.function.chunk; // updated chunk
                         }
+                        Value::BoundMethod(bound_method) => {
+                            let callee_index = top - arg_count - 1;
+                            for i in (callee_index + 1..top).rev() {
+                                let v = self.stack.get_at(i);
+                                self.stack.set_at(i + 1, v);
+                            }
+                            self.stack.set_at(callee_index + 1, bound_method.receiver);
+                            self.stack.top = top + 1;
+
+                            let frame = CallFrame {
+                                function: bound_method.method,
+                                ip: 0,
+                                slot_offset: callee_index,
+                            };
+
+                            self.frames.push(current_frame);
+                            current_frame = frame;
+                            chunk = &current_frame.function.chunk; // updated chunk
+                        }
                         Value::NativeFunction(native_fn) => {
                             let args_start = top - arg_count;
                             let mut args = Vec::with_capacity(arg_count);
@@ -375,6 +394,17 @@ impl VM {
                         panic!("SetField on non-instance");
                     }
                 },
+                Opcode::BindMethod => {
+                    let function = self.stack.pop();
+                    let receiver = self.stack.pop();
+
+                    if let Value::Function(method) = function {
+                        let bound = self.gc.alloc(BoundMethod { receiver, method });
+                        self.stack.push(Value::BoundMethod(bound));
+                    } else {
+                        panic!("BindMethod expected function");
+                    }
+                }
             }
         }
     }

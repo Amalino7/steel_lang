@@ -825,4 +825,53 @@ mod tests {
 
         execute_source(src, false, "run", true);
     }
+
+    #[test]
+    fn test_recursive_method() {
+        let src = r#"
+            struct Fiber {}
+            impl Fiber {
+                func fib(self, num: number): number{
+                    if num <= 1 {
+                        return num;
+                    }
+                    return self.fib(num - 1) + self.fib(num - 2);
+                }
+            }
+            let res = Fiber{}.fib(20);
+            let fib = Fiber{}.fib;
+            assert(fib(20), 6765);
+            assert(res, 6765);
+            println(res);
+            "#;
+        execute_source(src, false, "run", true);
+    }
+    #[test]
+    fn test_bound_method() {
+        let src = r#"
+            func _10xer(op: func()){
+                let i = 0;
+                while i < 10 {
+                    op();
+                    i+=1;
+                }
+            }
+
+            struct Counter{val: number}
+            impl Counter {
+                func inc(self): void {
+                    self.val += 1;
+                }
+            }
+            let c = Counter{val: 0};
+            c.inc();
+            assert(c.val, 1);
+            let inc = c.inc;
+            inc();
+            _10xer(inc);
+            println(c.val);
+            assert(c.val, 11);
+            "#;
+        execute_source(src, false, "run", true);
+    }
 }

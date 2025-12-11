@@ -128,6 +128,7 @@ pub fn disassemble_instruction(
         }
         Opcode::EqualString => println!("EqualString"),
         Opcode::EqualNumber => println!("EqualNumber"),
+        Opcode::BindMethod => println!("BindMethod"),
     };
     offset + 1
 }

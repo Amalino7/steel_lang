@@ -370,8 +370,12 @@ impl<'a> Compiler<'a> {
                 self.emit_byte(*index, line);
             }
 
-            ExprKind::MethodGet { .. } => {
-                todo!("Bound methods not done")
+            ExprKind::MethodGet { object, method } => {
+                self.compile_expr(object);
+
+                self.emit_var_access(method, line);
+
+                self.emit_op(Opcode::BindMethod, line);
             }
         }
     }
