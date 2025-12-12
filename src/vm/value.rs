@@ -27,6 +27,17 @@ pub struct BoundMethod {
     pub method: Gc<Function>,
 }
 
+#[derive(Debug)]
+pub struct VTable {
+    pub methods: Vec<Gc<Function>>,
+}
+
+#[derive(Debug)]
+pub struct InterfaceObj {
+    pub data: Value,
+    pub vtable: Gc<VTable>,
+}
+
 impl Function {
     pub fn new(name: String, chunk: Chunk) -> Function {
         Function { name, chunk }
@@ -44,6 +55,7 @@ pub enum Value {
     NativeFunction(NativeFn),
     BoundMethod(Gc<BoundMethod>),
     Instance(Gc<Instance>),
+    InterfaceObj(Gc<InterfaceObj>),
 }
 
 pub type NativeFn = fn(&[Value]) -> Value;
@@ -86,6 +98,7 @@ impl Display for Value {
                 bound_method.method.name.as_str(),
                 bound_method.receiver
             ),
+            Value::InterfaceObj(_) => write!(f, "<interface>"),
         }
     }
 }

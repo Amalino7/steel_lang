@@ -69,6 +69,7 @@ pub enum TokenType {
     Struct,
     Impl,
     Self_,
+    Interface,
 
     // Reports errors.
     Error,
@@ -125,6 +126,7 @@ impl Display for TokenType {
             TokenType::Struct => f.write_str("struct"),
             TokenType::Impl => f.write_str("impl"),
             TokenType::Self_ => f.write_str("self"),
+            TokenType::Interface => f.write_str("interface"),
         }
     }
 }

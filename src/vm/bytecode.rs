@@ -45,6 +45,10 @@ pub enum Opcode {
     GetField,
     SetField,
 
+    MakeVTable,
+    MakeInterfaceObj,
+    InterfaceBindMethod,
+
     Return,
     Halt,
 }

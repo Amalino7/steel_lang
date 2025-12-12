@@ -2,6 +2,7 @@ use crate::compiler::analysis::ResolvedVar;
 use crate::parser::ast::{Literal, TypeAst};
 use crate::token::Token;
 use crate::typechecker::error::TypeCheckerError;
+use crate::typechecker::Symbol;
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::rc::Rc;
@@ -17,8 +18,15 @@ pub struct FunctionType {
 #[derive(Debug, PartialEq, Clone)]
 pub struct StructType {
     pub fields: HashMap<String, (usize, Type)>,
-    pub name: Rc<String>,
+    pub name: Symbol,
 }
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct InterfaceType {
+    pub methods: HashMap<String, (usize, Type)>,
+    pub name: Symbol,
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum Type {
     Number,
@@ -27,14 +35,16 @@ pub enum Type {
     Void,
     Function(Rc<FunctionType>),
     Unknown,
-    Struct(Rc<String>),
+    Struct(Symbol),
+    Interface(Symbol),
     Any, //TODO replace with generic types, this is for native functions.
 }
 
 impl Type {
     pub fn from_identifier(
         name: &Token,
-        structs: &HashMap<&'_ str, StructType>,
+        structs: &HashMap<Symbol, StructType>,
+        interfaces: &HashMap<Symbol, InterfaceType>,
     ) -> Result<Type, TypeCheckerError> {
         let line = name.line;
         let name = name.lexeme;
@@ -46,27 +56,28 @@ impl Type {
             Ok(Type::Boolean)
         } else if name == "void" {
             Ok(Type::Void)
+        } else if let Some(struct_type) = structs.get(name) {
+            Ok(Type::Struct(struct_type.name.clone()))
+        } else if let Some(iface) = interfaces.get(name) {
+            Ok(Type::Interface(iface.name.clone()))
         } else {
-            let struct_name = structs.get(name);
-            match struct_name {
-                None => Err(TypeCheckerError::UndefinedType {
-                    name: name.to_string(),
-                    line,
-                }),
-                Some(struct_type) => Ok(Type::Struct(struct_type.name.clone())),
-            }
+            Err(TypeCheckerError::UndefinedType {
+                name: name.to_string(),
+                line,
+            })
         }
     }
 
     pub fn get_name(&self) -> Option<&str> {
         match self {
+            Type::Interface(name) => Some(name),
             Type::Number => Some("number"),
             Type::String => Some("string"),
             Type::Boolean => Some("boolean"),
             Type::Void => Some("void"),
             Type::Function(_) => None,
             Type::Unknown => None,
-            Type::Struct(name) => Some(name.as_str()),
+            Type::Struct(name) => Some(name),
             Type::Any => None,
         }
     }
@@ -91,31 +102,34 @@ impl Type {
 
     pub fn from_ast(
         type_ast: &TypeAst<'_>,
-        structs: &HashMap<&str, StructType>,
+        structs: &HashMap<Symbol, StructType>,
+        interfaces: &HashMap<Symbol, InterfaceType>,
     ) -> Result<Type, TypeCheckerError> {
         match type_ast {
-            TypeAst::Named(name) => Self::from_identifier(name, structs),
+            TypeAst::Named(name) => Self::from_identifier(name, structs, interfaces),
             TypeAst::Function {
                 param_types,
                 return_type,
             } => {
                 let param_types = param_types
                     .iter()
-                    .map(|e| Self::from_ast(e, structs))
+                    .map(|e| Self::from_ast(e, structs, interfaces))
                     .collect::<Result<Vec<Type>, TypeCheckerError>>()?;
 
                 Ok(Type::new_function(
                     param_types,
-                    Self::from_ast(return_type, structs)?,
+                    Self::from_ast(return_type, structs, interfaces)?,
                 ))
             }
             TypeAst::Infer => Ok(Type::Unknown),
         }
     }
+
     pub fn from_method_ast(
         type_ast: &TypeAst<'_>,
         self_type: &Token,
-        structs: &HashMap<&str, StructType>,
+        structs: &HashMap<Symbol, StructType>,
+        interfaces: &HashMap<Symbol, InterfaceType>,
     ) -> Result<Type, TypeCheckerError> {
         match type_ast {
             TypeAst::Function {
@@ -132,17 +146,17 @@ impl Type {
                 };
 
                 if is_instance_method {
-                    result_param_type.push(Type::from_identifier(self_type, structs)?);
+                    result_param_type.push(Type::from_identifier(self_type, structs, interfaces)?);
                 }
 
                 for param_type in param_types.iter().skip(0 + is_instance_method as usize) {
-                    result_param_type.push(Self::from_ast(param_type, structs)?);
+                    result_param_type.push(Self::from_ast(param_type, structs, interfaces)?);
                 }
 
                 Ok(Type::Function(Rc::new(FunctionType {
                     is_static: !is_instance_method,
                     is_vararg: false,
-                    return_type: Self::from_ast(return_type.as_ref(), structs)?,
+                    return_type: Self::from_ast(return_type.as_ref(), structs, interfaces)?,
                     param_types: result_param_type,
                 })))
             }
@@ -173,31 +187,31 @@ impl Display for Type {
             }
             Type::Unknown => write!(f, "Unknown"),
             Type::Any => write!(f, "any"),
-            Type::Struct(name) => {
-                write!(f, "struct {} ", name,)
-            }
+            Type::Struct(name) => write!(f, "struct {} ", name),
+            Type::Interface(name) => write!(f, "interface {} ", name),
         }
     }
 }
-#[derive(Debug)]
+
+#[derive(Debug, Clone)]
 pub struct TypedExpr {
     pub ty: Type,
     pub kind: ExprKind,
     pub line: u32,
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum UnaryOp {
     Negate,
     Not,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum LogicalOp {
     Or,
     And,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum BinaryOp {
     Concat,
     // Can add more specific operators later
@@ -219,7 +233,7 @@ pub enum BinaryOp {
     EqualEqualString,
     EqualEqual,
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ExprKind {
     Literal(Literal),
     GetVar(ResolvedVar),
@@ -236,6 +250,18 @@ pub enum ExprKind {
         name: Box<str>,
         args: Vec<TypedExpr>,
     },
+
+    InterfaceUpcast {
+        expr: Box<TypedExpr>,
+        interface: Symbol,
+        vtable: Box<[ResolvedVar]>,
+    },
+
+    InterfaceMethodGet {
+        object: Box<TypedExpr>,
+        method_index: u8,
+    },
+
     Unary {
         operator: UnaryOp,
         operand: Box<TypedExpr>,

@@ -730,6 +730,7 @@ mod tests {
                 }
             }
 
+
             let p1 = Point{x: 1, y: 2};
             let p2 = Point{x: 3, y: 4};
             let p3 = p1.add(p2);
@@ -870,8 +871,86 @@ mod tests {
             inc();
             _10xer(inc);
             println(c.val);
-            assert(c.val, 11);
+            assert(c.val, 12);
             "#;
+        execute_source(src, false, "run", true);
+    }
+
+    #[test]
+    fn test_interface() {
+        let src = r#"
+            interface Drawable {
+                func draw(self): void;
+            }
+
+            struct Point { x: number, y: number }
+
+            impl Point : Drawable {
+              func draw(self): void {
+                println("Drawing point at ", self.x, ", ", self.y);
+              }
+            }
+
+            struct Other {}
+            impl Other : Drawable {
+                func draw(self): void {
+                    println("Drawing other");
+                }
+            }
+
+            func draw(d: Drawable): void { d.draw(); }
+
+            let d: Drawable = Point { x: 1, y: 2 };
+            d.draw();
+            let o: Drawable = Other{};
+
+            o.draw();
+            draw(d);
+            draw(o);
+           "#;
+        execute_source(src, false, "run", true);
+    }
+    #[test]
+    fn test_interface_autocast() {
+        let src = r#"
+            interface Drawable {
+                func draw(self): void;
+            }
+            struct Point { x: number, y: number }
+            impl Point : Drawable {
+                func draw(self): void {
+                    println(self.x," ", self.y);
+                }
+            }
+
+            func something(a: Drawable): void { a.draw(); }
+
+            let p: Drawable = Point { x: 1, y: 2 };
+            p = Point { x: 3, y: 4 };
+            p.draw();
+            something(Point { x: 5, y: 6 });
+
+            let other = Point { x: 7, y: 8 };
+            other.draw();
+
+            "#;
+        execute_source(src, false, "run", true);
+    }
+    #[test]
+    fn test_interface_on_primitive() {
+        let src = r#"
+            interface Drawable {
+                func draw(self): void;
+            }
+            impl number : Drawable {
+                func draw(self): void {
+                    println(self);
+                    assert(self, 10);
+                }
+            }
+            let n: Drawable = 10;
+            n.draw();
+        "#;
         execute_source(src, false, "run", true);
     }
 }

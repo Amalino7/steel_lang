@@ -1,4 +1,4 @@
-use crate::parser::ast::{Expr, Literal, Stmt, TypeAst};
+use crate::parser::ast::{Expr, InterfaceSig, Literal, Stmt, TypeAst};
 use crate::parser::error::ParserError;
 use crate::parser::TokT;
 use crate::parser::{check_token_type, match_token_type, Parser};
@@ -14,6 +14,8 @@ impl<'src> Parser<'src> {
             self.struct_declaration()
         } else if match_token_type!(self, TokT::Impl) {
             self.impl_block()
+        } else if match_token_type!(self, TokT::Interface) {
+            self.interface_declaration()
         } else {
             self.statement()
         }
@@ -40,13 +42,34 @@ impl<'src> Parser<'src> {
         }
     }
     fn func_declaration(&mut self, is_method: bool) -> Result<Stmt<'src>, ParserError<'src>> {
+        let (name, params, type_) = self.func_signature(is_method)?;
+
+        self.consume(TokT::LeftBrace, "Expected '{' before function body.")?;
+        let mut body = vec![];
+
+        while !match_token_type!(self, TokT::RightBrace) {
+            body.push(self.declaration()?);
+        }
+
+        Ok(Stmt::Function {
+            type_,
+            name,
+            params,
+            body,
+        })
+    }
+
+    fn func_signature(
+        &mut self,
+        is_method: bool,
+    ) -> Result<(Token<'src>, Vec<Token<'src>>, TypeAst<'src>), ParserError<'src>> {
         self.consume(
             TokT::Identifier,
-            "Expected function name. Syntax: 'func name(params) : return_type { body }",
+            "Expected method name. Syntax: 'func name(self, ...): type;'",
         )?;
-
         let name = self.previous_token.clone();
-        self.consume(TokT::LeftParen, "Expected '(' after function field.")?;
+
+        self.consume(TokT::LeftParen, "Expected '(' after function name.")?;
         let mut params = vec![];
         let mut param_types = vec![];
 
@@ -60,15 +83,9 @@ impl<'src> Parser<'src> {
                         lexeme: "Self",
                     }));
                 } else {
-                    self.consume(
-                        TokT::Identifier,
-                        "Expected the field of the function parameter.",
-                    )?;
+                    self.consume(TokT::Identifier, "Expected parameter name.")?;
                     params.push(self.previous_token.clone());
-                    self.consume(
-                        TokT::Colon,
-                        "Expected ':' after parameter field. Syntax: 'field: type",
-                    )?;
+                    self.consume(TokT::Colon, "Expected ':' after parameter name.")?;
                     param_types.push(self.type_block()?);
                 }
 
@@ -77,7 +94,6 @@ impl<'src> Parser<'src> {
                 }
             }
         }
-
         self.consume(TokT::RightParen, "Expected ')' after parameters.")?;
 
         let return_type = if match_token_type!(self, TokT::Colon) {
@@ -89,24 +105,16 @@ impl<'src> Parser<'src> {
                 "void",
             ))
         };
-
-        self.consume(TokT::LeftBrace, "Expected '{' before function body.")?;
-        let mut body = vec![];
-
-        while !match_token_type!(self, TokT::RightBrace) {
-            body.push(self.declaration()?);
-        }
-
-        Ok(Stmt::Function {
-            type_: TypeAst::Function {
+        Ok((
+            name,
+            params,
+            TypeAst::Function {
                 param_types: param_types.into_boxed_slice(),
                 return_type: Box::new(return_type),
             },
-            name,
-            params,
-            body,
-        })
+        ))
     }
+
     fn type_block(&mut self) -> Result<TypeAst<'src>, ParserError<'src>> {
         match self.current_token.token_type {
             TokT::Func => {
@@ -251,6 +259,18 @@ impl<'src> Parser<'src> {
     fn impl_block(&mut self) -> Result<Stmt<'src>, ParserError<'src>> {
         self.consume(TokT::Identifier, "Expected name of type.")?;
         let name = self.previous_token.clone();
+
+        let mut interfaces = vec![];
+        if match_token_type!(self, TokT::Colon) {
+            loop {
+                self.consume(TokT::Identifier, "Expected interface name after ':'.")?;
+                interfaces.push(self.previous_token.clone());
+                if !match_token_type!(self, TokT::Comma) {
+                    break;
+                }
+            }
+        }
+
         self.consume(TokT::LeftBrace, "Expected '{' before impl block.")?;
         let mut methods = vec![];
         while match_token_type!(self, TokT::Func) {
@@ -258,6 +278,41 @@ impl<'src> Parser<'src> {
             methods.push(method);
         }
         self.consume(TokT::RightBrace, "Expected '}' after impl block.")?;
-        Ok(Stmt::Impl { name, methods })
+
+        Ok(Stmt::Impl {
+            name,
+            interfaces,
+            methods,
+        })
+    }
+
+    fn interface_declaration(&mut self) -> Result<Stmt<'src>, ParserError<'src>> {
+        self.consume(TokT::Identifier, "Expected interface name.")?;
+        let name = self.previous_token.clone();
+
+        self.consume(TokT::LeftBrace, "Expected '{' before interface body.")?;
+        let mut methods = vec![];
+
+        while !check_token_type!(self, TokT::RightBrace) {
+            self.consume(TokT::Func, "Expected 'func' in interface body.")?;
+            methods.push(self.interface_method_sig()?);
+        }
+
+        self.consume(TokT::RightBrace, "Expected '}' after interface body.")?;
+        Ok(Stmt::Interface { name, methods })
+    }
+
+    fn interface_method_sig(&mut self) -> Result<InterfaceSig<'src>, ParserError<'src>> {
+        let (name, params, type_) = self.func_signature(true)?;
+
+        self.consume(
+            TokT::Semicolon,
+            "Expected ';' after interface method signature.",
+        )?;
+        Ok(InterfaceSig {
+            name,
+            params,
+            type_,
+        })
     }
 }

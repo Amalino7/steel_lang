@@ -77,6 +77,7 @@ pub enum Stmt<'src> {
         value: Expr<'src>,
         type_info: TypeAst<'src>,
     },
+    Return(Expr<'src>),
     Block {
         brace_token: Token<'src>,
         body: Vec<Stmt<'src>>,
@@ -101,10 +102,21 @@ pub enum Stmt<'src> {
         fields: Vec<(Token<'src>, TypeAst<'src>)>,
     },
     Impl {
+        interfaces: Vec<Token<'src>>,
         name: Token<'src>,
         methods: Vec<Stmt<'src>>,
     },
-    Return(Expr<'src>),
+    Interface {
+        name: Token<'src>,
+        methods: Vec<InterfaceSig<'src>>,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct InterfaceSig<'src> {
+    pub name: Token<'src>,
+    pub params: Vec<Token<'src>>,
+    pub type_: TypeAst<'src>,
 }
 
 impl Display for Literal {
@@ -270,10 +282,30 @@ impl Display for Stmt<'_> {
                 }
                 write!(f, "}}")
             }
-            Stmt::Impl { name, methods } => {
-                write!(f, "Impl {} {{", name.lexeme)?;
+            Stmt::Impl {
+                interfaces,
+                name,
+                methods,
+            } => {
+                write!(
+                    f,
+                    "Impl {} : {} {{",
+                    interfaces
+                        .iter()
+                        .map(|e| e.lexeme)
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    name.lexeme
+                )?;
                 for method in methods {
                     write!(f, "{}\n", method)?;
+                }
+                write!(f, "}}")
+            }
+            Stmt::Interface { name, methods } => {
+                write!(f, "Interface {} {{", name.lexeme)?;
+                for m in methods {
+                    write!(f, " func {}(...): {};", m.name.lexeme, m.type_)?;
                 }
                 write!(f, "}}")
             }
@@ -317,6 +349,7 @@ impl Stmt<'_> {
             Stmt::Return(expr) => expr.get_line(),
             Stmt::Struct { name, .. } => name.line,
             Stmt::Impl { name, .. } => name.line,
+            Stmt::Interface { name, .. } => name.line,
         }
     }
 }
