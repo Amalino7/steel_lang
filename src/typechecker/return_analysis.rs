@@ -3,11 +3,11 @@ use crate::typechecker::type_ast::{StmtKind, Type, TypedStmt};
 use crate::typechecker::TypeChecker;
 
 impl<'src> TypeChecker<'src> {
-    pub(crate) fn check_returns(&mut self, stmt: &[TypedStmt], errors: &mut Vec<TypeCheckerError>) {
+    pub(crate) fn check_returns(&mut self, stmt: &[TypedStmt]) {
         for stmt in stmt {
             let res = self.check_stmt_returns(stmt);
             if let Err(e) = res {
-                errors.push(e);
+                self.errors.push(e);
             }
         }
     }
@@ -50,7 +50,7 @@ impl<'src> TypeChecker<'src> {
                 .iter()
                 .try_for_each(|stmt| self.check_stmt_returns(stmt)),
             StmtKind::StructDecl { .. } => Ok(()),
-            StmtKind::Impl { methods } => methods
+            StmtKind::Impl { methods, .. } => methods
                 .iter()
                 .try_for_each(|method| self.check_stmt_returns(method)),
         }

@@ -105,9 +105,18 @@ impl<'a> Compiler<'a> {
                 self.patch_jump(exit_jump);
                 self.emit_op(Opcode::Pop, body.line);
             }
-            StmtKind::Impl { methods } => {
+            StmtKind::Impl { methods, vtables } => {
                 for method in methods {
                     self.compile_stmt(method);
+                }
+
+                for vtable in vtables.iter() {
+                    for method_loc in vtable.iter().rev() {
+                        self.emit_var_access(method_loc, stmt.line);
+                    }
+
+                    self.emit_op(Opcode::MakeVTable, stmt.line);
+                    self.emit_byte(vtable.len() as u8, stmt.line);
                 }
             }
             StmtKind::Function {
@@ -385,19 +394,12 @@ impl<'a> Compiler<'a> {
 
             ExprKind::InterfaceUpcast {
                 expr: inner,
-                vtable,
+                vtable_idx,
                 ..
             } => {
                 self.compile_expr(inner);
-
-                for entry in vtable.iter() {
-                    self.emit_var_access(entry, line);
-                }
-
-                self.emit_op(Opcode::MakeVTable, line);
-                self.emit_byte(vtable.len() as u8, line);
-
                 self.emit_op(Opcode::MakeInterfaceObj, line);
+                self.emit_byte(*vtable_idx as u8, line);
             }
 
             ExprKind::InterfaceMethodGet {

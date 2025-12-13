@@ -23,6 +23,7 @@ struct CallFrame {
 const STACK_MAX: usize = 256 * 64;
 
 pub struct VM {
+    vtables: Vec<Gc<VTable>>,
     frames: Vec<CallFrame>,
     gc: GarbageCollector,
     stack: Stack<STACK_MAX>,
@@ -36,6 +37,7 @@ impl VM {
             gc: garbage_collector,
             stack: Stack::<STACK_MAX>::new(),
             globals: vec![Value::Nil; global_count],
+            vtables: Vec::new(),
         }
     }
 
@@ -419,27 +421,19 @@ impl VM {
                         }
                     }
 
-                    methods.reverse();
                     let vt = self.gc.alloc(VTable { methods });
-                    self.stack.push(Value::Nil); // placeholder
-                    self.stack.pop();
-                    self.stack
-                        .push(Value::InterfaceObj(self.gc.alloc(InterfaceObj {
-                            data: Value::Nil,
-                            vtable: vt,
-                        })));
+                    self.vtables.push(vt);
                 }
 
                 Opcode::MakeInterfaceObj => {
-                    let vtable_holder = self.stack.pop();
+                    let idx = chunk.instructions[current_frame.ip] as usize;
+                    current_frame.ip += 1;
                     let data = self.stack.pop();
 
-                    let (vtable, _) = match vtable_holder {
-                        Value::InterfaceObj(obj) => (obj.vtable, obj.data),
-                        _ => panic!("MakeInterfaceObj expected vtable holder"),
-                    };
-
-                    let obj = self.gc.alloc(InterfaceObj { data, vtable });
+                    let obj = self.gc.alloc(InterfaceObj {
+                        data,
+                        vtable: self.vtables[idx],
+                    });
                     self.stack.push(Value::InterfaceObj(obj));
                 }
 

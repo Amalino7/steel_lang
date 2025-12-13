@@ -2,6 +2,7 @@ use crate::compiler::analysis::ResolvedVar;
 use crate::parser::ast::{Literal, TypeAst};
 use crate::token::Token;
 use crate::typechecker::error::TypeCheckerError;
+use crate::typechecker::type_system::TypeSystem;
 use crate::typechecker::Symbol;
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
@@ -43,8 +44,7 @@ pub enum Type {
 impl Type {
     pub fn from_identifier(
         name: &Token,
-        structs: &HashMap<Symbol, StructType>,
-        interfaces: &HashMap<Symbol, InterfaceType>,
+        type_system: &TypeSystem,
     ) -> Result<Type, TypeCheckerError> {
         let line = name.line;
         let name = name.lexeme;
@@ -56,9 +56,9 @@ impl Type {
             Ok(Type::Boolean)
         } else if name == "void" {
             Ok(Type::Void)
-        } else if let Some(struct_type) = structs.get(name) {
+        } else if let Some(struct_type) = type_system.get_struct(name) {
             Ok(Type::Struct(struct_type.name.clone()))
-        } else if let Some(iface) = interfaces.get(name) {
+        } else if let Some(iface) = type_system.get_interface(name) {
             Ok(Type::Interface(iface.name.clone()))
         } else {
             Err(TypeCheckerError::UndefinedType {
@@ -102,23 +102,22 @@ impl Type {
 
     pub fn from_ast(
         type_ast: &TypeAst<'_>,
-        structs: &HashMap<Symbol, StructType>,
-        interfaces: &HashMap<Symbol, InterfaceType>,
+        type_system: &TypeSystem,
     ) -> Result<Type, TypeCheckerError> {
         match type_ast {
-            TypeAst::Named(name) => Self::from_identifier(name, structs, interfaces),
+            TypeAst::Named(name) => Self::from_identifier(name, type_system),
             TypeAst::Function {
                 param_types,
                 return_type,
             } => {
                 let param_types = param_types
                     .iter()
-                    .map(|e| Self::from_ast(e, structs, interfaces))
+                    .map(|e| Self::from_ast(e, type_system))
                     .collect::<Result<Vec<Type>, TypeCheckerError>>()?;
 
                 Ok(Type::new_function(
                     param_types,
-                    Self::from_ast(return_type, structs, interfaces)?,
+                    Self::from_ast(return_type, type_system)?,
                 ))
             }
             TypeAst::Infer => Ok(Type::Unknown),
@@ -128,8 +127,7 @@ impl Type {
     pub fn from_method_ast(
         type_ast: &TypeAst<'_>,
         self_type: &Token,
-        structs: &HashMap<Symbol, StructType>,
-        interfaces: &HashMap<Symbol, InterfaceType>,
+        type_system: &TypeSystem,
     ) -> Result<Type, TypeCheckerError> {
         match type_ast {
             TypeAst::Function {
@@ -146,17 +144,17 @@ impl Type {
                 };
 
                 if is_instance_method {
-                    result_param_type.push(Type::from_identifier(self_type, structs, interfaces)?);
+                    result_param_type.push(Type::from_identifier(self_type, type_system)?);
                 }
 
                 for param_type in param_types.iter().skip(0 + is_instance_method as usize) {
-                    result_param_type.push(Self::from_ast(param_type, structs, interfaces)?);
+                    result_param_type.push(Self::from_ast(param_type, type_system)?);
                 }
 
                 Ok(Type::Function(Rc::new(FunctionType {
                     is_static: !is_instance_method,
                     is_vararg: false,
-                    return_type: Self::from_ast(return_type.as_ref(), structs, interfaces)?,
+                    return_type: Self::from_ast(return_type.as_ref(), type_system)?,
                     param_types: result_param_type,
                 })))
             }
@@ -253,8 +251,7 @@ pub enum ExprKind {
 
     InterfaceUpcast {
         expr: Box<TypedExpr>,
-        interface: Symbol,
-        vtable: Box<[ResolvedVar]>,
+        vtable_idx: u32,
     },
 
     InterfaceMethodGet {
@@ -298,7 +295,8 @@ pub struct TypedStmt {
 #[derive(Debug)]
 pub enum StmtKind {
     Impl {
-        methods: Vec<TypedStmt>,
+        methods: Box<[TypedStmt]>, // optimizes memory layout
+        vtables: Box<[Vec<ResolvedVar>]>,
     }, // Might add meta-information later
     StructDecl {},
     Global {

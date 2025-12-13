@@ -125,25 +125,25 @@ mod tests {
     fn test_local_variables() {
         let src = "
             let a = 0;
-        {
-            let a = 1;
             {
-                let b = 2;
+                let a = 1;
                 {
-                    let c = 3;
+                    let b = 2;
                     {
-                        let d = 4;
-                        a + b + c + d;
+                        let c = 3;
+                        {
+                            let d = 4;
+                            a + b + c + d;
+                        }
+                        let e = 5;
                     }
-                    let e = 5;
+                }
+                let f = 6;
+                {
+                    let g = 7;
+                    a + f + g;
                 }
             }
-            let f = 6;
-            {
-                let g = 7;
-                a + f + g;
-            }
-        }
         ";
 
         execute_source(src, false, "run", true);
@@ -302,7 +302,7 @@ mod tests {
                 print(a);
                 assert(a, 7);
             }
-            let a = 1;
+            a = 1;
             assert(a, 1);
         "#;
         execute_source(src, false, "run", true);
@@ -320,7 +320,7 @@ mod tests {
                 fib(20);
             }
         "#;
-        execute_source(src, false, "run", true);
+        execute_source(src, true, "run", true);
     }
 
     #[test]
@@ -527,7 +527,7 @@ mod tests {
              assert(multiplier(3)(4), 12);
              "#;
 
-        execute_source(src, true, "run", true);
+        execute_source(src, false, "run", true);
     }
     #[test]
     fn test_local_recursion() {
@@ -951,6 +951,90 @@ mod tests {
             let n: Drawable = 10;
             n.draw();
         "#;
+        execute_source(src, false, "run", true);
+    }
+
+    #[test]
+    fn test_eq_interface() {
+        let src = r#"
+            interface Eq {
+                func eq(self, other: Eq): boolean;
+            }
+            struct Point { x: number, y: number }
+            impl Point : Eq {
+                func eq(self, other: Eq): boolean { // No generics so it isn't useful
+                    println(self.x, self.y);
+                    return true;
+                }
+            }
+
+            let p1 = Point { x: 1, y: 2 };
+            let p2 = Point { x: 3, y: 4 };
+            println(p1.eq(p2));
+            assert(p1.eq(p2), true);
+
+            func areEqual(a: Eq, b: Eq): boolean { return a.eq(b); }
+            assert(areEqual(p1, p2), true);
+        "#;
+        execute_source(src, false, "run", true);
+    }
+    #[test]
+    fn test_print_interface() {
+        let src = r#"
+            interface Printable {
+                func print(self): void;
+            }
+            struct Point { x: number, y: number }
+            impl Point : Printable {
+                func print(self): void {
+                    assert(self.x, 3); assert(self.y, 4);
+                    println(self.x, self.y);
+                }
+            }
+
+            impl number : Printable {
+                func print(self): void {
+                    assert(self, 10);
+                    println(self);
+                }
+            }
+
+            func myPrint(p: Printable): void { p.print(); }
+
+            myPrint(Point { x: 3, y: 4 });
+            myPrint(10);
+            "#;
+        execute_source(src, false, "run", true);
+    }
+    #[test]
+    fn test_interface_with_many() {
+        let src = r#"
+            interface Shape {
+                func area(self): number;
+                func perimeter(self): number;
+            }
+            struct Circle { radius: number }
+            impl Circle : Shape {
+                func area(self): number { return 3.14 * self.radius * self.radius; }
+                func perimeter(self): number { return 2 * 3.14 * self.radius; }
+            }
+            struct Rectangle { width: number, height: number }
+            impl Rectangle : Shape {
+                func area(self): number { return self.width * self.height; }
+                func perimeter(self): number { return 2 * (self.width + self.height); }
+            }
+            func printArea(s: Shape): void {
+                assert(s.area(), 78.5); // 5*5 * 3.14
+                println(s.area());
+            }
+            func printPerimeter(s: Shape): void {
+                assert(s.perimeter(), (10 + 5) * 2 );
+                println(s.perimeter());
+            }
+            printArea(Circle { radius: 5 });
+            printPerimeter(Rectangle { width: 10, height: 5 });
+
+            "#;
         execute_source(src, false, "run", true);
     }
 }

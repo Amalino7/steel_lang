@@ -71,7 +71,7 @@ impl<'src> TypeChecker<'src> {
             } => self.check_binary_expression(operator, left, right),
 
             Expr::Variable { name } => {
-                let var = self.lookup_variable(name.lexeme);
+                let var = self.scopes.lookup(name.lexeme);
                 if let Some((ctx, resolved)) = var {
                     Ok(TypedExpr {
                         ty: ctx.type_info.clone(),
@@ -102,7 +102,7 @@ impl<'src> TypeChecker<'src> {
             }
             Expr::Assignment { identifier, value } => {
                 let typed_value = self.infer_expression(value)?;
-                let var_lookup = self.lookup_variable(identifier.lexeme);
+                let var_lookup = self.scopes.lookup(identifier.lexeme);
 
                 if let Some((ctx, resolved)) = var_lookup {
                     if let ResolvedVar::Closure(_) = &resolved {
@@ -113,7 +113,8 @@ impl<'src> TypeChecker<'src> {
                     }
 
                     let coerced_value =
-                        self.verify_assignment(&ctx.type_info, typed_value, identifier.line)?;
+                        self.sys
+                            .verify_assignment(&ctx.type_info, typed_value, identifier.line)?;
 
                     Ok(TypedExpr {
                         ty: coerced_value.ty.clone(),
@@ -202,6 +203,7 @@ impl<'src> TypeChecker<'src> {
 
                         if *expected_param_type != Type::Any {
                             let coerced_arg = self
+                                .sys
                                 .verify_assignment(
                                     expected_param_type,
                                     arg_typed,
@@ -236,8 +238,8 @@ impl<'src> TypeChecker<'src> {
             }
             Expr::StructInitializer { name, fields } => {
                 let struct_type = self
-                    .structs
-                    .get(name.lexeme)
+                    .sys
+                    .get_struct(name.lexeme)
                     .ok_or(TypeCheckerError::UndefinedType {
                         name: name.lexeme.to_string(),
                         line: name.line,
@@ -262,7 +264,8 @@ impl<'src> TypeChecker<'src> {
                     };
 
                     let coerced_arg =
-                        self.verify_assignment(&expected_type, arg_expr, field_tok.line)?;
+                        self.sys
+                            .verify_assignment(&expected_type, arg_expr, field_tok.line)?;
 
                     args.push((idx, coerced_arg));
                     defined_fields.insert(field_tok.lexeme);
@@ -291,7 +294,7 @@ impl<'src> TypeChecker<'src> {
             }
             Expr::Get { object, field } => {
                 if let Expr::Variable { name } = object.as_ref() {
-                    if self.does_type_exist(name.lexeme) {
+                    if self.sys.does_type_exist(name.lexeme) {
                         return self.handle_static_method_access(name, field);
                     }
                 }
@@ -301,8 +304,8 @@ impl<'src> TypeChecker<'src> {
                 match object_typed.ty.clone() {
                     Type::Struct(struct_def) => {
                         let struct_def = self
-                            .structs
-                            .get(&struct_def)
+                            .sys
+                            .get_struct(&struct_def)
                             .expect("Should have errored earlier");
 
                         let field_type = struct_def.fields.get(field.lexeme);
@@ -320,7 +323,7 @@ impl<'src> TypeChecker<'src> {
                     }
 
                     Type::Interface(iface_name) => {
-                        let iface = self.interfaces.get(&iface_name).ok_or(
+                        let iface = self.sys.get_interface(&iface_name).ok_or(
                             TypeCheckerError::UndefinedType {
                                 name: iface_name.to_string(),
                                 line: field.line,
@@ -374,8 +377,8 @@ impl<'src> TypeChecker<'src> {
                 let value = self.infer_expression(value)?;
                 if let Type::Struct(struct_def) = object.ty.clone() {
                     let struct_def = self
-                        .structs
-                        .get(&struct_def)
+                        .sys
+                        .get_struct(&struct_def)
                         .expect("Should have errored earlier");
 
                     let (field_idx, field_type) =
@@ -591,13 +594,14 @@ impl<'src> TypeChecker<'src> {
     ) -> Result<TypedExpr, TypeCheckerError> {
         let mangled_name = format!("{}.{}", type_name.lexeme, method_name.lexeme);
 
-        let method = self.lookup_variable(mangled_name.as_str()).ok_or(
-            TypeCheckerError::UndefinedMethod {
-                line: method_name.line,
-                found: Type::Struct(Rc::from(String::from(type_name.lexeme))),
-                method_name: method_name.lexeme.to_string(),
-            },
-        )?;
+        let method =
+            self.scopes
+                .lookup(mangled_name.as_str())
+                .ok_or(TypeCheckerError::UndefinedMethod {
+                    line: method_name.line,
+                    found: Type::Struct(Rc::from(String::from(type_name.lexeme))),
+                    method_name: method_name.lexeme.to_string(),
+                })?;
 
         let (ctx, resolved_var) = method;
 
@@ -621,13 +625,14 @@ impl<'src> TypeChecker<'src> {
                 line: object.line,
             })?;
         let mangled_name = format!("{}.{}", type_name, field.lexeme);
-        let method = self.lookup_variable(mangled_name.as_str()).ok_or(
-            TypeCheckerError::UndefinedMethod {
-                line: field.line,
-                found: Type::Number,
-                method_name: field.lexeme.to_string(),
-            },
-        )?;
+        let method =
+            self.scopes
+                .lookup(mangled_name.as_str())
+                .ok_or(TypeCheckerError::UndefinedMethod {
+                    line: field.line,
+                    found: Type::Number,
+                    method_name: field.lexeme.to_string(),
+                })?;
 
         // Edge case -> static functions
         let ty = match &method.0.type_info {

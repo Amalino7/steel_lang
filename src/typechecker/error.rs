@@ -72,6 +72,15 @@ pub enum TypeCheckerError {
         method_name: String,
         line: u32,
     },
+    Redeclaration {
+        name: String,
+        line: u32,
+    },
+    DoesNotImplementInterface {
+        missing_methods: Vec<String>,
+        interface: String,
+        line: u32,
+    },
 }
 impl std::fmt::Display for TypeCheckerError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -193,6 +202,26 @@ impl std::fmt::Display for TypeCheckerError {
                     f,
                     "[line {}] Error: Cannot call static method '{}' on instance.",
                     line, method_name
+                )
+            }
+            TypeCheckerError::Redeclaration { name, line } => {
+                write!(
+                    f,
+                    "[line {}] Error: Redeclaration of type or variable '{}'.",
+                    line, name
+                )
+            }
+            TypeCheckerError::DoesNotImplementInterface {
+                missing_methods,
+                interface,
+                line,
+            } => {
+                write!(
+                    f,
+                    "[line {}] Error: Type does not implement interface '{}'. Missing methods or mismatched types: {}.",
+                    line,
+                    interface,
+                    missing_methods.join(", ")
                 )
             }
         }
