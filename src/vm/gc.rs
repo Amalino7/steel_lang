@@ -1,4 +1,4 @@
-use crate::vm::value::{BoundMethod, Closure, Function, Instance, Value};
+use crate::vm::value::{BoundMethod, Closure, Function, Instance, InterfaceObj, VTable, Value};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::collections::VecDeque;
 use std::fmt::{Debug, Formatter};
@@ -156,6 +156,9 @@ impl GarbageCollector {
             Value::BoundMethod(bound_method) => {
                 self.mark(*bound_method);
             }
+            Value::InterfaceObj(interface_obj) => {
+                self.mark(*interface_obj);
+            }
         }
     }
 
@@ -245,6 +248,21 @@ impl Trace for BoundMethod {
     fn trace(&self, gc: &mut GarbageCollector) {
         gc.mark(self.method);
         gc.mark_value(&self.receiver);
+    }
+}
+
+impl Trace for InterfaceObj {
+    fn trace(&self, gc: &mut GarbageCollector) {
+        gc.mark_value(&self.data);
+        gc.mark(self.vtable);
+    }
+}
+
+impl Trace for VTable {
+    fn trace(&self, gc: &mut GarbageCollector) {
+        for method in self.methods.iter() {
+            gc.mark(*method);
+        }
     }
 }
 

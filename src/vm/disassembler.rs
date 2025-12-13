@@ -129,6 +129,19 @@ pub fn disassemble_instruction(
         Opcode::EqualString => println!("EqualString"),
         Opcode::EqualNumber => println!("EqualNumber"),
         Opcode::BindMethod => println!("BindMethod"),
+
+        Opcode::MakeVTable => {
+            offset += 1;
+            println!("MakeVTable {}", bytecode[offset]);
+        }
+        Opcode::MakeInterfaceObj => {
+            offset += 1;
+            println!("MakeInterfaceObj {}", bytecode[offset]);
+        }
+        Opcode::InterfaceBindMethod => {
+            offset += 1;
+            println!("InterfaceBindMethod {}", bytecode[offset]);
+        }
     };
     offset + 1
 }

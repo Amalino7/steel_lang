@@ -216,6 +216,7 @@ fn keywords() -> HashMap<&'static str, TokenType> {
         ("struct", TokenType::Struct),
         ("impl", TokenType::Impl),
         ("self", TokenType::Self_),
+        ("interface", TokenType::Interface),
     ])
 }
 

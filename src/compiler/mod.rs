@@ -105,9 +105,18 @@ impl<'a> Compiler<'a> {
                 self.patch_jump(exit_jump);
                 self.emit_op(Opcode::Pop, body.line);
             }
-            StmtKind::Impl { methods } => {
+            StmtKind::Impl { methods, vtables } => {
                 for method in methods {
                     self.compile_stmt(method);
+                }
+
+                for vtable in vtables.iter() {
+                    for method_loc in vtable.iter().rev() {
+                        self.emit_var_access(method_loc, stmt.line);
+                    }
+
+                    self.emit_op(Opcode::MakeVTable, stmt.line);
+                    self.emit_byte(vtable.len() as u8, stmt.line);
                 }
             }
             StmtKind::Function {
@@ -153,17 +162,22 @@ impl<'a> Compiler<'a> {
                 self.emit_op(Opcode::Return, stmt.line);
             }
             StmtKind::Global { stmts: stmt, .. } => {
-                for stmt in stmt {
-                    if let StmtKind::Function { .. } = &stmt.kind {
-                        self.compile_stmt(stmt);
+                for s in stmt {
+                    match &s.kind {
+                        StmtKind::Function { .. } => self.compile_stmt(s),
+                        StmtKind::Impl { .. } => {
+                            self.compile_stmt(s);
+                        }
+                        _ => {}
                     }
                 }
 
-                for stmt in stmt {
-                    if let StmtKind::Function { .. } = &stmt.kind {
-                        continue;
+                // Second: compile the rest
+                for s in stmt {
+                    match &s.kind {
+                        StmtKind::Function { .. } | StmtKind::Impl { .. } => continue,
+                        _ => self.compile_stmt(s),
                     }
-                    self.compile_stmt(stmt);
                 }
             }
             StmtKind::StructDecl { .. } => {}
@@ -376,6 +390,25 @@ impl<'a> Compiler<'a> {
                 self.emit_var_access(method, line);
 
                 self.emit_op(Opcode::BindMethod, line);
+            }
+
+            ExprKind::InterfaceUpcast {
+                expr: inner,
+                vtable_idx,
+                ..
+            } => {
+                self.compile_expr(inner);
+                self.emit_op(Opcode::MakeInterfaceObj, line);
+                self.emit_byte(*vtable_idx as u8, line);
+            }
+
+            ExprKind::InterfaceMethodGet {
+                object,
+                method_index,
+            } => {
+                self.compile_expr(object);
+                self.emit_op(Opcode::InterfaceBindMethod, line);
+                self.emit_byte(*method_index, line);
             }
         }
     }

@@ -1,94 +1,13 @@
+use crate::compiler::analysis::ResolvedVar;
 use crate::parser::ast::Stmt;
 use crate::token::Token;
 use crate::typechecker::error::TypeCheckerError;
-use crate::typechecker::type_ast::{StmtKind, StructType, Type, TypedStmt};
-use crate::typechecker::{FunctionContext, TypeChecker};
-use std::borrow::Cow;
-use std::collections::HashMap;
-use std::mem::replace;
-use std::rc::Rc;
+use crate::typechecker::scope_manager::ScopeType;
+use crate::typechecker::type_ast::{StmtKind, Type, TypedStmt};
+use crate::typechecker::type_system::TypeSystem;
+use crate::typechecker::{FunctionContext, Symbol, TypeChecker};
 
 impl<'src> TypeChecker<'src> {
-    pub(crate) fn declare_global_functions(
-        &mut self,
-        ast: &[Stmt<'src>],
-        errors: &mut Vec<TypeCheckerError>,
-    ) {
-        for stmt in ast.iter() {
-            if let Stmt::Function {
-                name,
-                params: _,
-                type_: type_info,
-                body: _,
-            } = stmt
-            {
-                let func_type = Type::from_ast(type_info, &self.structs);
-                if let Err(e) = func_type {
-                    errors.push(e);
-                    continue;
-                }
-
-                let res = self.declare_variable(name.lexeme, func_type.unwrap());
-
-                if let Err(e) = res {
-                    errors.push(e);
-                }
-            }
-        }
-    }
-
-    pub(crate) fn declare_global_structs(
-        &mut self,
-        ast: &[Stmt<'src>],
-        errors: &mut Vec<TypeCheckerError>,
-    ) {
-        // declare structs by name
-        for stmt in ast.iter() {
-            if let Stmt::Struct { name, .. } = stmt {
-                self.structs.insert(
-                    name.lexeme,
-                    StructType {
-                        name: Rc::new(name.lexeme.to_string()),
-                        fields: HashMap::new(),
-                    },
-                );
-            }
-        }
-
-        // define fields for structs
-        for stmt in ast {
-            if let Stmt::Struct { name, fields } = stmt {
-                let mut field_types = HashMap::new();
-                for (i, (name, type_ast)) in fields.into_iter().enumerate() {
-                    let field_type = Type::from_ast(&type_ast, &self.structs);
-                    match field_type {
-                        Ok(field_type) => {
-                            field_types.insert(name.lexeme.to_string(), (i, field_type));
-                        }
-                        Err(err) => {
-                            // Using Unknown to minimise the number of errors.
-                            field_types.insert(name.lexeme.to_string(), (i, Type::Unknown));
-                            errors.push(err);
-                        }
-                    }
-                }
-                let struct_def =
-                    self.structs
-                        .get_mut(name.lexeme)
-                        .ok_or(TypeCheckerError::UndefinedType {
-                            name: name.lexeme.to_string(),
-                            line: name.line,
-                        });
-                match struct_def {
-                    Ok(struct_def) => {
-                        struct_def.fields = field_types;
-                    }
-                    Err(err) => errors.push(err),
-                }
-            }
-        }
-    }
-
     pub(crate) fn check_stmt(&mut self, stmt: &Stmt<'src>) -> Result<TypedStmt, TypeCheckerError> {
         match stmt {
             Stmt::Expression(expr) => Ok(TypedStmt {
@@ -102,43 +21,129 @@ impl<'src> TypeChecker<'src> {
                 type_info,
             } => {
                 let value_node = self.infer_expression(value)?;
+                let declared_type = Type::from_ast(type_info, &self.sys)?;
 
-                let type_info = Type::from_ast(type_info, &self.structs)?;
-
-                if type_info == Type::Unknown {
-                    self.declare_variable(identifier.lexeme, value_node.ty.clone())?;
-                } else if type_info == value_node.ty {
-                    self.declare_variable(identifier.lexeme, type_info)?;
-                } else {
-                    return Err(TypeCheckerError::TypeMismatch {
-                        expected: type_info.clone(),
-                        found: value_node.ty,
+                if declared_type == Type::Unknown {
+                    self.scopes
+                        .declare(identifier.lexeme.into(), value_node.ty.clone())?;
+                    Ok(TypedStmt {
+                        kind: StmtKind::Let {
+                            target: self.scopes.lookup(identifier.lexeme).unwrap().1,
+                            value: value_node,
+                        },
+                        type_info: Type::Void,
                         line: identifier.line,
-                        message: "Expected the same type but found something else.",
-                    });
+                    })
+                } else {
+                    let coerced_value =
+                        self.sys
+                            .verify_assignment(&declared_type, value_node, identifier.line)?;
+
+                    self.scopes
+                        .declare(identifier.lexeme.into(), declared_type)?;
+
+                    Ok(TypedStmt {
+                        kind: StmtKind::Let {
+                            target: self.scopes.lookup(identifier.lexeme).unwrap().1,
+                            value: coerced_value,
+                        },
+                        type_info: Type::Void,
+                        line: identifier.line,
+                    })
+                }
+            }
+            Stmt::Impl {
+                interfaces,
+                name,
+                methods,
+            } => {
+                let mut typed_methods = vec![];
+
+                // define methods
+                for method in methods {
+                    match method {
+                        Stmt::Function {
+                            name: func_name,
+                            params,
+                            body,
+                            type_,
+                        } => {
+                            let type_info = Type::from_method_ast(type_, name, &self.sys)?;
+
+                            let primary_mangled = format!("{}.{}", name.lexeme, func_name.lexeme);
+                            let typed_method = self.check_function(
+                                func_name,
+                                params,
+                                body,
+                                type_info,
+                                primary_mangled.into(),
+                            )?;
+                            typed_methods.push(typed_method);
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+                // generate vtables
+                let mut vtables = vec![];
+                for interface in interfaces {
+                    // check if it implements it
+                    let interface_type = self
+                        .sys
+                        .get_interface(interface.lexeme)
+                        .expect("Should have errored earlier");
+
+                    let mut vtable = std::iter::repeat(ResolvedVar::Local(0))
+                        .take(interface_type.methods.len())
+                        .collect::<Vec<_>>();
+                    let mut missing_methods = vec![];
+
+                    for (method_name, (location, method_type)) in interface_type.methods.iter() {
+                        let impl_method_name = format!("{}.{}", name.lexeme, method_name);
+
+                        if let Some((resolved_type, method_location)) =
+                            self.scopes.lookup(&impl_method_name)
+                        {
+                            if TypeSystem::implement_method(&resolved_type.type_info, method_type) {
+                                vtable[*location] = method_location;
+                            } else {
+                                missing_methods.push(format!("{} (type mismatch)", method_name));
+                            }
+                        } else {
+                            missing_methods.push(method_name.clone());
+                        }
+                    }
+
+                    if !missing_methods.is_empty() {
+                        return Err(TypeCheckerError::DoesNotImplementInterface {
+                            missing_methods,
+                            interface: interface.lexeme.to_string(),
+                            line: interface.line,
+                        });
+                    }
+                    self.sys
+                        .define_impl(name.lexeme, interface_type.name.clone());
+
+                    vtables.push(vtable);
                 }
 
                 Ok(TypedStmt {
-                    kind: StmtKind::Let {
-                        target: self
-                            .lookup_variable(Cow::from(identifier.lexeme))
-                            .expect("variable just declared")
-                            .1,
-                        value: value_node,
+                    kind: StmtKind::Impl {
+                        methods: typed_methods.into(),
+                        vtables: vtables.into(),
                     },
+                    line: name.line,
                     type_info: Type::Void,
-                    line: identifier.line,
                 })
             }
             Stmt::Block { body, brace_token } => {
-                self.begin_scope();
+                self.scopes.begin_scope(ScopeType::Block);
                 let stmts = body
                     .iter()
                     .map(|stmt| self.check_stmt(stmt))
                     .collect::<Result<Vec<TypedStmt>, TypeCheckerError>>()?;
 
-                let variable_count = self.variable_scope.last().unwrap().variables.len() as u8;
-                self.end_scope();
+                let variable_count = self.scopes.scope_size() as u8;
+                self.scopes.end_scope();
 
                 Ok(TypedStmt {
                     kind: StmtKind::Block {
@@ -208,30 +213,27 @@ impl<'src> TypeChecker<'src> {
                 type_,
             } => {
                 // global functions are already declared
-                let type_ = Type::from_ast(type_, &self.structs)?;
-                if self.variable_scope.len() != 1 {
-                    self.declare_variable(name.lexeme, type_.clone())?;
+                let type_ = Type::from_ast(type_, &self.sys)?;
+                if !self.scopes.is_global() {
+                    self.scopes.declare(name.lexeme.into(), type_.clone())?;
                 }
 
-                self.check_function(name, params, body, type_, Cow::Borrowed(name.lexeme))
+                self.check_function(name, params, body, type_, name.lexeme.into())
             }
             Stmt::Return(expr) => {
-                let return_type = self.infer_expression(expr)?;
-                if let FunctionContext::Function(func_return_type) = &self.current_function {
-                    if return_type.ty != *func_return_type {
-                        Err(TypeCheckerError::TypeMismatch {
-                            expected: func_return_type.clone(),
-                            found: return_type.ty.clone(),
-                            line: expr.get_line(),
-                            message: "Mismatched return types. Expected a function that returns a different type than the function that is being called.",
-                        })
-                    } else {
-                        Ok(TypedStmt {
-                            kind: StmtKind::Return(return_type),
-                            line: expr.get_line(),
-                            type_info: Type::Void,
-                        })
-                    }
+                let return_expr = self.infer_expression(expr)?;
+                if let FunctionContext::Function(func_return_type) = self.current_function.clone() {
+                    let coerced_return = self.sys.verify_assignment(
+                        &func_return_type,
+                        return_expr,
+                        expr.get_line(),
+                    )?;
+
+                    Ok(TypedStmt {
+                        kind: StmtKind::Return(coerced_return),
+                        line: expr.get_line(),
+                        type_info: Type::Void,
+                    })
                 } else {
                     Err(TypeCheckerError::InvalidReturnOutsideFunction {
                         line: expr.get_line(),
@@ -239,9 +241,9 @@ impl<'src> TypeChecker<'src> {
                 }
             }
 
-            Stmt::Struct { name, .. } => {
+            Stmt::Struct { name, .. } | Stmt::Interface { name, .. } => {
                 // structs already defined
-                if self.variable_scope.len() != 1 {
+                if !self.scopes.is_global() {
                     Err(TypeCheckerError::StructOutsideOfGlobalScope {
                         name: name.lexeme.to_string(),
                         line: name.line,
@@ -254,44 +256,6 @@ impl<'src> TypeChecker<'src> {
                     })
                 }
             }
-            Stmt::Impl { name, methods } => {
-                let mut typed_methods = vec![];
-                for method in methods {
-                    match method {
-                        Stmt::Function {
-                            name: func_name,
-                            params,
-                            body,
-                            type_,
-                        } => {
-                            let type_info = Type::from_method_ast(type_, name, &self.structs)?;
-
-                            let mangled_name = format!("{}.{}", name.lexeme, func_name.lexeme);
-                            self.declare_mangled(
-                                mangled_name.to_string(),
-                                func_name.lexeme,
-                                type_info.clone(),
-                            )?;
-                            let typed_method = self.check_function(
-                                func_name,
-                                params,
-                                body,
-                                type_info,
-                                Cow::Owned(mangled_name),
-                            )?;
-                            typed_methods.push(typed_method);
-                        }
-                        _ => unreachable!(),
-                    }
-                }
-                Ok(TypedStmt {
-                    kind: StmtKind::Impl {
-                        methods: typed_methods,
-                    },
-                    line: name.line,
-                    type_info: Type::Void,
-                })
-            }
         }
     }
 
@@ -301,19 +265,20 @@ impl<'src> TypeChecker<'src> {
         params: &Vec<Token<'src>>,
         body: &Vec<Stmt<'src>>,
         type_: Type,
-        full_name: Cow<'src, str>,
+        full_name: Symbol,
     ) -> Result<TypedStmt, TypeCheckerError> {
         let enclosing_function_context = self.current_function.clone();
         if let Type::Function(func) = &type_ {
             self.current_function = FunctionContext::Function(func.return_type.clone());
 
-            let prev_closures = replace(&mut self.closures, vec![]);
-            self.begin_function_scope();
+            let prev_closures = self.scopes.clear_closures();
+            self.scopes.begin_scope(ScopeType::Function);
 
-            self.declare_variable(name.lexeme, type_.clone())?;
+            self.scopes.declare(name.lexeme.into(), type_.clone())?;
             // Declare parameters.
             for (i, param) in params.iter().enumerate() {
-                self.declare_variable(param.lexeme, func.param_types[i].clone())?;
+                self.scopes
+                    .declare(param.lexeme.into(), func.param_types[i].clone())?;
             }
 
             let func_body = body
@@ -321,18 +286,21 @@ impl<'src> TypeChecker<'src> {
                 .map(|stmt| self.check_stmt(stmt))
                 .collect::<Result<Vec<TypedStmt>, TypeCheckerError>>()?;
 
-            self.end_scope();
+            self.scopes.end_scope();
             self.current_function = enclosing_function_context;
 
             let (_, func_location) = self
-                .lookup_variable(full_name)
+                .scopes
+                .lookup(full_name.as_ref())
                 .expect("Variable was just added to the scope.");
 
-            let old_closures = replace(&mut self.closures, prev_closures);
+            let old_closures = self.scopes.return_closures(prev_closures);
+
             let mut captures = vec![];
             for clos_var in old_closures {
                 let (_, var_ctx) = self
-                    .lookup_variable(clos_var)
+                    .scopes
+                    .lookup(clos_var.as_ref())
                     .expect("Variable should exist in upper scope.");
                 captures.push(var_ctx);
             }

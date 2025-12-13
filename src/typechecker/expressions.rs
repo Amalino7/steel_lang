@@ -7,7 +7,6 @@ use crate::typechecker::type_ast::{
     BinaryOp, ExprKind, LogicalOp, StructType, Type, TypedExpr, UnaryOp,
 };
 use crate::typechecker::TypeChecker;
-use std::borrow::Cow;
 use std::cmp::min;
 use std::collections::HashSet;
 use std::rc::Rc;
@@ -72,7 +71,7 @@ impl<'src> TypeChecker<'src> {
             } => self.check_binary_expression(operator, left, right),
 
             Expr::Variable { name } => {
-                let var = self.lookup_variable(Cow::from(name.lexeme));
+                let var = self.scopes.lookup(name.lexeme);
                 if let Some((ctx, resolved)) = var {
                     Ok(TypedExpr {
                         ty: ctx.type_info.clone(),
@@ -103,18 +102,9 @@ impl<'src> TypeChecker<'src> {
             }
             Expr::Assignment { identifier, value } => {
                 let typed_value = self.infer_expression(value)?;
-                let var_lookup = self.lookup_variable(Cow::from(identifier.lexeme));
+                let var_lookup = self.scopes.lookup(identifier.lexeme);
 
                 if let Some((ctx, resolved)) = var_lookup {
-                    if typed_value.ty != ctx.type_info {
-                        return Err(TypeCheckerError::TypeMismatch {
-                            expected: ctx.type_info.clone(),
-                            found: typed_value.ty,
-                            line: identifier.line,
-                            message: "Expected the same type but found something else.",
-                        });
-                    }
-
                     if let ResolvedVar::Closure(_) = &resolved {
                         return Err(AssignmentToCapturedVariable {
                             name: ctx.name.to_string(),
@@ -122,12 +112,15 @@ impl<'src> TypeChecker<'src> {
                         });
                     }
 
-                    // Assignments evaluate to the assigned value
+                    let coerced_value =
+                        self.sys
+                            .verify_assignment(&ctx.type_info, typed_value, identifier.line)?;
+
                     Ok(TypedExpr {
-                        ty: typed_value.ty.clone(),
+                        ty: coerced_value.ty.clone(),
                         kind: ExprKind::Assign {
                             target: resolved,
-                            value: Box::new(typed_value),
+                            value: Box::new(coerced_value),
                         },
                         line: identifier.line,
                     })
@@ -185,7 +178,9 @@ impl<'src> TypeChecker<'src> {
             }
             Expr::Call { callee, arguments } => {
                 let callee_typed = self.infer_expression(callee)?;
+
                 if let Type::Function(func) = callee_typed.ty.clone() {
+                    // Check arity
                     if (func.param_types.len() != arguments.len() && !func.is_vararg)
                         || (func.is_vararg && arguments.len() < func.param_types.len())
                     {
@@ -203,15 +198,27 @@ impl<'src> TypeChecker<'src> {
                         let arg_typed = self.infer_expression(arg)?;
                         i = min(i, func.param_types.len() - 1);
 
-                        if func.param_types[i] != Type::Any && arg_typed.ty != func.param_types[i] {
-                            return Err(TypeCheckerError::FunctionParameterTypeMismatch {
-                                expected: func.param_types[i].clone(),
-                                found: arg_typed.ty,
-                                param_index: i,
-                                line: arg_typed.line,
-                            });
+                        let expected_param_type = &func.param_types[i];
+                        let found = arg_typed.ty.clone();
+
+                        if *expected_param_type != Type::Any {
+                            let coerced_arg = self
+                                .sys
+                                .verify_assignment(
+                                    expected_param_type,
+                                    arg_typed,
+                                    callee_typed.line,
+                                )
+                                .map_err(|_| TypeCheckerError::FunctionParameterTypeMismatch {
+                                    expected: expected_param_type.clone(),
+                                    found,
+                                    param_index: i,
+                                    line: callee_typed.line,
+                                })?;
+                            typed_args.push(coerced_arg);
+                        } else {
+                            typed_args.push(arg_typed);
                         }
-                        typed_args.push(arg_typed);
                     }
 
                     Ok(TypedExpr {
@@ -231,8 +238,8 @@ impl<'src> TypeChecker<'src> {
             }
             Expr::StructInitializer { name, fields } => {
                 let struct_type = self
-                    .structs
-                    .get(name.lexeme)
+                    .sys
+                    .get_struct(name.lexeme)
                     .ok_or(TypeCheckerError::UndefinedType {
                         name: name.lexeme.to_string(),
                         line: name.line,
@@ -241,15 +248,31 @@ impl<'src> TypeChecker<'src> {
 
                 let mut args = vec![];
                 let mut defined_fields = HashSet::new();
-                for (field, expr) in fields {
-                    let arg_type = self.infer_expression(expr)?;
-                    let (idx, _) = self.check_field_type(&struct_type, field, &arg_type)?;
-                    args.push((idx, arg_type));
 
-                    defined_fields.insert(field.lexeme);
+                for (field_tok, expr) in fields {
+                    let arg_expr = self.infer_expression(expr)?;
+
+                    let (idx, expected_type) = match struct_type.fields.get(field_tok.lexeme) {
+                        Some(f) => f.clone(),
+                        None => {
+                            return Err(TypeCheckerError::UndefinedField {
+                                struct_name: struct_type.name.to_string(),
+                                field_name: field_tok.lexeme.to_string(),
+                                line: field_tok.line,
+                            });
+                        }
+                    };
+
+                    let coerced_arg =
+                        self.sys
+                            .verify_assignment(&expected_type, arg_expr, field_tok.line)?;
+
+                    args.push((idx, coerced_arg));
+                    defined_fields.insert(field_tok.lexeme);
                 }
-                args.sort_by(|a, b| a.0.cmp(&b.0));
 
+                // Sorting and Missing Field checks...
+                args.sort_by(|a, b| a.0.cmp(&b.0));
                 for field in struct_type.fields.keys() {
                     if !defined_fields.contains(field.as_str()) {
                         return Err(TypeCheckerError::MissingField {
@@ -271,32 +294,78 @@ impl<'src> TypeChecker<'src> {
             }
             Expr::Get { object, field } => {
                 if let Expr::Variable { name } = object.as_ref() {
-                    if self.does_type_exist(name.lexeme) {
+                    if self.sys.does_type_exist(name.lexeme) {
                         return self.handle_static_method_access(name, field);
                     }
                 }
+
                 let object_typed = self.infer_expression(object)?;
 
-                if let Type::Struct(struct_def) = object_typed.ty.clone() {
-                    let struct_def = self
-                        .structs
-                        .get(struct_def.as_str())
-                        .expect("Should have errored earlier");
+                match object_typed.ty.clone() {
+                    Type::Struct(struct_def) => {
+                        let struct_def = self
+                            .sys
+                            .get_struct(&struct_def)
+                            .expect("Should have errored earlier");
 
-                    let field_type = struct_def.fields.get(field.lexeme);
-                    match field_type {
-                        None => self.handle_instance_method(field, object_typed),
-                        Some((idx, field_type)) => Ok(TypedExpr {
-                            ty: field_type.clone(),
-                            kind: ExprKind::GetField {
+                        let field_type = struct_def.fields.get(field.lexeme);
+                        match field_type {
+                            None => self.handle_instance_method(field, object_typed),
+                            Some((idx, field_type)) => Ok(TypedExpr {
+                                ty: field_type.clone(),
+                                kind: ExprKind::GetField {
+                                    object: Box::new(object_typed),
+                                    index: *idx as u8,
+                                },
+                                line: field.line,
+                            }),
+                        }
+                    }
+
+                    Type::Interface(iface_name) => {
+                        let iface = self.sys.get_interface(&iface_name).ok_or(
+                            TypeCheckerError::UndefinedType {
+                                name: iface_name.to_string(),
+                                line: field.line,
+                            },
+                        )?;
+
+                        let (idx, method_ty) = iface.methods.get(field.lexeme).ok_or(
+                            TypeCheckerError::UndefinedMethod {
+                                line: field.line,
+                                found: Type::Interface(iface.name.clone()),
+                                method_name: field.lexeme.to_string(),
+                            },
+                        )?;
+
+                        let ty = match method_ty {
+                            Type::Function(func) => {
+                                if func.param_types.is_empty() {
+                                    return Err(TypeCheckerError::UndefinedMethod {
+                                        line: field.line,
+                                        found: Type::Interface(iface.name.clone()),
+                                        method_name: field.lexeme.to_string(),
+                                    });
+                                }
+
+                                // For interface calls, receiver is implicit (comes from InterfaceObj.data)
+                                let params = func.param_types.iter().skip(1).cloned().collect();
+                                Type::new_function(params, func.return_type.clone())
+                            }
+                            other => other.clone(),
+                        };
+
+                        Ok(TypedExpr {
+                            ty,
+                            kind: ExprKind::InterfaceMethodGet {
                                 object: Box::new(object_typed),
-                                index: *idx as u8,
+                                method_index: *idx as u8,
                             },
                             line: field.line,
-                        }),
+                        })
                     }
-                } else {
-                    self.handle_instance_method(field, object_typed)
+
+                    _ => self.handle_instance_method(field, object_typed),
                 }
             }
             Expr::Set {
@@ -308,8 +377,8 @@ impl<'src> TypeChecker<'src> {
                 let value = self.infer_expression(value)?;
                 if let Type::Struct(struct_def) = object.ty.clone() {
                     let struct_def = self
-                        .structs
-                        .get(struct_def.as_str())
+                        .sys
+                        .get_struct(&struct_def)
                         .expect("Should have errored earlier");
 
                     let (field_idx, field_type) =
@@ -525,13 +594,14 @@ impl<'src> TypeChecker<'src> {
     ) -> Result<TypedExpr, TypeCheckerError> {
         let mangled_name = format!("{}.{}", type_name.lexeme, method_name.lexeme);
 
-        let method = self
-            .lookup_variable(Cow::Owned(mangled_name.clone()))
-            .ok_or(TypeCheckerError::UndefinedMethod {
-                line: method_name.line,
-                found: Type::Struct(Rc::from(String::from(type_name.lexeme))),
-                method_name: method_name.lexeme.to_string(),
-            })?;
+        let method =
+            self.scopes
+                .lookup(mangled_name.as_str())
+                .ok_or(TypeCheckerError::UndefinedMethod {
+                    line: method_name.line,
+                    found: Type::Struct(Rc::from(String::from(type_name.lexeme))),
+                    method_name: method_name.lexeme.to_string(),
+                })?;
 
         let (ctx, resolved_var) = method;
 
@@ -555,13 +625,14 @@ impl<'src> TypeChecker<'src> {
                 line: object.line,
             })?;
         let mangled_name = format!("{}.{}", type_name, field.lexeme);
-        let method = self.lookup_variable(Cow::Owned(mangled_name)).ok_or(
-            TypeCheckerError::UndefinedMethod {
-                line: field.line,
-                found: Type::Number,
-                method_name: field.lexeme.to_string(),
-            },
-        )?;
+        let method =
+            self.scopes
+                .lookup(mangled_name.as_str())
+                .ok_or(TypeCheckerError::UndefinedMethod {
+                    line: field.line,
+                    found: Type::Number,
+                    method_name: field.lexeme.to_string(),
+                })?;
 
         // Edge case -> static functions
         let ty = match &method.0.type_info {

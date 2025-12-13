@@ -3,7 +3,7 @@ use crate::vm::byte_utils::{byte_to_opcode, read_16_bytes, read_24_bytes};
 use crate::vm::bytecode::Opcode;
 use crate::vm::gc::{GarbageCollector, Gc};
 use crate::vm::stack::Stack;
-use crate::vm::value::{BoundMethod, Closure, Function, Instance, Value};
+use crate::vm::value::{BoundMethod, Closure, Function, Instance, InterfaceObj, VTable, Value};
 use std::process::exit;
 
 mod byte_utils;
@@ -23,6 +23,7 @@ struct CallFrame {
 const STACK_MAX: usize = 256 * 64;
 
 pub struct VM {
+    vtables: Vec<Gc<VTable>>,
     frames: Vec<CallFrame>,
     gc: GarbageCollector,
     stack: Stack<STACK_MAX>,
@@ -36,6 +37,7 @@ impl VM {
             gc: garbage_collector,
             stack: Stack::<STACK_MAX>::new(),
             globals: vec![Value::Nil; global_count],
+            vtables: Vec::new(),
         }
     }
 
@@ -404,6 +406,52 @@ impl VM {
                     } else {
                         panic!("BindMethod expected function");
                     }
+                }
+                Opcode::MakeVTable => {
+                    let count = chunk.instructions[current_frame.ip] as usize;
+                    current_frame.ip += 1;
+
+                    let mut methods = Vec::with_capacity(count);
+                    for _ in 0..count {
+                        let v = self.stack.pop();
+                        match v {
+                            Value::Function(f) => methods.push(f),
+                            Value::Closure(c) => methods.push(c.function),
+                            _ => panic!("MakeVTable expects function/closure values"),
+                        }
+                    }
+
+                    let vt = self.gc.alloc(VTable { methods });
+                    self.vtables.push(vt);
+                }
+
+                Opcode::MakeInterfaceObj => {
+                    let idx = chunk.instructions[current_frame.ip] as usize;
+                    current_frame.ip += 1;
+                    let data = self.stack.pop();
+
+                    let obj = self.gc.alloc(InterfaceObj {
+                        data,
+                        vtable: self.vtables[idx],
+                    });
+                    self.stack.push(Value::InterfaceObj(obj));
+                }
+
+                Opcode::InterfaceBindMethod => {
+                    let idx = chunk.instructions[current_frame.ip] as usize;
+                    current_frame.ip += 1;
+
+                    let obj = self.stack.pop();
+                    let Value::InterfaceObj(obj) = obj else {
+                        panic!("InterfaceBindMethod expected interface object");
+                    };
+
+                    let method = obj.vtable.methods[idx];
+                    let bound = self.gc.alloc(BoundMethod {
+                        receiver: obj.data,
+                        method,
+                    });
+                    self.stack.push(Value::BoundMethod(bound));
                 }
             }
         }
