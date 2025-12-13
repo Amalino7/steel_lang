@@ -48,6 +48,7 @@ pub enum Opcode {
     MakeVTable,
     MakeInterfaceObj,
     InterfaceBindMethod,
+    GetInterfaceMethod,
 
     Return,
     Halt,

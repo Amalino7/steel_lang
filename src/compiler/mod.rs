@@ -344,6 +344,20 @@ impl<'a> Compiler<'a> {
 
                     self.emit_op(Opcode::Call, line);
                     self.emit_byte((arguments.len() + 1) as u8, line);
+                } else if let ExprKind::InterfaceMethodGet {
+                    object,
+                    method_index,
+                } = &callee.kind
+                {
+                    self.compile_expr(object);
+                    self.emit_op(Opcode::GetInterfaceMethod, line);
+                    self.emit_byte(*method_index, line);
+
+                    for arg in arguments {
+                        self.compile_expr(arg);
+                    }
+                    self.emit_op(Opcode::Call, line);
+                    self.emit_byte((arguments.len() + 1) as u8, line);
                 } else {
                     self.compile_expr(callee);
                     for arg in arguments {
