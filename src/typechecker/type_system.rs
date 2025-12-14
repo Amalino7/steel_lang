@@ -79,6 +79,22 @@ impl TypeSystem {
         expr: TypedExpr,
         line: u32,
     ) -> Result<TypedExpr, TypeCheckerError> {
+        if let Type::Optional(_) = expected_type {
+            if expr.ty == Type::Nil {
+                return Ok(expr);
+            }
+        }
+
+        if *expected_type == expr.ty {
+            return Ok(expr);
+        }
+
+        let expected_type = if let Type::Optional(inner) = expected_type {
+            inner
+        } else {
+            expected_type
+        };
+
         if *expected_type == expr.ty {
             return Ok(expr);
         }
@@ -95,7 +111,6 @@ impl TypeSystem {
                 });
             }
         }
-
         Err(TypeCheckerError::TypeMismatch {
             expected: expected_type.clone(),
             found: expr.ty,

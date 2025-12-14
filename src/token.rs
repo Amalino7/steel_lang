@@ -33,6 +33,9 @@ pub enum TokenType {
     Plus,
     Slash,
     Star,
+    Question,         // ?
+    QuestionDot,      // ?.
+    QuestionQuestion, // ??
 
     // One or two character tokens.
     Bang,
@@ -63,6 +66,7 @@ pub enum TokenType {
     Func,
     Return,
     True,
+    Nil,
     False,
     Let,
     While,
@@ -127,6 +131,10 @@ impl Display for TokenType {
             TokenType::Impl => f.write_str("impl"),
             TokenType::Self_ => f.write_str("self"),
             TokenType::Interface => f.write_str("interface"),
+            TokenType::Question => f.write_str("?"),
+            TokenType::QuestionDot => f.write_str("?."),
+            TokenType::QuestionQuestion => f.write_str("??"),
+            TokenType::Nil => f.write_str("nil"),
         }
     }
 }

@@ -1037,4 +1037,62 @@ mod tests {
             "#;
         execute_source(src, false, "run", true);
     }
+    #[test]
+    fn test_nil_safety() {
+        let src = r#"
+            let a: number? = nil;
+            assert(a, nil);
+            println(a);
+            let b:number = a ?? 0;
+
+            let c: boolean? = nil;
+            println(b);
+            assert(b, 0);
+            "#;
+        execute_source(src, false, "run", true);
+    }
+    #[test]
+    fn test_nil_access() {
+        let src = r#"
+            struct Point { x: number, y: number }
+            let p: Point? = Point { x: 1, y: 2 };
+            assert(p?.x, 1);
+            assert(p?.y, 2);
+            p = nil;
+            assert(p?.x, nil);
+            assert(p?.y, nil);
+            println(p?.x);
+            "#;
+        execute_source(src, false, "run", true);
+    }
+    #[test]
+    fn test_linked_list() {
+        let src = r#"
+            struct Node {
+                value: number,
+                next: Node?,
+            }
+            let head = Node{value: 1, next: nil};
+            let tail = Node{value: 2, next: head};
+            head.next = tail;
+            assert(head.next?.value, 2);
+            head.next?.value = 3;
+            assert(head.next?.value, 3);
+            head.next = nil;
+            head.next?.value = 4;
+            assert(head.next?.value, nil);
+            "#;
+        execute_source(src, false, "run", true);
+    }
+    #[test]
+    fn test_unwrap() {
+        let src = r#"
+            struct Point { x: number, y: number }
+            let p: Point? = Point { x: 1, y: 2 };
+            let strong_p = p!;
+            p = nil;
+            assert(strong_p.x, 1);
+            "#;
+        execute_source(src, false, "run", true);
+    }
 }

@@ -30,6 +30,7 @@ pub struct InterfaceType {
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Type {
+    Nil,
     Number,
     String,
     Boolean,
@@ -38,6 +39,7 @@ pub enum Type {
     Unknown,
     Struct(Symbol),
     Interface(Symbol),
+    Optional(Box<Type>),
     Any, //TODO replace with generic types, this is for native functions.
 }
 
@@ -79,6 +81,8 @@ impl Type {
             Type::Unknown => None,
             Type::Struct(name) => Some(name),
             Type::Any => None,
+            Type::Optional(_) => None,
+            Type::Nil => Some("nil"),
         }
     }
 
@@ -119,6 +123,10 @@ impl Type {
                     param_types,
                     Self::from_ast(return_type, type_system)?,
                 ))
+            }
+            TypeAst::Optional(inner) => {
+                let inner_ty = Self::from_ast(inner, type_system)?;
+                Ok(Type::Optional(Box::new(inner_ty)))
             }
             TypeAst::Infer => Ok(Type::Unknown),
         }
@@ -187,6 +195,8 @@ impl Display for Type {
             Type::Any => write!(f, "any"),
             Type::Struct(name) => write!(f, "struct {} ", name),
             Type::Interface(name) => write!(f, "interface {} ", name),
+            Type::Optional(inner) => write!(f, "Optional<{}>", inner),
+            Type::Nil => write!(f, "Nil"),
         }
     }
 }
@@ -201,12 +211,14 @@ pub struct TypedExpr {
 pub enum UnaryOp {
     Negate,
     Not,
+    Unwrap,
 }
 
 #[derive(Debug, Clone)]
 pub enum LogicalOp {
     Or,
     And,
+    Coalesce,
 }
 
 #[derive(Debug, Clone)]
@@ -238,10 +250,12 @@ pub enum ExprKind {
     GetField {
         object: Box<TypedExpr>,
         index: u8,
+        safe: bool,
     },
     SetField {
         object: Box<TypedExpr>,
         index: u8,
+        safe: bool,
         value: Box<TypedExpr>,
     },
     StructInit {
@@ -257,6 +271,7 @@ pub enum ExprKind {
     InterfaceMethodGet {
         object: Box<TypedExpr>,
         method_index: u8,
+        safe: bool,
     },
 
     Unary {

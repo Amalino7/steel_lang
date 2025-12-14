@@ -283,6 +283,7 @@ impl<'a> Compiler<'a> {
                 Literal::Void => {
                     self.chunk().write_constant(Value::Nil, line as usize);
                 }
+                Literal::Nil => self.emit_op(Opcode::Nil, line),
             },
 
             ExprKind::Unary { operator, operand } => {
@@ -290,6 +291,7 @@ impl<'a> Compiler<'a> {
                 match operator {
                     UnaryOp::Negate => self.emit_op(Opcode::Negate, line),
                     UnaryOp::Not => self.emit_op(Opcode::Not, line),
+                    UnaryOp::Unwrap => self.emit_op(Opcode::Unwrap, line),
                 }
             }
             ExprKind::GetVar(resolved) => self.emit_var_access(resolved, line),
@@ -332,6 +334,12 @@ impl<'a> Compiler<'a> {
                         self.compile_expr(right);
                         self.patch_jump(short_circuit);
                     }
+                    LogicalOp::Coalesce => {
+                        let jump = self.emit_jump(Opcode::JumpIfNotNil, line);
+                        self.emit_op(Opcode::Pop, line);
+                        self.compile_expr(right);
+                        self.patch_jump(jump)
+                    }
                 }
             }
             ExprKind::Call { callee, arguments } => {
@@ -347,6 +355,7 @@ impl<'a> Compiler<'a> {
                 } else if let ExprKind::InterfaceMethodGet {
                     object,
                     method_index,
+                    safe,
                 } = &callee.kind
                 {
                     self.compile_expr(object);
@@ -382,20 +391,44 @@ impl<'a> Compiler<'a> {
                 self.emit_byte(args.len() as u8, line);
             }
 
-            ExprKind::GetField { object, index } => {
+            ExprKind::GetField {
+                object,
+                index,
+                safe,
+            } => {
                 self.compile_expr(object);
-                self.emit_op(Opcode::GetField, line);
-                self.emit_byte(*index, line);
+                if *safe {
+                    let jump = self.emit_jump(Opcode::JumpIfNil, line);
+                    self.emit_op(Opcode::GetField, line);
+                    self.emit_byte(*index, line);
+                    self.patch_jump(jump);
+                } else {
+                    self.emit_op(Opcode::GetField, line);
+                    self.emit_byte(*index, line);
+                }
             }
             ExprKind::SetField {
                 object,
                 index,
                 value,
+                safe,
             } => {
                 self.compile_expr(value);
-                self.compile_expr(object);
-                self.emit_op(Opcode::SetField, line);
-                self.emit_byte(*index, line);
+                if *safe {
+                    self.compile_expr(object);
+                    let jump_nil = self.emit_jump(Opcode::JumpIfNil, line);
+                    self.emit_op(Opcode::SetField, line);
+                    self.emit_byte(*index, line);
+                    let escape_jump = self.emit_jump(Opcode::Jump, line);
+
+                    self.patch_jump(jump_nil);
+                    self.emit_op(Opcode::Pop, line); // Pop object
+                    self.patch_jump(escape_jump);
+                } else {
+                    self.compile_expr(object);
+                    self.emit_op(Opcode::SetField, line);
+                    self.emit_byte(*index, line);
+                }
             }
 
             ExprKind::MethodGet { object, method } => {
@@ -419,10 +452,18 @@ impl<'a> Compiler<'a> {
             ExprKind::InterfaceMethodGet {
                 object,
                 method_index,
+                safe,
             } => {
                 self.compile_expr(object);
-                self.emit_op(Opcode::InterfaceBindMethod, line);
-                self.emit_byte(*method_index, line);
+                if *safe {
+                    let jump = self.emit_jump(Opcode::JumpIfNil, line);
+                    self.emit_op(Opcode::InterfaceBindMethod, line);
+                    self.emit_byte(*method_index, line);
+                    self.patch_jump(jump);
+                } else {
+                    self.emit_op(Opcode::InterfaceBindMethod, line);
+                    self.emit_byte(*method_index, line);
+                }
             }
         }
     }

@@ -146,6 +146,12 @@ impl VM {
                     let val = self.stack.pop();
                     self.stack.push(!val);
                 }
+                Opcode::Unwrap => {
+                    let val = self.stack.get_top();
+                    if let Value::Nil = val {
+                        panic!("Unwrap on nil"); // TODO: better error handling
+                    }
+                }
                 Opcode::Equal => {
                     let b = self.stack.pop();
                     let a = self.stack.pop();
@@ -194,12 +200,33 @@ impl VM {
                 Opcode::Pop => {
                     self.stack.pop();
                 }
+                Opcode::Nil => {
+                    self.stack.push(Value::Nil);
+                }
                 Opcode::JumpIfFalse => {
                     let offset =
                         read_16_bytes(&chunk.instructions[current_frame.ip..current_frame.ip + 2]);
                     current_frame.ip += 2;
                     let cond = self.stack.get_top();
                     if cond == Value::Boolean(false) {
+                        current_frame.ip += offset;
+                    }
+                }
+                Opcode::JumpIfNil => {
+                    let offset =
+                        read_16_bytes(&chunk.instructions[current_frame.ip..current_frame.ip + 2]);
+                    current_frame.ip += 2;
+                    let val = self.stack.get_top();
+                    if val == Value::Nil {
+                        current_frame.ip += offset;
+                    }
+                }
+                Opcode::JumpIfNotNil => {
+                    let offset =
+                        read_16_bytes(&chunk.instructions[current_frame.ip..current_frame.ip + 2]);
+                    current_frame.ip += 2;
+                    let val = self.stack.get_top();
+                    if val != Value::Nil {
                         current_frame.ip += offset;
                     }
                 }

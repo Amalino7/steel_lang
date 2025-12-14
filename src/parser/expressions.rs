@@ -7,7 +7,21 @@ use crate::token::Token;
 
 impl<'src> Parser<'src> {
     pub(crate) fn expression(&mut self) -> Result<Expr<'src>, ParserError<'src>> {
-        self.logical_or()
+        self.null_coalescing()
+    }
+
+    fn null_coalescing(&mut self) -> Result<Expr<'src>, ParserError<'src>> {
+        let mut expr = self.logical_or()?;
+        while match_token_type!(self, TokT::QuestionQuestion) {
+            let op = self.previous_token.clone();
+            let right = self.logical_or()?;
+            expr = Expr::Logical {
+                left: Box::new(expr),
+                operator: op,
+                right: Box::new(right),
+            };
+        }
+        Ok(expr)
     }
 
     fn logical_or(&mut self) -> Result<Expr<'src>, ParserError<'src>> {
@@ -48,8 +62,14 @@ impl<'src> Parser<'src> {
                 identifier: name,
                 value: Box::new(value),
             })
-        } else if let Expr::Get { object, field } = expr {
+        } else if let Expr::Get {
+            object,
+            field,
+            safe,
+        } = expr
+        {
             Ok(Expr::Set {
+                safe,
                 object,
                 field,
                 value: Box::new(value),
@@ -193,8 +213,22 @@ impl<'src> Parser<'src> {
                 self.consume(TokT::Identifier, "Expected property name after '.'.")?;
                 let field = self.previous_token.clone();
                 expr = Expr::Get {
+                    safe: false,
                     object: Box::new(expr),
                     field,
+                };
+            } else if match_token_type!(self, TokT::QuestionDot) {
+                self.consume(TokT::Identifier, "Expected property name after '?.'.")?;
+                let field = self.previous_token.clone();
+                expr = Expr::Get {
+                    safe: true,
+                    object: Box::new(expr),
+                    field,
+                };
+            } else if match_token_type!(self, TokT::Bang) {
+                expr = Expr::ForceUnwrap {
+                    expression: Box::new(expr),
+                    line: self.previous_token.line,
                 };
             } else {
                 break;
@@ -240,7 +274,7 @@ impl<'src> Parser<'src> {
         self.advance()?;
         match self.previous_token.token_type {
             TokT::True => self.literal(Literal::Boolean(true)),
-
+            TokT::Nil => self.literal(Literal::Nil),
             TokT::False => self.literal(Literal::Boolean(false)),
             TokT::Number => {
                 if let Ok(num) = self.previous_token.lexeme.parse() {

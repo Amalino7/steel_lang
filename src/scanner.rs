@@ -67,6 +67,16 @@ impl<'src> Scanner<'src> {
             '>' if self.matches('=') => self.make_token(TokenType::GreaterEqual),
             '>' => self.make_token(TokenType::Greater),
 
+            '?' => {
+                if self.matches('?') {
+                    self.make_token(TokenType::QuestionQuestion)
+                } else if self.matches('.') {
+                    self.make_token(TokenType::QuestionDot)
+                } else {
+                    self.make_token(TokenType::Question)
+                }
+            }
+
             '"' => self.string(),
             '0'..='9' => self.number(),
             c if is_valid_identifier(c) => self.identifier(),
@@ -217,6 +227,7 @@ fn keywords() -> HashMap<&'static str, TokenType> {
         ("impl", TokenType::Impl),
         ("self", TokenType::Self_),
         ("interface", TokenType::Interface),
+        ("nil", TokenType::Nil),
     ])
 }
 

@@ -81,6 +81,16 @@ pub fn disassemble_instruction(
             let jump_offset = read_bytes(&bytecode[(offset - 1)..=offset]);
             println!("Jump {} ", jump_offset)
         }
+        Opcode::JumpIfNil => {
+            offset += 2;
+            let jump_offset = read_bytes(&bytecode[(offset - 1)..=offset]);
+            println!("Jump if nil {} ", jump_offset)
+        }
+        Opcode::JumpIfNotNil => {
+            offset += 2;
+            let jump_offset = read_bytes(&bytecode[(offset - 1)..=offset]);
+            println!("Jump if not nil {} ", jump_offset)
+        }
         Opcode::JumpBack => {
             offset += 2;
             let jump_offset = read_bytes(&bytecode[(offset - 1)..=offset]);
@@ -146,6 +156,8 @@ pub fn disassemble_instruction(
             offset += 1;
             println!("GetInterfaceMethod {}", bytecode[offset]);
         }
+        Opcode::Nil => println!("Nil"),
+        Opcode::Unwrap => println!("Unwrap"),
     };
     offset + 1
 }

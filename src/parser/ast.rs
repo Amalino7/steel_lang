@@ -8,10 +8,12 @@ pub enum Literal {
     String(String),
     Boolean(bool),
     Void,
+    Nil,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum TypeAst<'src> {
+    Optional(Box<TypeAst<'src>>),
     Named(Token<'src>),
     Function {
         param_types: Box<[TypeAst<'src>]>,
@@ -59,13 +61,19 @@ pub enum Expr<'src> {
         arguments: Vec<Expr<'src>>,
     },
     Get {
+        safe: bool,
         object: Box<Expr<'src>>,
         field: Token<'src>,
     },
     Set {
+        safe: bool,
         object: Box<Expr<'src>>,
         field: Token<'src>,
         value: Box<Expr<'src>>,
+    },
+    ForceUnwrap {
+        expression: Box<Expr<'src>>,
+        line: u32,
     },
 }
 
@@ -126,6 +134,7 @@ impl Display for Literal {
             Literal::String(s) => write!(f, "{}", s),
             Literal::Boolean(b) => write!(f, "{}", b),
             Literal::Void => write!(f, "void"),
+            Literal::Nil => write!(f, "nil"),
         }
     }
 }
@@ -178,15 +187,28 @@ impl Display for Expr<'_> {
                 )
             }
 
-            Expr::Get { object, field } => {
-                write!(f, "{}.{}", object, field.lexeme)
+            Expr::Get {
+                object,
+                field,
+                safe,
+            } => {
+                if *safe {
+                    write!(f, "{}?.{}", object, field.lexeme)
+                } else {
+                    write!(f, "{}.{}", object, field.lexeme)
+                }
             }
             Expr::Set {
                 object,
                 field: name,
                 value,
+                safe,
             } => {
-                write!(f, "{}.{} = {}", object, name.lexeme, value)
+                if *safe {
+                    write!(f, "{}?.{} = {}", object, name.lexeme, value)
+                } else {
+                    write!(f, "{}.{} = {}", object, name.lexeme, value)
+                }
             }
             Expr::StructInitializer { name, fields } => {
                 write!(f, "{} {{", name.lexeme)?;
@@ -194,6 +216,10 @@ impl Display for Expr<'_> {
                     write!(f, "{} : {},", name.lexeme, value)?;
                 }
                 write!(f, "}}")
+            }
+
+            Expr::ForceUnwrap { expression, line } => {
+                write!(f, "!!({})", expression)
             }
         }
     }
@@ -218,6 +244,7 @@ impl Display for TypeAst<'_> {
                 )
             }
             TypeAst::Infer => write!(f, "_"),
+            TypeAst::Optional(inner) => write!(f, "{}?", inner),
         }
     }
 }
@@ -327,6 +354,7 @@ impl Expr<'_> {
             Expr::Get { field, .. } => field.line,
             Expr::Set { value, .. } => value.get_line(),
             Expr::StructInitializer { name, .. } => name.line,
+            Expr::ForceUnwrap { line, .. } => *line,
         }
     }
 }
