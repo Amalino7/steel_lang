@@ -436,14 +436,23 @@ impl VM {
                     });
                     self.stack.push(Value::InterfaceObj(obj));
                 }
-
+                Opcode::GetInterfaceMethod => {
+                    let idx = chunk.instructions[current_frame.ip] as usize;
+                    current_frame.ip += 1;
+                    let obj = self.stack.pop();
+                    let Value::InterfaceObj(obj) = obj else {
+                        unreachable!("GetInterfaceMethod expected interface object");
+                    };
+                    self.stack.push(Value::Function(obj.vtable.methods[idx]));
+                    self.stack.push(obj.data);
+                }
                 Opcode::InterfaceBindMethod => {
                     let idx = chunk.instructions[current_frame.ip] as usize;
                     current_frame.ip += 1;
 
                     let obj = self.stack.pop();
                     let Value::InterfaceObj(obj) = obj else {
-                        panic!("InterfaceBindMethod expected interface object");
+                        unreachable!("InterfaceBindMethod expected interface object");
                     };
 
                     let method = obj.vtable.methods[idx];
@@ -483,6 +492,9 @@ impl VM {
     }
 
     fn mark_roots(&mut self, current_frame: &CallFrame) {
+        for vtable in &self.vtables {
+            self.gc.mark(*vtable);
+        }
         for global in &self.globals {
             self.gc.mark_value(global);
         }

@@ -320,7 +320,7 @@ mod tests {
                 fib(20);
             }
         "#;
-        execute_source(src, true, "run", true);
+        execute_source(src, false, "run", true);
     }
 
     #[test]

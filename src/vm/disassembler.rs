@@ -142,6 +142,10 @@ pub fn disassemble_instruction(
             offset += 1;
             println!("InterfaceBindMethod {}", bytecode[offset]);
         }
+        Opcode::GetInterfaceMethod => {
+            offset += 1;
+            println!("GetInterfaceMethod {}", bytecode[offset]);
+        }
     };
     offset + 1
 }
