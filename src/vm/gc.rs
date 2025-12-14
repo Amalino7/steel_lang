@@ -74,7 +74,7 @@ impl GarbageCollector {
 
     pub fn new() -> Self {
         Self {
-            next_gc: 1024 * 1024,
+            next_gc: 1024 * 1024 * 10,
             objects: Vec::with_capacity(1024),
             gray_stack: VecDeque::new(),
         }
