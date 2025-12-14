@@ -1059,6 +1059,9 @@ mod tests {
             assert(p?.x, 1);
             assert(p?.y, 2);
             p = nil;
+
+            let num: number = p?.x;
+
             assert(p?.x, nil);
             assert(p?.y, nil);
             println(p?.x);
@@ -1092,6 +1095,108 @@ mod tests {
             let strong_p = p!;
             p = nil;
             assert(strong_p.x, 1);
+            "#;
+        execute_source(src, false, "run", true);
+    }
+    #[test]
+    fn test_complex_linked_list() {
+        let src = r#"
+            struct Node {
+                value: number,
+                next: Node?,
+            }
+            struct LinkedList {
+                size: number,
+                head: Node?,
+            }
+            impl LinkedList {
+                func new(): LinkedList {
+                    return LinkedList{size: 0, head: nil};
+                }
+                func get(self, index: number): number? {
+                    let head = self.head;
+                    while head != nil and index > 0 {
+                        index -= 1;
+                        head = head?.next;
+                    }
+                    return head?.value;
+                }
+                func set(self, index: number, value: number): void {
+                    let head = self.head;
+                    while head != nil and index > 0 {
+                        index -= 1;
+                        head = head?.next;
+                    }
+                    head?.value = value;
+                }
+                func push(self, value: number) {
+                    self.size += 1;
+                    let new_node = Node{value: value, next: nil};
+                    if self.head != nil {
+                        let head = self.head!;
+                        while head.next != nil {
+                            head = head.next!;
+                        }
+                        head.next = new_node;
+                    }
+                    else {
+                        self.head = new_node;
+                    }
+                }
+                func pop(self): number? {
+                    if self.size == 0 {
+                        return nil;
+                    }
+                    else if self.size == 1 {
+                        let value = self.head!.value;
+                        self.size -= 1;
+                        self.head = nil;
+                        return value;
+                    } else {
+                        self.size -= 1;
+                        let head = self.head;
+                        while head?.next?.next != nil {
+                            head = head?.next;
+                        }
+                        let value = head?.next?.value;
+                        head?.next = nil;
+                        return value;
+                    }
+                }
+                func get_size(self): number { return self.size; }
+            }
+
+            func print_list(list: LinkedList) {
+                print("[");
+                let i =0;
+                while i < list.get_size() {
+                    if i + 1 == list.get_size() {
+                        print(list.get(i));
+                    }
+                    else {
+                        print(list.get(i), ", ");
+                    }
+                    i+=1;
+                }
+                println("]");
+            }
+
+            let list = LinkedList.new();
+            list.push(1);
+            list.push(2);
+            list.push(3);
+            list.push(4);
+            print_list(list);
+            assert(list.pop(), 4);
+            list.set(1, 5);
+            assert(list.get(1), 5);
+            print_list(list);
+            assert(list.pop(), 3);
+            assert(list.pop(), 5);
+            print_list(list);
+            assert(list.pop(), 1);
+
+            print_list(list);
             "#;
         execute_source(src, false, "run", true);
     }

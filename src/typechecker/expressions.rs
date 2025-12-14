@@ -634,7 +634,7 @@ impl<'src> TypeChecker<'src> {
                 }
             }
             TokenType::EqualEqual | TokenType::BangEqual => {
-                if left_type == right_type {
+                if self.sys.can_compare(&left_type, &right_type) {
                     let op = match left_type {
                         Type::Number => BinaryOp::EqualEqualNumber,
                         Type::String => BinaryOp::EqualEqualString,

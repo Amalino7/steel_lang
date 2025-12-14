@@ -73,6 +73,25 @@ impl TypeSystem {
             false
         }
     }
+    pub fn can_compare(&self, left: &Type, right: &Type) -> bool {
+        if let Type::Optional(inner) = left {
+            if *right == Type::Nil {
+                true
+            } else {
+                self.can_compare(inner, right)
+            }
+        } else if let Type::Optional(inner) = right {
+            if *left == Type::Nil {
+                true
+            } else {
+                self.can_compare(left, inner)
+            }
+        } else if left == right {
+            true
+        } else {
+            false
+        }
+    }
     pub fn verify_assignment(
         &self,
         expected_type: &Type,
