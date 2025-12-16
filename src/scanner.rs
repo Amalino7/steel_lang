@@ -72,6 +72,8 @@ impl<'src> Scanner<'src> {
                     self.make_token(TokenType::QuestionQuestion)
                 } else if self.matches('.') {
                     self.make_token(TokenType::QuestionDot)
+                } else if self.matches('(') {
+                    self.make_token(TokenType::QuestionParen)
                 } else {
                     self.make_token(TokenType::Question)
                 }

@@ -59,6 +59,7 @@ pub enum Expr<'src> {
     Call {
         callee: Box<Expr<'src>>,
         arguments: Vec<Expr<'src>>,
+        safe: bool,
     },
     Get {
         safe: bool,
@@ -174,7 +175,9 @@ impl Display for Expr<'_> {
             } => {
                 write!(f, "({} {} {})", operator.lexeme, left, right)
             }
-            Expr::Call { callee, arguments } => {
+            Expr::Call {
+                callee, arguments, ..
+            } => {
                 write!(
                     f,
                     "{}({})",
@@ -218,7 +221,7 @@ impl Display for Expr<'_> {
                 write!(f, "}}")
             }
 
-            Expr::ForceUnwrap { expression, line } => {
+            Expr::ForceUnwrap { expression, .. } => {
                 write!(f, "!!({})", expression)
             }
         }

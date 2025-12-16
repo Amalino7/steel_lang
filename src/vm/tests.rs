@@ -1060,8 +1060,9 @@ mod tests {
             assert(p?.y, 2);
             p = nil;
 
-            let num: number = p?.x;
+            let num: number = p?.x ?? 0;
 
+            assert(num, 0);
             assert(p?.x, nil);
             assert(p?.y, nil);
             println(p?.x);
@@ -1156,7 +1157,7 @@ mod tests {
                         self.size -= 1;
                         let head = self.head;
                         while head?.next?.next != nil {
-                            head = head?.next;
+                            head = head!.next;
                         }
                         let value = head?.next?.value;
                         head?.next = nil;
@@ -1197,6 +1198,48 @@ mod tests {
             assert(list.pop(), 1);
 
             print_list(list);
+            "#;
+        execute_source(src, false, "run", true);
+    }
+    #[test]
+    fn test_functions_on_nil() {
+        let src = r#"
+            struct Point { x: number, y: number }
+            impl Point {
+                func do_something(self): void {
+                    assert(1,2); // should never be called
+                }
+
+                func other(self): void {
+                    println("ok");
+                    assert(1,1);
+                }
+            }
+            let p: Point? = nil;
+            let i = 0;
+            let fun = p?.do_something;
+            fun?();
+
+            p?.do_something();
+            p = Point{x: 1, y: 2};
+
+            p?.other();
+            fun?();
+            "#;
+        execute_source(src, false, "run", true);
+    }
+    #[test]
+    fn test_nil_functions() {
+        let src = r#"
+
+            let fun: func?(): void = nil;
+            if fun?() != nil {
+                assert(1, 2);
+            }
+
+            func other(): void { println("Yellow");}
+            fun = other;
+            fun?();
             "#;
         execute_source(src, false, "run", true);
     }

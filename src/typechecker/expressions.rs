@@ -214,10 +214,36 @@ impl<'src> TypeChecker<'src> {
                     line: operator.line,
                 })
             }
-            Expr::Call { callee, arguments } => {
+            Expr::Call {
+                callee,
+                arguments,
+                safe,
+            } => {
                 let callee_typed = self.infer_expression(callee)?;
 
-                if let Type::Function(func) = callee_typed.ty.clone() {
+                let safe = if let ExprKind::MethodGet { safe, .. } = callee_typed.kind {
+                    safe
+                } else {
+                    *safe
+                };
+
+                let lookup_type = if safe {
+                    match &callee_typed.ty {
+                        Type::Optional(inner) => inner.as_ref().clone(),
+                        _ => {
+                            return Err(TypeCheckerError::TypeMismatch {
+                                expected: Type::Optional(Box::new(Type::Any)),
+                                found: callee_typed.ty.clone(),
+                                line: callee_typed.line,
+                                message: "Cannot use safe of non-optional type. Use simply '()'",
+                            });
+                        }
+                    }
+                } else {
+                    callee_typed.ty.clone()
+                };
+
+                if let Type::Function(func) = lookup_type {
                     // Check arity
                     if (func.param_types.len() != arguments.len() && !func.is_vararg)
                         || (func.is_vararg && arguments.len() < func.param_types.len())
@@ -260,11 +286,12 @@ impl<'src> TypeChecker<'src> {
                     }
 
                     Ok(TypedExpr {
-                        ty: func.return_type.clone(),
+                        ty: func.return_type.clone().wrap_in_optional(),
                         line: callee_typed.line,
                         kind: ExprKind::Call {
                             callee: Box::new(callee_typed),
                             arguments: typed_args,
+                            safe,
                         },
                     })
                 } else {
@@ -335,6 +362,7 @@ impl<'src> TypeChecker<'src> {
                 field,
                 safe,
             } => {
+                // Static method check
                 if let Expr::Variable { name } = object.as_ref() {
                     if self.sys.does_type_exist(name.lexeme) {
                         return self.handle_static_method_access(name, field);
@@ -342,7 +370,9 @@ impl<'src> TypeChecker<'src> {
                 }
 
                 let object_typed = self.infer_expression(object)?;
-                let type_ = if *safe {
+
+                // Optional handling
+                let lookup_type = if *safe {
                     match &object_typed.ty {
                         Type::Optional(inner) => inner.as_ref().clone(),
                         _ => {
@@ -358,16 +388,15 @@ impl<'src> TypeChecker<'src> {
                     object_typed.ty.clone()
                 };
 
-                match type_ {
-                    Type::Struct(struct_def) => {
+                // 3. Perform Lookup & Create Inner Expression
+                let mut result_expr = match &lookup_type {
+                    Type::Struct(struct_name) => {
                         let struct_def = self
                             .sys
-                            .get_struct(&struct_def)
+                            .get_struct(struct_name)
                             .expect("Should have errored earlier");
 
-                        let field_type = struct_def.fields.get(field.lexeme);
-                        match field_type {
-                            None => self.handle_instance_method(field, object_typed),
+                        match struct_def.fields.get(field.lexeme) {
                             Some((idx, field_type)) => Ok(TypedExpr {
                                 ty: field_type.clone(),
                                 kind: ExprKind::GetField {
@@ -377,11 +406,17 @@ impl<'src> TypeChecker<'src> {
                                 },
                                 line: field.line,
                             }),
+                            None => self.handle_instance_method(
+                                field,
+                                &lookup_type,
+                                object_typed,
+                                *safe,
+                            ),
                         }
                     }
 
                     Type::Interface(iface_name) => {
-                        let iface = self.sys.get_interface(&iface_name).ok_or(
+                        let iface = self.sys.get_interface(iface_name).ok_or(
                             TypeCheckerError::UndefinedType {
                                 name: iface_name.to_string(),
                                 line: field.line,
@@ -405,8 +440,6 @@ impl<'src> TypeChecker<'src> {
                                         method_name: field.lexeme.to_string(),
                                     });
                                 }
-
-                                // For interface calls, receiver is implicit (comes from InterfaceObj.data)
                                 let params = func.param_types.iter().skip(1).cloned().collect();
                                 Type::new_function(params, func.return_type.clone())
                             }
@@ -423,9 +456,16 @@ impl<'src> TypeChecker<'src> {
                             line: field.line,
                         })
                     }
+                    // Fallback for primitives
+                    _ => self.handle_instance_method(field, &lookup_type, object_typed, *safe),
+                }?;
 
-                    _ => self.handle_instance_method(field, object_typed),
+                // 4. Wrap in Optional if necessary
+                if *safe {
+                    result_expr.ty = result_expr.ty.wrap_in_optional();
                 }
+
+                Ok(result_expr)
             }
             Expr::Set {
                 object,
@@ -706,38 +746,39 @@ impl<'src> TypeChecker<'src> {
     fn handle_instance_method(
         &mut self,
         field: &Token,
-        object: TypedExpr,
+        lookup_type: &Type,
+        object_expr: TypedExpr,
+        safe: bool,
     ) -> Result<TypedExpr, TypeCheckerError> {
-        let type_name = object
-            .ty
+        let type_name = lookup_type
             .get_name()
             .ok_or(TypeCheckerError::TypeHasNoFields {
-                found: object.ty.clone(),
-                line: object.line,
+                found: lookup_type.clone(),
+                line: object_expr.line,
             })?;
+
         let mangled_name = format!("{}.{}", type_name, field.lexeme);
+
         let method =
             self.scopes
                 .lookup(mangled_name.as_str())
                 .ok_or(TypeCheckerError::UndefinedMethod {
                     line: field.line,
-                    found: Type::Number,
+                    found: lookup_type.clone(),
                     method_name: field.lexeme.to_string(),
                 })?;
 
-        // Edge case -> static functions
         let ty = match &method.0.type_info {
             Type::Function(func) => {
                 let return_type = func.return_type.clone();
 
-                // light requirements
-                if func.param_types.is_empty() || func.param_types[0] != object.ty {
+                if func.param_types.is_empty() || &func.param_types[0] != lookup_type {
                     return Err(TypeCheckerError::StaticMethodOnInstance {
                         method_name: field.lexeme.to_string(),
                         line: field.line,
                     });
                 }
-                // Stronger syntax to be decided
+
                 if func.is_static {
                     return Err(TypeCheckerError::StaticMethodOnInstance {
                         method_name: field.lexeme.to_string(),
@@ -745,12 +786,7 @@ impl<'src> TypeChecker<'src> {
                     });
                 }
 
-                let params = func
-                    .param_types
-                    .iter()
-                    .skip(1)
-                    .map(|ty| ty.clone())
-                    .collect();
+                let params = func.param_types.iter().skip(1).cloned().collect();
                 Type::new_function(params, return_type)
             }
             ty => ty.clone(),
@@ -759,8 +795,9 @@ impl<'src> TypeChecker<'src> {
         Ok(TypedExpr {
             ty,
             kind: ExprKind::MethodGet {
-                object: Box::new(object),
+                object: Box::new(object_expr),
                 method: method.1,
+                safe,
             },
             line: field.line,
         })

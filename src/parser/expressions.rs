@@ -203,11 +203,13 @@ impl<'src> Parser<'src> {
     fn call(&mut self) -> Result<Expr<'src>, ParserError<'src>> {
         let mut expr = self.primary()?;
         loop {
-            if match_token_type!(self, TokT::LeftParen) {
+            if match_token_type!(self, TokT::LeftParen, TokT::QuestionParen) {
+                let prev = self.previous_token.clone();
                 let args = self.arguments()?;
                 expr = Expr::Call {
                     callee: Box::new(expr),
                     arguments: args,
+                    safe: prev.token_type == TokT::QuestionParen,
                 };
             } else if match_token_type!(self, TokT::Dot) {
                 self.consume(TokT::Identifier, "Expected property name after '.'.")?;

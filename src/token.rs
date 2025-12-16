@@ -35,6 +35,7 @@ pub enum TokenType {
     Star,
     Question,         // ?
     QuestionDot,      // ?.
+    QuestionParen,    // ?(
     QuestionQuestion, // ??
 
     // One or two character tokens.
@@ -134,6 +135,7 @@ impl Display for TokenType {
             TokenType::Question => f.write_str("?"),
             TokenType::QuestionDot => f.write_str("?."),
             TokenType::QuestionQuestion => f.write_str("??"),
+            TokenType::QuestionParen => f.write_str("?("),
             TokenType::Nil => f.write_str("nil"),
         }
     }

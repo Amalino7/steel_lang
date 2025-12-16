@@ -70,6 +70,13 @@ impl Type {
         }
     }
 
+    pub fn wrap_in_optional(self) -> Type {
+        match self {
+            Type::Optional(_) => self,
+            _ => Type::Optional(Box::new(self)),
+        }
+    }
+
     pub fn get_name(&self) -> Option<&str> {
         match self {
             Type::Interface(name) => Some(name),
@@ -295,10 +302,12 @@ pub enum ExprKind {
     MethodGet {
         object: Box<TypedExpr>,
         method: ResolvedVar,
+        safe: bool,
     },
     Call {
         callee: Box<TypedExpr>, // 8 bytes
         arguments: Vec<TypedExpr>,
+        safe: bool,
     },
 }
 #[derive(Debug)]

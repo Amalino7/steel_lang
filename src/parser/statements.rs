@@ -120,12 +120,14 @@ impl<'src> Parser<'src> {
             TokT::Func => {
                 self.consume(TokT::Func, "Expected 'func' keyword.")?;
 
-                let optional = match_token_type!(self, TokT::Question);
+                let optional = match_token_type!(self, TokT::QuestionParen);
 
-                self.consume(
-                    TokT::LeftParen,
-                    "Expected 'paren' after func type definition",
-                )?;
+                if !optional {
+                    self.consume(
+                        TokT::LeftParen,
+                        "Expected 'paren' after func type definition",
+                    )?;
+                }
                 let mut argument_types = vec![];
 
                 if !check_token_type!(self, TokT::RightParen) {
