@@ -47,6 +47,13 @@ pub fn execute_source(source: &str, debug: bool, mode: &str, force: bool) {
     if !force && let Err(e) = &analysis {
         for err in e {
             println!("{}", err);
+            let error_line = err.get_line() as usize - 1;
+            source.lines().enumerate().for_each(|(i, line)| {
+                if error_line == i {
+                    println!("{}", line);
+                }
+            });
+            println!("======================");
         }
         return;
     }

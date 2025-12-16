@@ -1037,4 +1037,210 @@ mod tests {
             "#;
         execute_source(src, false, "run", true);
     }
+    #[test]
+    fn test_nil_safety() {
+        let src = r#"
+            let a: number? = nil;
+            assert(a, nil);
+            println(a);
+            let b:number = a ?? 0;
+
+            let c: boolean? = nil;
+            println(b);
+            assert(b, 0);
+            "#;
+        execute_source(src, false, "run", true);
+    }
+    #[test]
+    fn test_nil_access() {
+        let src = r#"
+            struct Point { x: number, y: number }
+            let p: Point? = Point { x: 1, y: 2 };
+            assert(p?.x, 1);
+            assert(p?.y, 2);
+            p = nil;
+
+            let num: number = p?.x ?? 0;
+
+            assert(num, 0);
+            assert(p?.x, nil);
+            assert(p?.y, nil);
+            println(p?.x);
+            "#;
+        execute_source(src, false, "run", true);
+    }
+    #[test]
+    fn test_linked_list() {
+        let src = r#"
+            struct Node {
+                value: number,
+                next: Node?,
+            }
+            let head = Node{value: 1, next: nil};
+            let tail = Node{value: 2, next: head};
+            head.next = tail;
+            assert(head.next?.value, 2);
+            head.next?.value = 3;
+            assert(head.next?.value, 3);
+            head.next = nil;
+            head.next?.value = 4;
+            assert(head.next?.value, nil);
+            "#;
+        execute_source(src, false, "run", true);
+    }
+    #[test]
+    fn test_unwrap() {
+        let src = r#"
+            struct Point { x: number, y: number }
+            let p: Point? = Point { x: 1, y: 2 };
+            let strong_p = p!;
+            p = nil;
+            assert(strong_p.x, 1);
+            "#;
+        execute_source(src, false, "run", true);
+    }
+    #[test]
+    fn test_complex_linked_list() {
+        let src = r#"
+            struct Node {
+                value: number,
+                next: Node?,
+            }
+            struct LinkedList {
+                size: number,
+                head: Node?,
+            }
+            impl LinkedList {
+                func new(): LinkedList {
+                    return LinkedList{size: 0, head: nil};
+                }
+                func get(self, index: number): number? {
+                    let head = self.head;
+                    while head != nil and index > 0 {
+                        index -= 1;
+                        head = head?.next;
+                    }
+                    return head?.value;
+                }
+                func set(self, index: number, value: number): void {
+                    let head = self.head;
+                    while head != nil and index > 0 {
+                        index -= 1;
+                        head = head?.next;
+                    }
+                    head?.value = value;
+                }
+                func push(self, value: number) {
+                    self.size += 1;
+                    let new_node = Node{value: value, next: nil};
+                    if self.head != nil {
+                        let head = self.head!;
+                        while head.next != nil {
+                            head = head.next!;
+                        }
+                        head.next = new_node;
+                    }
+                    else {
+                        self.head = new_node;
+                    }
+                }
+                func pop(self): number? {
+                    if self.size == 0 {
+                        return nil;
+                    }
+                    else if self.size == 1 {
+                        let value = self.head!.value;
+                        self.size -= 1;
+                        self.head = nil;
+                        return value;
+                    } else {
+                        self.size -= 1;
+                        let head = self.head;
+                        while head?.next?.next != nil {
+                            head = head!.next;
+                        }
+                        let value = head?.next?.value;
+                        head?.next = nil;
+                        return value;
+                    }
+                }
+                func get_size(self): number { return self.size; }
+            }
+
+            func print_list(list: LinkedList) {
+                print("[");
+                let i =0;
+                while i < list.get_size() {
+                    if i + 1 == list.get_size() {
+                        print(list.get(i));
+                    }
+                    else {
+                        print(list.get(i), ", ");
+                    }
+                    i+=1;
+                }
+                println("]");
+            }
+
+            let list = LinkedList.new();
+            list.push(1);
+            list.push(2);
+            list.push(3);
+            list.push(4);
+            print_list(list);
+            assert(list.pop(), 4);
+            list.set(1, 5);
+            assert(list.get(1), 5);
+            print_list(list);
+            assert(list.pop(), 3);
+            assert(list.pop(), 5);
+            print_list(list);
+            assert(list.pop(), 1);
+
+            print_list(list);
+            "#;
+        execute_source(src, false, "run", true);
+    }
+    #[test]
+    fn test_functions_on_nil() {
+        let src = r#"
+            struct Point { x: number, y: number }
+            impl Point {
+                func do_something(self): void {
+                    assert(1,2); // should never be called
+                }
+
+                func other(self): void {
+                    println("ok");
+                    assert(1,1);
+                }
+            }
+            let p: Point? = nil;
+            let i = 0;
+            let fun = p?.do_something;
+            fun?();
+
+            p?.do_something();
+            p = Point{x: 1, y: 2};
+
+            p?.other();
+            fun?();
+            "#;
+        execute_source(src, false, "run", true);
+    }
+    #[test]
+    fn test_nil_functions() {
+        let src = r#"
+
+            let fun: func?(): void = nil;
+            if fun?() != nil {
+                assert(1, 2);
+            }
+
+            func other(): void { println("Yellow");}
+            fun = other;
+            fun?();
+            "#;
+        execute_source(src, false, "run", true);
+    }
 }

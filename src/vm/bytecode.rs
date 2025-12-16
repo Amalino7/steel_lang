@@ -26,10 +26,14 @@ pub enum Opcode {
     GreaterNumber,
     LessNumber,
 
+    Nil,
     Pop,
     JumpIfFalse,
     Jump,
     JumpBack,
+    JumpIfNil,
+    JumpIfNotNil,
+    Unwrap,
 
     SetLocal,
     GetLocal,

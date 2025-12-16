@@ -119,10 +119,15 @@ impl<'src> Parser<'src> {
         match self.current_token.token_type {
             TokT::Func => {
                 self.consume(TokT::Func, "Expected 'func' keyword.")?;
-                self.consume(
-                    TokT::LeftParen,
-                    "Expected 'paren' after func type definition",
-                )?;
+
+                let optional = match_token_type!(self, TokT::QuestionParen);
+
+                if !optional {
+                    self.consume(
+                        TokT::LeftParen,
+                        "Expected 'paren' after func type definition",
+                    )?;
+                }
                 let mut argument_types = vec![];
 
                 if !check_token_type!(self, TokT::RightParen) {
@@ -149,18 +154,24 @@ impl<'src> Parser<'src> {
                         "void",
                     ))
                 };
-                Ok(TypeAst::Function {
+                let func_type = TypeAst::Function {
                     param_types: Box::from(argument_types),
                     return_type: Box::new(return_type),
-                })
+                };
+                if optional {
+                    Ok(TypeAst::Optional(Box::new(func_type)))
+                } else {
+                    Ok(func_type)
+                }
             }
             TokT::Identifier => {
-                self.consume(
-                    TokT::Identifier,
-                    "Expected the field of the return type of the function.",
-                )?;
-
-                Ok(TypeAst::Named(self.previous_token.clone()))
+                self.consume(TokT::Identifier, "Expected the name of the type.")?;
+                let type_name = TypeAst::Named(self.previous_token.clone());
+                if match_token_type!(self, TokT::Question) {
+                    Ok(TypeAst::Optional(Box::new(type_name)))
+                } else {
+                    Ok(type_name)
+                }
             }
             _ => Err(self.error_current("Expected the field of the return type of the function.")),
         }

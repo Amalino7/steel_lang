@@ -92,6 +92,7 @@ impl<'src> TypeChecker<'src> {
                     Literal::String(_) => Type::String,
                     Literal::Boolean(_) => Type::Boolean,
                     Literal::Void => Type::Void,
+                    Literal::Nil => Type::Nil,
                 };
 
                 Ok(TypedExpr {
@@ -128,6 +129,43 @@ impl<'src> TypeChecker<'src> {
                     Err(TypeCheckerError::UndefinedVariable {
                         name: identifier.lexeme.to_string(),
                         line: identifier.line,
+                    })
+                }
+            }
+            Expr::Logical {
+                operator,
+                left,
+                right,
+            } if operator.token_type == TokenType::QuestionQuestion => {
+                let left_typed = self.infer_expression(left)?;
+                let right_typed = self.infer_expression(right)?;
+                let left_inner = match &left_typed.ty {
+                    Type::Optional(inner) => inner.as_ref(),
+                    _ => {
+                        return Err(TypeCheckerError::TypeMismatch {
+                            expected: Type::Optional(Box::new(Type::Any)),
+                            found: left_typed.ty,
+                            line: operator.line,
+                            message: "Cannot coalesce non-optional type.",
+                        });
+                    }
+                };
+                if &right_typed.ty == left_inner {
+                    Ok(TypedExpr {
+                        ty: left_inner.clone(),
+                        kind: ExprKind::Logical {
+                            left: Box::new(left_typed),
+                            operator: LogicalOp::Coalesce,
+                            right: Box::new(right_typed),
+                        },
+                        line: operator.line,
+                    })
+                } else {
+                    Err(TypeCheckerError::TypeMismatch {
+                        expected: left_inner.clone(),
+                        found: right_typed.ty,
+                        line: operator.line,
+                        message: "Cannot coalesce different types.",
                     })
                 }
             }
@@ -176,10 +214,36 @@ impl<'src> TypeChecker<'src> {
                     line: operator.line,
                 })
             }
-            Expr::Call { callee, arguments } => {
+            Expr::Call {
+                callee,
+                arguments,
+                safe,
+            } => {
                 let callee_typed = self.infer_expression(callee)?;
 
-                if let Type::Function(func) = callee_typed.ty.clone() {
+                let safe = if let ExprKind::MethodGet { safe, .. } = callee_typed.kind {
+                    safe
+                } else {
+                    *safe
+                };
+
+                let lookup_type = if safe {
+                    match &callee_typed.ty {
+                        Type::Optional(inner) => inner.as_ref().clone(),
+                        _ => {
+                            return Err(TypeCheckerError::TypeMismatch {
+                                expected: Type::Optional(Box::new(Type::Any)),
+                                found: callee_typed.ty.clone(),
+                                line: callee_typed.line,
+                                message: "Cannot use safe of non-optional type. Use simply '()'",
+                            });
+                        }
+                    }
+                } else {
+                    callee_typed.ty.clone()
+                };
+
+                if let Type::Function(func) = lookup_type {
                     // Check arity
                     if (func.param_types.len() != arguments.len() && !func.is_vararg)
                         || (func.is_vararg && arguments.len() < func.param_types.len())
@@ -222,11 +286,12 @@ impl<'src> TypeChecker<'src> {
                     }
 
                     Ok(TypedExpr {
-                        ty: func.return_type.clone(),
+                        ty: func.return_type.clone().wrap_in_optional(),
                         line: callee_typed.line,
                         kind: ExprKind::Call {
                             callee: Box::new(callee_typed),
                             arguments: typed_args,
+                            safe,
                         },
                     })
                 } else {
@@ -292,7 +357,12 @@ impl<'src> TypeChecker<'src> {
                     line: name.line,
                 })
             }
-            Expr::Get { object, field } => {
+            Expr::Get {
+                object,
+                field,
+                safe,
+            } => {
+                // Static method check
                 if let Expr::Variable { name } = object.as_ref() {
                     if self.sys.does_type_exist(name.lexeme) {
                         return self.handle_static_method_access(name, field);
@@ -301,29 +371,52 @@ impl<'src> TypeChecker<'src> {
 
                 let object_typed = self.infer_expression(object)?;
 
-                match object_typed.ty.clone() {
-                    Type::Struct(struct_def) => {
+                // Optional handling
+                let lookup_type = if *safe {
+                    match &object_typed.ty {
+                        Type::Optional(inner) => inner.as_ref().clone(),
+                        _ => {
+                            return Err(TypeCheckerError::TypeMismatch {
+                                expected: Type::Optional(Box::new(Type::Any)),
+                                found: object_typed.ty.clone(),
+                                line: field.line,
+                                message: "Cannot access safe property of non-optional type. Use simply '.'",
+                            });
+                        }
+                    }
+                } else {
+                    object_typed.ty.clone()
+                };
+
+                // 3. Perform Lookup & Create Inner Expression
+                let mut result_expr = match &lookup_type {
+                    Type::Struct(struct_name) => {
                         let struct_def = self
                             .sys
-                            .get_struct(&struct_def)
+                            .get_struct(struct_name)
                             .expect("Should have errored earlier");
 
-                        let field_type = struct_def.fields.get(field.lexeme);
-                        match field_type {
-                            None => self.handle_instance_method(field, object_typed),
+                        match struct_def.fields.get(field.lexeme) {
                             Some((idx, field_type)) => Ok(TypedExpr {
                                 ty: field_type.clone(),
                                 kind: ExprKind::GetField {
                                     object: Box::new(object_typed),
                                     index: *idx as u8,
+                                    safe: *safe,
                                 },
                                 line: field.line,
                             }),
+                            None => self.handle_instance_method(
+                                field,
+                                &lookup_type,
+                                object_typed,
+                                *safe,
+                            ),
                         }
                     }
 
                     Type::Interface(iface_name) => {
-                        let iface = self.sys.get_interface(&iface_name).ok_or(
+                        let iface = self.sys.get_interface(iface_name).ok_or(
                             TypeCheckerError::UndefinedType {
                                 name: iface_name.to_string(),
                                 line: field.line,
@@ -347,8 +440,6 @@ impl<'src> TypeChecker<'src> {
                                         method_name: field.lexeme.to_string(),
                                     });
                                 }
-
-                                // For interface calls, receiver is implicit (comes from InterfaceObj.data)
                                 let params = func.param_types.iter().skip(1).cloned().collect();
                                 Type::new_function(params, func.return_type.clone())
                             }
@@ -360,22 +451,48 @@ impl<'src> TypeChecker<'src> {
                             kind: ExprKind::InterfaceMethodGet {
                                 object: Box::new(object_typed),
                                 method_index: *idx as u8,
+                                safe: *safe,
                             },
                             line: field.line,
                         })
                     }
+                    // Fallback for primitives
+                    _ => self.handle_instance_method(field, &lookup_type, object_typed, *safe),
+                }?;
 
-                    _ => self.handle_instance_method(field, object_typed),
+                // 4. Wrap in Optional if necessary
+                if *safe {
+                    result_expr.ty = result_expr.ty.wrap_in_optional();
                 }
+
+                Ok(result_expr)
             }
             Expr::Set {
                 object,
                 field,
                 value,
+                safe,
             } => {
                 let object = self.infer_expression(object)?;
                 let value = self.infer_expression(value)?;
-                if let Type::Struct(struct_def) = object.ty.clone() {
+
+                let type_ = if *safe {
+                    match &object.ty {
+                        Type::Optional(inner) => inner.as_ref().clone(),
+                        _ => {
+                            return Err(TypeCheckerError::TypeMismatch {
+                                expected: Type::Optional(Box::new(Type::Any)),
+                                found: object.ty.clone(),
+                                line: field.line,
+                                message: "Cannot access safe property of non-optional type. Use simply '.'",
+                            });
+                        }
+                    }
+                } else {
+                    object.ty.clone()
+                };
+
+                if let Type::Struct(struct_def) = type_ {
                     let struct_def = self
                         .sys
                         .get_struct(&struct_def)
@@ -387,6 +504,7 @@ impl<'src> TypeChecker<'src> {
                     Ok(TypedExpr {
                         ty: field_type,
                         kind: ExprKind::SetField {
+                            safe: *safe,
                             object: Box::new(object),
                             index: field_idx as u8,
                             value: Box::new(value),
@@ -395,9 +513,29 @@ impl<'src> TypeChecker<'src> {
                     })
                 } else {
                     Err(TypeCheckerError::TypeHasNoFields {
-                        found: object.ty.clone(),
+                        found: type_,
                         line: object.line,
                     })
+                }
+            }
+
+            Expr::ForceUnwrap { expression, line } => {
+                let expr_typed = self.infer_expression(expression)?;
+                match expr_typed.ty.clone() {
+                    Type::Optional(inner) => Ok(TypedExpr {
+                        ty: *inner,
+                        kind: ExprKind::Unary {
+                            operator: UnaryOp::Unwrap,
+                            operand: Box::new(expr_typed),
+                        },
+                        line: *line,
+                    }),
+                    _ => Err(TypeCheckerError::TypeMismatch {
+                        expected: Type::Optional(Box::new(Type::Any)),
+                        found: expr_typed.ty,
+                        line: *line,
+                        message: "Cannot force unwrap non-optional type.",
+                    }),
                 }
             }
         }
@@ -417,16 +555,9 @@ impl<'src> TypeChecker<'src> {
                 line: field.line,
             }),
             Some((id, field_type)) => {
-                if field_type == &field_value.ty {
-                    Ok((*id, field_type.clone()))
-                } else {
-                    Err(TypeCheckerError::TypeMismatch {
-                        expected: field_type.clone(),
-                        found: field_value.ty.clone(),
-                        line: field.line,
-                        message: "Expected the same type but found something else.",
-                    })
-                }
+                self.sys
+                    .verify_assignment(field_type, field_value.clone(), field.line)?;
+                Ok((*id, field_type.clone()))
             }
         }
     }
@@ -543,7 +674,7 @@ impl<'src> TypeChecker<'src> {
                 }
             }
             TokenType::EqualEqual | TokenType::BangEqual => {
-                if left_type == right_type {
+                if self.sys.can_compare(&left_type, &right_type) {
                     let op = match left_type {
                         Type::Number => BinaryOp::EqualEqualNumber,
                         Type::String => BinaryOp::EqualEqualString,
@@ -615,38 +746,39 @@ impl<'src> TypeChecker<'src> {
     fn handle_instance_method(
         &mut self,
         field: &Token,
-        object: TypedExpr,
+        lookup_type: &Type,
+        object_expr: TypedExpr,
+        safe: bool,
     ) -> Result<TypedExpr, TypeCheckerError> {
-        let type_name = object
-            .ty
+        let type_name = lookup_type
             .get_name()
             .ok_or(TypeCheckerError::TypeHasNoFields {
-                found: object.ty.clone(),
-                line: object.line,
+                found: lookup_type.clone(),
+                line: object_expr.line,
             })?;
+
         let mangled_name = format!("{}.{}", type_name, field.lexeme);
+
         let method =
             self.scopes
                 .lookup(mangled_name.as_str())
                 .ok_or(TypeCheckerError::UndefinedMethod {
                     line: field.line,
-                    found: Type::Number,
+                    found: lookup_type.clone(),
                     method_name: field.lexeme.to_string(),
                 })?;
 
-        // Edge case -> static functions
         let ty = match &method.0.type_info {
             Type::Function(func) => {
                 let return_type = func.return_type.clone();
 
-                // light requirements
-                if func.param_types.is_empty() || func.param_types[0] != object.ty {
+                if func.param_types.is_empty() || &func.param_types[0] != lookup_type {
                     return Err(TypeCheckerError::StaticMethodOnInstance {
                         method_name: field.lexeme.to_string(),
                         line: field.line,
                     });
                 }
-                // Stronger syntax to be decided
+
                 if func.is_static {
                     return Err(TypeCheckerError::StaticMethodOnInstance {
                         method_name: field.lexeme.to_string(),
@@ -654,12 +786,7 @@ impl<'src> TypeChecker<'src> {
                     });
                 }
 
-                let params = func
-                    .param_types
-                    .iter()
-                    .skip(1)
-                    .map(|ty| ty.clone())
-                    .collect();
+                let params = func.param_types.iter().skip(1).cloned().collect();
                 Type::new_function(params, return_type)
             }
             ty => ty.clone(),
@@ -668,8 +795,9 @@ impl<'src> TypeChecker<'src> {
         Ok(TypedExpr {
             ty,
             kind: ExprKind::MethodGet {
-                object: Box::new(object),
+                object: Box::new(object_expr),
                 method: method.1,
+                safe,
             },
             line: field.line,
         })

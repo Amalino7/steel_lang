@@ -82,6 +82,32 @@ pub enum TypeCheckerError {
         line: u32,
     },
 }
+
+impl TypeCheckerError {
+    pub fn get_line(&self) -> u32 {
+        match self {
+            TypeCheckerError::UndefinedType { line, .. } => *line,
+            TypeCheckerError::UndefinedVariable { line, .. } => *line,
+            TypeCheckerError::CalleeIsNotAFunction { line, .. } => *line,
+            TypeCheckerError::TypeMismatch { line, .. } => *line,
+            TypeCheckerError::IncorrectArity { line, .. } => *line,
+            TypeCheckerError::InvalidReturnOutsideFunction { line, .. } => *line,
+            TypeCheckerError::FunctionParameterTypeMismatch { line, .. } => *line,
+            TypeCheckerError::UnreachableCode { line, .. } => *line,
+            TypeCheckerError::MissingReturnStatement { line, .. } => *line,
+            TypeCheckerError::AssignmentToCapturedVariable { line, .. } => *line,
+            TypeCheckerError::TypeHasNoFields { line, .. } => *line,
+            TypeCheckerError::UndefinedField { line, .. } => *line,
+            TypeCheckerError::MissingField { line, .. } => *line,
+            TypeCheckerError::StructOutsideOfGlobalScope { line, .. } => *line,
+            TypeCheckerError::UndefinedMethod { line, .. } => *line,
+            TypeCheckerError::StaticMethodOnInstance { line, .. } => *line,
+            TypeCheckerError::Redeclaration { line, .. } => *line,
+            TypeCheckerError::DoesNotImplementInterface { line, .. } => *line,
+        }
+    }
+}
+
 impl std::fmt::Display for TypeCheckerError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
