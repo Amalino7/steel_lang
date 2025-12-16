@@ -223,6 +223,8 @@ impl<'src> TypeChecker<'src> {
 
                 let safe = if let ExprKind::MethodGet { safe, .. } = callee_typed.kind {
                     safe
+                } else if let ExprKind::InterfaceMethodGet { safe, .. } = callee_typed.kind {
+                    safe
                 } else {
                     *safe
                 };
@@ -308,6 +310,7 @@ impl<'src> TypeChecker<'src> {
                     .ok_or(TypeCheckerError::UndefinedType {
                         name: name.lexeme.to_string(),
                         line: name.line,
+                        message: "Expected a struct type here.",
                     })?
                     .clone();
 
@@ -420,6 +423,7 @@ impl<'src> TypeChecker<'src> {
                             TypeCheckerError::UndefinedType {
                                 name: iface_name.to_string(),
                                 line: field.line,
+                                message: "Expected an interface type here.",
                             },
                         )?;
 

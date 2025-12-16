@@ -1243,4 +1243,20 @@ mod tests {
             "#;
         execute_source(src, false, "run", true);
     }
+    #[test]
+    fn test_nil_interface() {
+        let src = r#"
+            interface Printable {
+                func print(self): void;
+            }
+            impl number : Printable {
+                func print(self): void { println(self); }
+            }
+            let p: Printable? = nil;
+            p?.print();
+            p = 10;
+            p?.print();
+            "#;
+        execute_source(src, false, "run", true);
+    }
 }

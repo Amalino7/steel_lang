@@ -66,6 +66,7 @@ impl Type {
             Err(TypeCheckerError::UndefinedType {
                 name: name.to_string(),
                 line,
+                message: "Could not find type with that name.",
             })
         }
     }

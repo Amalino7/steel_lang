@@ -86,11 +86,10 @@ impl<'src> TypeChecker<'src> {
                 // generate vtables
                 let mut vtables = vec![];
                 for interface in interfaces {
-                    // check if it implements it
-                    let interface_type = self
-                        .sys
-                        .get_interface(interface.lexeme)
-                        .expect("Should have errored earlier");
+                    // check if interface exists
+                    let Some(interface_type) = self.sys.get_interface(interface.lexeme) else {
+                        continue;
+                    };
 
                     let mut vtable = std::iter::repeat(ResolvedVar::Local(0))
                         .take(interface_type.methods.len())
