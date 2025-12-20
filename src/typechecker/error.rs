@@ -5,6 +5,7 @@ pub enum TypeCheckerError {
     UndefinedType {
         name: String,
         line: u32,
+        message: &'static str,
     },
     UndefinedVariable {
         name: String,
@@ -177,8 +178,16 @@ impl std::fmt::Display for TypeCheckerError {
                     line, name
                 )
             }
-            TypeCheckerError::UndefinedType { name, line } => {
-                write!(f, "[line {}] Error: Undefined type '{}'.", line, name)
+            TypeCheckerError::UndefinedType {
+                name,
+                line,
+                message,
+            } => {
+                write!(
+                    f,
+                    "[line {}] Error: Undefined type '{}'.\n {}",
+                    line, name, message
+                )
             }
             TypeCheckerError::TypeHasNoFields { found, line } => {
                 write!(f, "[line {}] Error: Type '{}' has no fields.", line, found)

@@ -86,11 +86,10 @@ impl<'src> TypeChecker<'src> {
                 // generate vtables
                 let mut vtables = vec![];
                 for interface in interfaces {
-                    // check if it implements it
-                    let interface_type = self
-                        .sys
-                        .get_interface(interface.lexeme)
-                        .expect("Should have errored earlier");
+                    // check if interface exists
+                    let Some(interface_type) = self.sys.get_interface(interface.lexeme) else {
+                        continue;
+                    };
 
                     let mut vtable = std::iter::repeat(ResolvedVar::Local(0))
                         .take(interface_type.methods.len())
@@ -159,27 +158,56 @@ impl<'src> TypeChecker<'src> {
                 then_branch,
                 else_branch,
             } => {
-                let cond_type = self.infer_expression(condition)?;
-                let then_branch = self.check_stmt(then_branch)?;
-                let else_branch = if let Some(else_branch) = else_branch {
-                    Some(Box::new(self.check_stmt(else_branch)?))
-                } else {
-                    None
-                };
-                if cond_type.ty != Type::Boolean {
+                let cond_typed = self.infer_expression(condition)?;
+
+                if cond_typed.ty != Type::Boolean {
                     return Err(TypeCheckerError::TypeMismatch {
                         expected: Type::Boolean,
-                        found: cond_type.ty,
+                        found: cond_typed.ty,
                         line: condition.get_line(),
                         message: "If condition must be a boolean.",
                     });
                 }
 
+                let refinements = self.analyze_condition(&cond_typed);
+                self.scopes.begin_scope(ScopeType::Block);
+                for (name, ty) in refinements.true_path.iter() {
+                    self.scopes.refine(name, ty.clone());
+                }
+                let then_branch_typed = self.check_stmt(then_branch)?;
+                self.scopes.end_scope();
+
+                let else_branch_typed = if let Some(else_branch) = else_branch {
+                    self.scopes.begin_scope(ScopeType::Block);
+                    for (name, ty) in refinements.false_path.iter() {
+                        self.scopes.refine(name, ty.clone());
+                    }
+                    let stmt = self.check_stmt(else_branch)?;
+                    self.scopes.end_scope();
+                    Some(Box::new(stmt))
+                } else {
+                    None
+                };
+
+                // Guard logic
+                if self.stmt_returns(&then_branch_typed)? {
+                    for (name, ty) in refinements.false_path {
+                        self.scopes.refine(&name, ty);
+                    }
+                }
+                if let Some(else_branch_typed) = &else_branch_typed {
+                    if self.stmt_returns(&else_branch_typed)? {
+                        for (name, ty) in refinements.true_path {
+                            self.scopes.refine(&name, ty);
+                        }
+                    }
+                }
+
                 Ok(TypedStmt {
                     kind: StmtKind::If {
-                        condition: cond_type,
-                        then_branch: Box::new(then_branch),
-                        else_branch,
+                        condition: cond_typed,
+                        then_branch: Box::new(then_branch_typed),
+                        else_branch: else_branch_typed,
                     },
                     type_info: Type::Void,
                     line: condition.get_line(),
