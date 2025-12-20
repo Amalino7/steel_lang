@@ -17,7 +17,21 @@ impl<'src> TypeChecker<'src> {
                     let type_info = Type::from_ast(type_info, &self.sys);
                     self.declare_function(name.lexeme.into(), type_info);
                 }
-                Stmt::Impl { name, methods, .. } => {
+                Stmt::Impl {
+                    interfaces,
+                    name,
+                    methods,
+                } => {
+                    for interface in interfaces {
+                        let interface_type = self.sys.get_interface(interface.lexeme);
+                        if interface_type.is_none() {
+                            self.errors.push(TypeCheckerError::UndefinedType {
+                                name: interface.lexeme.to_string(),
+                                line: interface.line,
+                                message: "Interface does not exist.",
+                            });
+                        }
+                    }
                     for method in methods {
                         match method {
                             Stmt::Function {

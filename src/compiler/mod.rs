@@ -294,7 +294,7 @@ impl<'a> Compiler<'a> {
                     UnaryOp::Unwrap => self.emit_op(Opcode::Unwrap, line),
                 }
             }
-            ExprKind::GetVar(resolved) => self.emit_var_access(resolved, line),
+            ExprKind::GetVar(resolved, _) => self.emit_var_access(resolved, line),
             ExprKind::Assign { target, value } => {
                 self.compile_expr(value);
 
