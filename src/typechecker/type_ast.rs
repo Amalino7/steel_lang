@@ -215,21 +215,21 @@ pub struct TypedExpr {
     pub kind: ExprKind,
     pub line: u32,
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum UnaryOp {
     Negate,
     Not,
     Unwrap,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum LogicalOp {
     Or,
     And,
     Coalesce,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum BinaryOp {
     Concat,
     // Can add more specific operators later
@@ -254,7 +254,7 @@ pub enum BinaryOp {
 #[derive(Debug, Clone)]
 pub enum ExprKind {
     Literal(Literal),
-    GetVar(ResolvedVar),
+    GetVar(ResolvedVar, Symbol),
     GetField {
         object: Box<TypedExpr>,
         index: u8,

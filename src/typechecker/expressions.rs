@@ -3,6 +3,7 @@ use crate::parser::ast::{Expr, Literal};
 use crate::token::{Token, TokenType};
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::error::TypeCheckerError::AssignmentToCapturedVariable;
+use crate::typechecker::scope_manager::ScopeType;
 use crate::typechecker::type_ast::{
     BinaryOp, ExprKind, LogicalOp, StructType, Type, TypedExpr, UnaryOp,
 };
@@ -75,7 +76,7 @@ impl<'src> TypeChecker<'src> {
                 if let Some((ctx, resolved)) = var {
                     Ok(TypedExpr {
                         ty: ctx.type_info.clone(),
-                        kind: ExprKind::GetVar(resolved),
+                        kind: ExprKind::GetVar(resolved, ctx.name.clone()),
                         line: name.line,
                     })
                 } else {
@@ -175,7 +176,23 @@ impl<'src> TypeChecker<'src> {
                 right,
             } => {
                 let left_typed = self.infer_expression(left)?;
+                let refinements = self.analyze_condition(&left_typed);
+
+                self.scopes.begin_scope(ScopeType::Block);
+
+                let refinements = if TokenType::And == operator.token_type {
+                    refinements.true_path
+                } else if TokenType::Or == operator.token_type {
+                    refinements.false_path
+                } else {
+                    unreachable!("Invalid logical operator");
+                };
+
+                for (name, ty) in refinements {
+                    self.scopes.refine(&name, ty);
+                }
                 let right_typed = self.infer_expression(right)?;
+                self.scopes.end_scope();
 
                 let left_type = left_typed.ty.clone();
                 let right_type = right_typed.ty.clone();
@@ -286,9 +303,14 @@ impl<'src> TypeChecker<'src> {
                             typed_args.push(arg_typed);
                         }
                     }
+                    let return_type = if safe {
+                        func.return_type.clone().wrap_in_optional()
+                    } else {
+                        func.return_type.clone()
+                    };
 
                     Ok(TypedExpr {
-                        ty: func.return_type.clone().wrap_in_optional(),
+                        ty: return_type,
                         line: callee_typed.line,
                         kind: ExprKind::Call {
                             callee: Box::new(callee_typed),
@@ -742,7 +764,7 @@ impl<'src> TypeChecker<'src> {
 
         Ok(TypedExpr {
             ty: ctx.type_info.clone(),
-            kind: ExprKind::GetVar(resolved_var),
+            kind: ExprKind::GetVar(resolved_var, ctx.name.clone()),
             line: method_name.line,
         })
     }
