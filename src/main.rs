@@ -90,9 +90,7 @@ pub fn execute_source(source: &str, debug: bool, mode: &str, force: bool) {
     let mut vm = VM::new(global_count as usize, gc);
     vm.set_native_functions(natives);
 
-    let result = vm.run(func);
-
-    println!("Result: {}", result);
+    let _ = vm.run(func);
 }
 fn main() {
     let source_path = args().nth(1).expect("No source file provided.");
