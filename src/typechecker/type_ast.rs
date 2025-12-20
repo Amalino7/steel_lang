@@ -66,7 +66,6 @@ impl Type {
             Err(TypeCheckerError::UndefinedType {
                 name: name.to_string(),
                 line,
-                message: "Could not find type with that name.",
             })
         }
     }
@@ -215,21 +214,21 @@ pub struct TypedExpr {
     pub kind: ExprKind,
     pub line: u32,
 }
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum UnaryOp {
     Negate,
     Not,
     Unwrap,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum LogicalOp {
     Or,
     And,
     Coalesce,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum BinaryOp {
     Concat,
     // Can add more specific operators later
@@ -254,7 +253,7 @@ pub enum BinaryOp {
 #[derive(Debug, Clone)]
 pub enum ExprKind {
     Literal(Literal),
-    GetVar(ResolvedVar, Symbol),
+    GetVar(ResolvedVar),
     GetField {
         object: Box<TypedExpr>,
         index: u8,

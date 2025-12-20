@@ -55,7 +55,7 @@ impl<'src> TypeChecker<'src> {
                 .try_for_each(|method| self.check_stmt_returns(method)),
         }
     }
-    pub fn stmt_returns(&mut self, stmt: &TypedStmt) -> Result<bool, TypeCheckerError> {
+    fn stmt_returns(&mut self, stmt: &TypedStmt) -> Result<bool, TypeCheckerError> {
         Ok(match &stmt.kind {
             StmtKind::Expression(_) => false,
             StmtKind::Let { .. } => false,
