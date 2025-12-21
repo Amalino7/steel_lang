@@ -156,6 +156,21 @@ pub fn disassemble_instruction(
             offset += 1;
             println!("GetInterfaceMethod {}", bytecode[offset]);
         }
+        Opcode::EnumAlloc => {
+            offset += 2;
+            println!(
+                "EnumAlloc size{} tag{}",
+                bytecode[offset - 1],
+                bytecode[offset]
+            );
+        }
+        Opcode::DestructureEnum => {
+            println!("DestructureEnum");
+        }
+        Opcode::CheckEnumTag => {
+            offset += 1;
+            println!("CheckEnumTag {}", bytecode[offset]);
+        }
         Opcode::Nil => println!("Nil"),
         Opcode::Unwrap => println!("Unwrap"),
     };

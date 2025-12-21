@@ -82,6 +82,10 @@ pub enum TypeCheckerError {
         interface: String,
         line: u32,
     },
+    UncoveredPattern {
+        variant: String,
+        line: u32,
+    },
 }
 
 impl TypeCheckerError {
@@ -105,6 +109,7 @@ impl TypeCheckerError {
             TypeCheckerError::StaticMethodOnInstance { line, .. } => *line,
             TypeCheckerError::Redeclaration { line, .. } => *line,
             TypeCheckerError::DoesNotImplementInterface { line, .. } => *line,
+            TypeCheckerError::UncoveredPattern { line, .. } => *line,
         }
     }
 }
@@ -257,6 +262,13 @@ impl std::fmt::Display for TypeCheckerError {
                     line,
                     interface,
                     missing_methods.join(", ")
+                )
+            }
+            TypeCheckerError::UncoveredPattern { variant, line } => {
+                write!(
+                    f,
+                    "[line {}] Error: Uncovered pattern matching variant '{}'.",
+                    line, variant
                 )
             }
         }

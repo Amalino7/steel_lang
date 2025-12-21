@@ -1,4 +1,6 @@
-use crate::vm::value::{BoundMethod, Closure, Function, Instance, InterfaceObj, VTable, Value};
+use crate::vm::value::{
+    BoundMethod, Closure, EnumVariant, Function, Instance, InterfaceObj, VTable, Value,
+};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::collections::VecDeque;
 use std::fmt::{Debug, Formatter};
@@ -159,6 +161,9 @@ impl GarbageCollector {
             Value::InterfaceObj(interface_obj) => {
                 self.mark(*interface_obj);
             }
+            Value::Enum(enum_variant) => {
+                self.mark(*enum_variant);
+            }
         }
     }
 
@@ -262,6 +267,15 @@ impl Trace for VTable {
     fn trace(&self, gc: &mut GarbageCollector) {
         for method in self.methods.iter() {
             gc.mark(*method);
+        }
+    }
+}
+
+impl Trace for EnumVariant {
+    fn trace(&self, gc: &mut GarbageCollector) {
+        gc.mark_value(&self.enum_name);
+        for payload in self.payload.iter() {
+            gc.mark_value(payload);
         }
     }
 }

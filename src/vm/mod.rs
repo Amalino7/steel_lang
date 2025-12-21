@@ -3,7 +3,9 @@ use crate::vm::byte_utils::{byte_to_opcode, read_16_bytes, read_24_bytes};
 use crate::vm::bytecode::Opcode;
 use crate::vm::gc::{GarbageCollector, Gc};
 use crate::vm::stack::Stack;
-use crate::vm::value::{BoundMethod, Closure, Function, Instance, InterfaceObj, VTable, Value};
+use crate::vm::value::{
+    BoundMethod, Closure, EnumVariant, Function, Instance, InterfaceObj, VTable, Value,
+};
 use std::process::exit;
 
 mod byte_utils;
@@ -398,6 +400,48 @@ impl VM {
                     let instance = self.alloc_struct(Instance { name, fields }, &current_frame);
                     self.stack.push(instance);
                 }
+                Opcode::EnumAlloc => {
+                    let field_count = chunk.instructions[current_frame.ip] as usize;
+                    current_frame.ip += 1;
+                    let tag = chunk.instructions[current_frame.ip] as usize;
+                    current_frame.ip += 1;
+                    let mut values = Vec::with_capacity(field_count);
+                    for _ in 0..field_count {
+                        values.push(self.stack.pop());
+                    }
+                    let name = self.stack.pop();
+                    let enum_variant = self.alloc_enum(
+                        EnumVariant {
+                            tag,
+                            payload: values,
+                            enum_name: name,
+                        },
+                        &current_frame,
+                    );
+                    self.stack.push(enum_variant);
+                }
+                Opcode::DestructureEnum => {
+                    let enumeration = self.stack.pop();
+                    match enumeration {
+                        Value::Enum(enum_obj) => {
+                            for field in enum_obj.payload.iter() {
+                                self.stack.push(*field);
+                            }
+                        }
+                        _ => unreachable!("Expected enum on stack"),
+                    }
+                }
+                Opcode::CheckEnumTag => {
+                    let enumeration = self.stack.get_top();
+                    let tag_id = chunk.instructions[current_frame.ip] as usize;
+                    current_frame.ip += 1;
+                    match enumeration {
+                        Value::Enum(enum_obj) => {
+                            self.stack.push(Value::Boolean(enum_obj.tag == tag_id));
+                        }
+                        _ => unreachable!("Expected enum on stack"),
+                    }
+                }
 
                 Opcode::GetField => {
                     let index = chunk.instructions[current_frame.ip] as usize;
@@ -491,6 +535,16 @@ impl VM {
                 }
             }
         }
+    }
+
+    fn alloc_enum(&mut self, enumeration: EnumVariant, call_frame: &CallFrame) -> Value {
+        let enumeration = self.gc.alloc(enumeration);
+        if self.gc.should_collect() {
+            self.gc.mark(enumeration);
+            self.mark_roots(call_frame);
+            self.gc.collect();
+        }
+        Value::Enum(enumeration)
     }
 
     fn alloc_struct(&mut self, instance: Instance, current_frame: &CallFrame) -> Value {

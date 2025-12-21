@@ -1,5 +1,7 @@
 use crate::typechecker::error::TypeCheckerError;
-use crate::typechecker::type_ast::{ExprKind, InterfaceType, StructType, Type, TypedExpr};
+use crate::typechecker::type_ast::{
+    EnumType, ExprKind, InterfaceType, StructType, Type, TypedExpr,
+};
 use crate::typechecker::Symbol;
 use std::collections::HashMap;
 
@@ -7,6 +9,7 @@ pub struct TypeSystem {
     structs: HashMap<Symbol, StructType>,
     interfaces: HashMap<Symbol, InterfaceType>,
     impls: HashMap<(Symbol, Symbol), u32>,
+    enums: HashMap<Symbol, EnumType>,
 }
 
 impl TypeSystem {
@@ -15,6 +18,7 @@ impl TypeSystem {
             structs: HashMap::new(),
             interfaces: HashMap::new(),
             impls: HashMap::new(),
+            enums: HashMap::new(),
         }
     }
 
@@ -27,6 +31,20 @@ impl TypeSystem {
                 fields: HashMap::new(),
             },
         );
+    }
+
+    pub fn declare_enum(&mut self, name: Symbol) {
+        self.enums.insert(
+            name.clone(),
+            EnumType {
+                name,
+                variants: HashMap::new(),
+            },
+        );
+    }
+
+    pub fn define_enum(&mut self, name: &str, variants: HashMap<String, (usize, Vec<Type>)>) {
+        self.enums.get_mut(name).map(|e| e.variants = variants);
     }
 
     pub fn declare_interface(&mut self, name: Symbol) {
@@ -60,9 +78,17 @@ impl TypeSystem {
         self.interfaces.get(name)
     }
 
+    pub fn get_enum(&self, name: &str) -> Option<&EnumType> {
+        self.enums.get(name)
+    }
+
+    pub fn does_enum_exist(&self, name: &str) -> bool {
+        self.enums.contains_key(name)
+    }
     pub fn does_type_exist(&self, name: &str) -> bool {
         if self.structs.contains_key(name)
             || self.interfaces.contains_key(name)
+            || self.enums.contains_key(name)
             || name == "string"
             || name == "number"
             || name == "boolean"

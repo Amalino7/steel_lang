@@ -238,6 +238,51 @@ impl<'src> TypeChecker<'src> {
             } => {
                 let callee_typed = self.infer_expression(callee)?;
 
+                // Enum logic
+                if let ExprKind::EnumConstructor {
+                    enum_name,
+                    variant_idx,
+                } = &callee_typed.kind
+                {
+                    if let Type::Function(func) = &callee_typed.ty {
+                        if func.param_types.len() != arguments.len() {
+                            return Err(TypeCheckerError::IncorrectArity {
+                                callee_name: "Enum Variant Constructor".to_string(),
+                                expected: func.param_types.len(),
+                                found: arguments.len(),
+                                line: callee_typed.line,
+                            });
+                        }
+
+                        let mut typed_args = Vec::with_capacity(arguments.len());
+                        for (i, arg) in arguments.iter().enumerate() {
+                            let arg_typed = self.infer_expression(arg)?;
+                            let expected_type = &func.param_types[i];
+
+                            let coerced_arg = self
+                                .sys
+                                .verify_assignment(expected_type, arg_typed, callee_typed.line)
+                                .map_err(|_| TypeCheckerError::FunctionParameterTypeMismatch {
+                                    expected: expected_type.clone(),
+                                    found: self.infer_expression(arg).unwrap().ty,
+                                    param_index: i,
+                                    line: callee_typed.line,
+                                })?;
+                            typed_args.push(coerced_arg);
+                        }
+
+                        return Ok(TypedExpr {
+                            ty: func.return_type.clone(),
+                            kind: ExprKind::EnumInit {
+                                enum_name: enum_name.clone(),
+                                variant_idx: *variant_idx,
+                                args: typed_args,
+                            },
+                            line: callee_typed.line,
+                        });
+                    }
+                }
+
                 let safe = if let ExprKind::MethodGet { safe, .. } = callee_typed.kind {
                     safe
                 } else if let ExprKind::InterfaceMethodGet { safe, .. } = callee_typed.kind {
@@ -389,6 +434,10 @@ impl<'src> TypeChecker<'src> {
             } => {
                 // Static method check
                 if let Expr::Variable { name } = object.as_ref() {
+                    if self.sys.does_enum_exist(name.lexeme) {
+                        return self.handle_enum_access(name, field);
+                    }
+
                     if self.sys.does_type_exist(name.lexeme) {
                         return self.handle_static_method_access(name, field);
                     }
@@ -741,6 +790,56 @@ impl<'src> TypeChecker<'src> {
             _ => {
                 unreachable!("Ast should be checked for invalid operators before this point.")
             }
+        }
+    }
+
+    fn handle_enum_access(
+        &mut self,
+        type_name: &Token,
+        variant_name: &Token,
+    ) -> Result<TypedExpr, TypeCheckerError> {
+        let enum_def =
+            self.sys
+                .get_enum(type_name.lexeme)
+                .ok_or(TypeCheckerError::UndefinedType {
+                    name: type_name.lexeme.to_string(),
+                    line: type_name.line,
+                    message: "Expected an enum type.",
+                })?;
+
+        let (idx, variant_types) =
+            enum_def
+                .variants
+                .get(variant_name.lexeme)
+                .ok_or(TypeCheckerError::UndefinedField {
+                    struct_name: enum_def.name.to_string(),
+                    field_name: variant_name.lexeme.to_string(),
+                    line: variant_name.line,
+                })?;
+
+        // Handle Type.Variant and Type.Variant(arg..)
+        if variant_types.is_empty() {
+            Ok(TypedExpr {
+                ty: Type::Enum(enum_def.name.clone()),
+                kind: ExprKind::EnumInit {
+                    enum_name: enum_def.name.clone(),
+                    variant_idx: *idx,
+                    args: vec![],
+                },
+                line: variant_name.line,
+            })
+        } else {
+            let func_type =
+                Type::new_function(variant_types.clone(), Type::Enum(enum_def.name.clone()));
+
+            Ok(TypedExpr {
+                ty: func_type,
+                kind: ExprKind::EnumConstructor {
+                    enum_name: enum_def.name.clone(),
+                    variant_idx: *idx,
+                },
+                line: variant_name.line,
+            })
         }
     }
 

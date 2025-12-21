@@ -1363,4 +1363,67 @@ mod tests {
             "#;
         execute_source(src, false, "run", true);
     }
+    #[test]
+    fn test_enums() {
+        let src = r#"
+            enum Color { Red, Green, Blue }
+            let c = Color.Red;
+            match c {
+                Color.Red => {println("Red");}
+                Color.Green => {println("Green");}
+                Color.Blue => {println("Blue");}
+            }
+            assert(c, Color.Red);
+            println(c);
+            "#;
+        execute_source(src, false, "run", true);
+    }
+    #[test]
+    fn test_val_enums() {
+        let src = r#"
+            enum Shape { Circle(number), Rectangle(number, number) }
+            func area(s: Shape): number {
+                match s {
+                    Shape.Circle(radius) => {return 3.14 * radius * radius;}
+                    Shape.Rectangle(width, height) => {return width * height;}
+                }
+            }
+            println(Shape.Rectangle(6, 10));
+
+            assert(area(Shape.Circle(5)), 78.5);
+            assert(area(Shape.Rectangle(10, 5)), 50);
+        "#;
+        execute_source(src, true, "run", true);
+    }
+    #[test]
+    fn test_number_result() {
+        let src = r#"
+            enum Result { Ok(number), Err(string) }
+            impl Result {
+                func unwrap(self): number {
+                    match self {
+                        Result.Ok(val) => {return val;}
+                        Result.Err(err) => {
+                            println("Unwrapping error: ", err);
+                            panic("");
+                        }
+                    }
+                }
+                func unwrap_or(self, default: number): number {
+                    match self{
+                        Result.Ok(val) => {return val;}
+                        Result.Err(_) => {return default;}
+                    }
+                }
+            }
+            let res = Result.Ok(10);
+            let sum = res.unwrap() + 15;
+            println(sum);
+            assert(sum, 25);
+            let res2 = Result.Err("Error");
+            // res2.unwrap();
+            assert(res2.unwrap_or(10), 10);
+        "#;
+        execute_source(src, false, "run", true);
+    }
 }

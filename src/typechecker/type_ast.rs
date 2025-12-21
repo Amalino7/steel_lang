@@ -29,6 +29,12 @@ pub struct InterfaceType {
 }
 
 #[derive(Debug, PartialEq, Clone)]
+pub struct EnumType {
+    pub name: Symbol,
+    pub variants: HashMap<String, (usize, Vec<Type>)>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub enum Type {
     Nil,
     Number,
@@ -40,6 +46,7 @@ pub enum Type {
     Struct(Symbol),
     Interface(Symbol),
     Optional(Box<Type>),
+    Enum(Symbol),
     Any, //TODO replace with generic types, this is for native functions.
 }
 
@@ -62,6 +69,8 @@ impl Type {
             Ok(Type::Struct(struct_type.name.clone()))
         } else if let Some(iface) = type_system.get_interface(name) {
             Ok(Type::Interface(iface.name.clone()))
+        } else if let Some(enum_type) = type_system.get_enum(name) {
+            Ok(Type::Enum(enum_type.name.clone()))
         } else {
             Err(TypeCheckerError::UndefinedType {
                 name: name.to_string(),
@@ -91,6 +100,7 @@ impl Type {
             Type::Any => None,
             Type::Optional(_) => None,
             Type::Nil => Some("nil"),
+            Type::Enum(name) => Some(name),
         }
     }
 
@@ -205,6 +215,7 @@ impl Display for Type {
             Type::Interface(name) => write!(f, "interface {} ", name),
             Type::Optional(inner) => write!(f, "Optional<{}>", inner),
             Type::Nil => write!(f, "Nil"),
+            Type::Enum(name) => write!(f, "enum {} ", name),
         }
     }
 }
@@ -270,7 +281,15 @@ pub enum ExprKind {
         name: Box<str>,
         args: Vec<TypedExpr>,
     },
-
+    EnumConstructor {
+        enum_name: Symbol,
+        variant_idx: usize,
+    },
+    EnumInit {
+        enum_name: Symbol,
+        variant_idx: usize,
+        args: Vec<TypedExpr>,
+    },
     InterfaceUpcast {
         expr: Box<TypedExpr>,
         vtable_idx: u32,
@@ -281,7 +300,6 @@ pub enum ExprKind {
         method_index: u8,
         safe: bool,
     },
-
     Unary {
         operator: UnaryOp,
         operand: Box<TypedExpr>,
@@ -324,6 +342,7 @@ pub enum StmtKind {
         vtables: Box<[Vec<ResolvedVar>]>,
     }, // Might add meta-information later
     StructDecl {},
+    EnumDecl {},
     Global {
         global_count: u32,
         stmts: Vec<TypedStmt>,
@@ -343,6 +362,10 @@ pub enum StmtKind {
         then_branch: Box<TypedStmt>,
         else_branch: Option<Box<TypedStmt>>,
     },
+    Match {
+        value: Box<TypedExpr>,
+        cases: Vec<MatchCase>,
+    },
     While {
         condition: TypedExpr,
         body: Box<TypedStmt>,
@@ -353,4 +376,12 @@ pub enum StmtKind {
         body: Box<TypedStmt>,
         captures: Box<[ResolvedVar]>,
     },
+}
+
+#[derive(Debug)]
+pub struct MatchCase {
+    pub variant_name: String,
+    pub variant_idx: usize,
+    pub fields: Vec<ResolvedVar>,
+    pub body: TypedStmt,
 }

@@ -66,8 +66,9 @@ impl<'src> TypeChecker<'src> {
         self.declare_global_types(ast);
         // then global functions are declared and interfaces defined
         self.declare_global_functions(ast);
-        // finally, fields of structs are defined
+        // finally, fields of structs and enums are defined
         self.define_struct_fields(ast);
+        self.define_enum_variants(ast);
 
         for stmt in ast.iter() {
             match self.check_stmt(stmt) {

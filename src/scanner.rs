@@ -58,6 +58,7 @@ impl<'src> Scanner<'src> {
             '!' if self.matches('=') => self.make_token(TokenType::BangEqual),
             '!' => self.make_token(TokenType::Bang),
 
+            '=' if self.matches('>') => self.make_token(TokenType::Arrow),
             '=' if self.matches('=') => self.make_token(TokenType::EqualEqual),
             '=' => self.make_token(TokenType::Equal),
 
@@ -230,6 +231,8 @@ fn keywords() -> HashMap<&'static str, TokenType> {
         ("self", TokenType::Self_),
         ("interface", TokenType::Interface),
         ("nil", TokenType::Nil),
+        ("enum", TokenType::Enum),
+        ("match", TokenType::Match),
     ])
 }
 

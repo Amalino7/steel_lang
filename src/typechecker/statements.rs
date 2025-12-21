@@ -3,7 +3,7 @@ use crate::parser::ast::Stmt;
 use crate::token::Token;
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::scope_manager::ScopeType;
-use crate::typechecker::type_ast::{StmtKind, Type, TypedStmt};
+use crate::typechecker::type_ast::{MatchCase, StmtKind, Type, TypedStmt};
 use crate::typechecker::type_system::TypeSystem;
 use crate::typechecker::{FunctionContext, Symbol, TypeChecker};
 
@@ -165,7 +165,7 @@ impl<'src> TypeChecker<'src> {
                         expected: Type::Boolean,
                         found: cond_typed.ty,
                         line: condition.get_line(),
-                        message: "If condition must be a boolean.",
+                        message: "If value must be a boolean.",
                     });
                 }
 
@@ -221,7 +221,7 @@ impl<'src> TypeChecker<'src> {
                         expected: Type::Boolean,
                         found: cond_type.ty,
                         line: condition.get_line(),
-                        message: "While condition must be a boolean.",
+                        message: "While value must be a boolean.",
                     });
                 }
 
@@ -283,6 +283,90 @@ impl<'src> TypeChecker<'src> {
                         type_info: Type::Void,
                     })
                 }
+            }
+            Stmt::Enum { name, .. } => {
+                if !self.scopes.is_global() {
+                    return Err(TypeCheckerError::StructOutsideOfGlobalScope {
+                        name: name.lexeme.to_string(),
+                        line: name.line,
+                    });
+                }
+
+                Ok(TypedStmt {
+                    kind: StmtKind::EnumDecl {},
+                    line: name.line,
+                    type_info: Type::Void,
+                })
+            }
+            Stmt::Match { value, arms } => {
+                let value_typed = self.infer_expression(value)?;
+                let enum_name = match &value_typed.ty {
+                    Type::Enum(name) => name,
+                    _ => {
+                        return Err(TypeCheckerError::TypeMismatch {
+                            expected: Type::Enum("Any".into()),
+                            found: value_typed.ty,
+                            line: value_typed.line,
+                            message: "Match value must be an enum type.",
+                        });
+                    }
+                };
+
+                let enum_def = self.sys.get_enum(enum_name).unwrap().clone();
+                let mut matched_variants = std::collections::HashSet::new();
+                let mut typed_cases = vec![];
+
+                for arm in arms {
+                    let variant_name = arm.pattern.variant_name.lexeme;
+                    let variant_def = enum_def
+                        .variants
+                        .get(variant_name)
+                        .ok_or_else(|| todo!("Add specific error message for missing variant"))?;
+
+                    if matched_variants.contains(variant_name) {
+                        // TODO Optional: Error for unreachable pattern
+                    }
+                    matched_variants.insert(variant_name.to_string());
+
+                    let mut field_vars = vec![];
+                    self.scopes.begin_scope(ScopeType::Block);
+                    for (i, field_type) in variant_def.1.iter().enumerate() {
+                        let bound_name = arm.pattern.captures[i].lexeme;
+                        self.scopes.declare(bound_name.into(), field_type.clone())?;
+                        field_vars.push(self.scopes.lookup(bound_name).unwrap().1);
+                    }
+
+                    let typed_body = self.check_stmt(&arm.body)?;
+
+                    self.scopes.end_scope();
+
+                    let variant_idx = enum_def.variants.get(variant_name).unwrap().0;
+                    typed_cases.push(MatchCase {
+                        variant_name: variant_name.to_string(),
+                        variant_idx,
+                        fields: field_vars,
+                        body: typed_body,
+                    });
+                }
+
+                // Exhaustiveness check
+                for variant in enum_def.variants.keys() {
+                    if !matched_variants.contains(variant) {
+                        return Err(TypeCheckerError::UncoveredPattern {
+                            variant: variant.clone(),
+                            line: value_typed.line,
+                        });
+                    }
+                }
+
+                Ok(TypedStmt {
+                    kind: StmtKind::Match {
+                        value: Box::new(value_typed),
+                        cases: typed_cases,
+                    },
+                    type_info: Type::Void,
+                    line: value.get_line(),
+                })
             }
         }
     }

@@ -49,6 +49,10 @@ pub enum Opcode {
     GetField,
     SetField,
 
+    CheckEnumTag,
+    EnumAlloc,
+    DestructureEnum,
+
     MakeVTable,
     MakeInterfaceObj,
     InterfaceBindMethod,

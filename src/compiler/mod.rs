@@ -90,6 +90,34 @@ impl<'a> Compiler<'a> {
 
                 self.patch_jump(else_jump);
             }
+            StmtKind::Match { value, cases } => {
+                self.compile_expr(value);
+
+                let mut end_jumps = Vec::new();
+
+                for case in cases.iter() {
+                    // Check if the tag matches the case variant
+                    self.emit_op(Opcode::CheckEnumTag, stmt.line);
+                    self.emit_byte(case.variant_idx as u8, stmt.line);
+
+                    // Similar to if
+                    let next_case_jump = self.emit_jump(Opcode::JumpIfFalse, stmt.line);
+                    self.emit_op(Opcode::Pop, stmt.line);
+
+                    self.emit_op(Opcode::DestructureEnum, stmt.line);
+                    self.compile_stmt(&case.body);
+                    end_jumps.push(self.emit_jump(Opcode::Jump, stmt.line));
+
+                    self.patch_jump(next_case_jump);
+                    self.emit_op(Opcode::Pop, stmt.line);
+                }
+
+                // Pop original enum
+                self.emit_op(Opcode::Pop, stmt.line);
+                for jump in end_jumps {
+                    self.patch_jump(jump);
+                }
+            }
             StmtKind::While { condition, body } => {
                 let line = stmt.line;
 
@@ -180,6 +208,7 @@ impl<'a> Compiler<'a> {
                     }
                 }
             }
+            StmtKind::EnumDecl { .. } => {}
             StmtKind::StructDecl { .. } => {}
         }
     }
@@ -516,6 +545,24 @@ impl<'a> Compiler<'a> {
                     self.emit_op(Opcode::InterfaceBindMethod, line);
                     self.emit_byte(*method_index, line);
                 }
+            }
+            ExprKind::EnumInit {
+                enum_name,
+                variant_idx,
+                args,
+            } => {
+                let enum_name = self.gc.alloc(enum_name.to_string());
+                self.chunk()
+                    .write_constant(Value::String(enum_name), line as usize);
+                for arg in args.iter().rev() {
+                    self.compile_expr(arg);
+                }
+                self.emit_op(Opcode::EnumAlloc, line);
+                self.emit_byte(args.len() as u8, line);
+                self.emit_byte(*variant_idx as u8, line);
+            }
+            ExprKind::EnumConstructor { .. } => {
+                unreachable!("Enum constructors shouldn't be called")
             }
         }
     }

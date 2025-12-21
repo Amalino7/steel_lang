@@ -88,6 +88,8 @@ impl<'src> TypeChecker<'src> {
                 self.sys.declare_struct(name.lexeme.into());
             } else if let Stmt::Interface { name, .. } = stmt {
                 self.sys.declare_interface(name.lexeme.into());
+            } else if let Stmt::Enum { name, .. } = stmt {
+                self.sys.declare_enum(name.lexeme.into());
             }
         }
     }
@@ -110,6 +112,29 @@ impl<'src> TypeChecker<'src> {
                     }
                 }
                 self.sys.define_struct(name.lexeme, field_types);
+            }
+        }
+    }
+    pub(crate) fn define_enum_variants(&mut self, ast: &[Stmt<'src>]) {
+        for stmt in ast {
+            if let Stmt::Enum { name, variants } = stmt {
+                let mut typed_variants = HashMap::new();
+                for (idx, (v_name, fields)) in variants.iter().enumerate() {
+                    let mut typed_fields = vec![];
+                    for f in fields {
+                        let variant_type = Type::from_ast(&f, &self.sys);
+                        match variant_type {
+                            Ok(variant_type) => typed_fields.push(variant_type),
+                            Err(err) => {
+                                typed_fields.push(Type::Unknown);
+                                self.errors.push(err);
+                            }
+                        }
+                    }
+                    typed_variants.insert(v_name.lexeme.to_string(), (idx, typed_fields));
+                }
+
+                self.sys.define_enum(name.lexeme.into(), typed_variants);
             }
         }
     }

@@ -21,6 +21,14 @@ pub fn get_natives() -> Vec<NativeDef> {
             },
         },
         NativeDef {
+            name: "panic",
+            type_: Type::new_function(vec![Type::Any], Type::Void),
+            func: |args| {
+                // TODO add language level error handling
+                panic!("{}", args[0]);
+            },
+        },
+        NativeDef {
             name: "print",
             type_: Type::new_vararg(vec![Type::Any], Type::Void),
             func: |args| {

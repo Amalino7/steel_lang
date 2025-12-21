@@ -79,6 +79,19 @@ pub enum Expr<'src> {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct MatchArm<'src> {
+    pub pattern: Pattern<'src>,
+    pub body: Stmt<'src>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Pattern<'src> {
+    pub enum_name: Token<'src>,
+    pub variant_name: Token<'src>,
+    pub captures: Vec<Token<'src>>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum Stmt<'src> {
     Expression(Expr<'src>),
     Let {
@@ -118,6 +131,14 @@ pub enum Stmt<'src> {
     Interface {
         name: Token<'src>,
         methods: Vec<InterfaceSig<'src>>,
+    },
+    Enum {
+        name: Token<'src>,
+        variants: Vec<(Token<'src>, Vec<TypeAst<'src>>)>,
+    },
+    Match {
+        value: Box<Expr<'src>>,
+        arms: Vec<MatchArm<'src>>,
     },
 }
 
@@ -339,6 +360,20 @@ impl Display for Stmt<'_> {
                 }
                 write!(f, "}}")
             }
+            Stmt::Enum { name, variants } => {
+                write!(f, "Enum {} {{", name.lexeme)?;
+                for case in variants {
+                    write!(f, "case {} (", case.0.lexeme,)?;
+                    for type_ in &case.1 {
+                        write!(f, "{}", type_)?;
+                    }
+                    write!(f, ")")?;
+                }
+                write!(f, "}}")
+            }
+            Stmt::Match { .. } => {
+                todo!()
+            }
         }
     }
 }
@@ -381,6 +416,8 @@ impl Stmt<'_> {
             Stmt::Struct { name, .. } => name.line,
             Stmt::Impl { name, .. } => name.line,
             Stmt::Interface { name, .. } => name.line,
+            Stmt::Enum { name, .. } => name.line,
+            Stmt::Match { value, .. } => value.get_line(),
         }
     }
 }

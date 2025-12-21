@@ -47,6 +47,7 @@ pub enum TokenType {
     GreaterEqual,
     Less,
     LessEqual,
+    Arrow, // =>
 
     // Assignment arithmetic operators.
     PlusEqual,
@@ -75,6 +76,9 @@ pub enum TokenType {
     Impl,
     Self_,
     Interface,
+
+    Enum,
+    Match,
 
     // Reports errors.
     Error,
@@ -137,6 +141,9 @@ impl Display for TokenType {
             TokenType::QuestionQuestion => f.write_str("??"),
             TokenType::QuestionParen => f.write_str("?("),
             TokenType::Nil => f.write_str("nil"),
+            TokenType::Enum => f.write_str("enum"),
+            TokenType::Match => f.write_str("match"),
+            TokenType::Arrow => f.write_str("=>"),
         }
     }
 }

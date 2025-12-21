@@ -13,6 +13,12 @@ impl<'src> TypeChecker<'src> {
     }
     fn check_stmt_returns(&mut self, stmt: &TypedStmt) -> Result<(), TypeCheckerError> {
         match &stmt.kind {
+            StmtKind::Match { cases, .. } => {
+                for case in cases {
+                    self.check_stmt_returns(&case.body)?;
+                }
+                Ok(())
+            }
             StmtKind::Expression(_) => Ok(()),
             StmtKind::Let { .. } => Ok(()),
             StmtKind::Block { body, .. } => body
@@ -53,6 +59,7 @@ impl<'src> TypeChecker<'src> {
             StmtKind::Impl { methods, .. } => methods
                 .iter()
                 .try_for_each(|method| self.check_stmt_returns(method)),
+            StmtKind::EnumDecl { .. } => Ok(()),
         }
     }
     pub fn stmt_returns(&mut self, stmt: &TypedStmt) -> Result<bool, TypeCheckerError> {
@@ -80,12 +87,16 @@ impl<'src> TypeChecker<'src> {
                     false
                 }
             }
+            StmtKind::Match { cases, .. } => cases
+                .iter()
+                .all(|case| self.stmt_returns(&case.body).is_ok()), // TODO probably should return error
             StmtKind::While { .. } => false,
             StmtKind::Function { .. } => false,
             StmtKind::Return(_) => true,
             StmtKind::Global { .. } => false,
             StmtKind::StructDecl { .. } => false,
             StmtKind::Impl { .. } => false,
+            &StmtKind::EnumDecl {} => false,
         })
     }
 }
