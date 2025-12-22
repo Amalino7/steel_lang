@@ -1,0 +1,214 @@
+use crate::token::Token;
+use crate::typechecker::error::TypeCheckerError;
+use crate::typechecker::type_ast::{ExprKind, Type, TypedExpr};
+use crate::typechecker::TypeChecker;
+use std::rc::Rc;
+
+impl<'src> TypeChecker<'src> {
+    pub(crate) fn resolve_static_access(
+        &mut self,
+        type_token: &Token,
+        member_token: &Token,
+    ) -> Result<TypedExpr, TypeCheckerError> {
+        let enum_access = self.handle_enum_access(type_token, member_token);
+        match enum_access {
+            Some(expr) => Ok(expr),
+            None => self.handle_static_method_access(type_token, member_token),
+        }
+    }
+
+    fn handle_enum_access(&mut self, type_name: &Token, variant_name: &Token) -> Option<TypedExpr> {
+        let enum_def = self.sys.get_enum(type_name.lexeme)?;
+
+        let (idx, variant_types) = enum_def.variants.get(variant_name.lexeme)?;
+
+        // Handle Type.Variant and Type.Variant(arg..)
+        if variant_types.is_empty() {
+            Some(TypedExpr {
+                ty: Type::Enum(enum_def.name.clone()),
+                kind: ExprKind::EnumInit {
+                    enum_name: enum_def.name.clone(),
+                    variant_idx: *idx,
+                    args: vec![],
+                },
+                line: variant_name.line,
+            })
+        } else {
+            let func_type =
+                Type::new_function(variant_types.clone(), Type::Enum(enum_def.name.clone()));
+            Some(TypedExpr {
+                ty: func_type,
+                kind: ExprKind::EnumConstructor {
+                    enum_name: enum_def.name.clone(),
+                    variant_idx: *idx,
+                },
+                line: variant_name.line,
+            })
+        }
+    }
+
+    fn handle_static_method_access(
+        &mut self,
+        type_name: &Token,
+        method_name: &Token,
+    ) -> Result<TypedExpr, TypeCheckerError> {
+        let mangled_name = format!("{}.{}", type_name.lexeme, method_name.lexeme);
+
+        let method =
+            self.scopes
+                .lookup(mangled_name.as_str())
+                .ok_or(TypeCheckerError::UndefinedMethod {
+                    line: method_name.line,
+                    found: Type::Struct(Rc::from(String::from(type_name.lexeme))),
+                    method_name: method_name.lexeme.to_string(),
+                })?;
+
+        let (ctx, resolved_var) = method;
+
+        Ok(TypedExpr {
+            ty: ctx.type_info.clone(),
+            kind: ExprKind::GetVar(resolved_var, ctx.name.clone()),
+            line: method_name.line,
+        })
+    }
+
+    pub(crate) fn resolve_instance_access(
+        &mut self,
+        object_typed: TypedExpr,
+        member_token: &Token,
+        is_safe: bool,
+    ) -> Result<TypedExpr, TypeCheckerError> {
+        // Unwrap optional type if safe
+        let actual_ty = if is_safe {
+            match &object_typed.ty {
+                Type::Optional(inner) => inner.as_ref().clone(),
+                _ => {
+                    return Err(TypeCheckerError::TypeMismatch {
+                        expected: Type::Optional(Box::new(Type::Any)),
+                        found: object_typed.ty,
+                        line: member_token.line,
+                        message: "Cannot use safe navigation '?.' on a non-optional type.",
+                    });
+                }
+            }
+        } else {
+            object_typed.ty.clone()
+        };
+
+        // Try field access
+        if let Type::Struct(name) = &actual_ty {
+            let struct_def = self
+                .sys
+                .get_struct(name)
+                .expect("Struct type missing definition");
+
+            if let Some((idx, field_type)) = struct_def.fields.get(member_token.lexeme) {
+                let mut expr = TypedExpr {
+                    ty: field_type.clone(),
+                    kind: ExprKind::GetField {
+                        object: Box::new(object_typed),
+                        index: *idx as u8,
+                        safe: is_safe,
+                    },
+                    line: member_token.line,
+                };
+
+                if is_safe {
+                    expr.ty = expr.ty.wrap_in_optional();
+                }
+                return Ok(expr);
+            }
+        }
+
+        // Interface Method Lookup
+        if let Type::Interface(name) = &actual_ty {
+            let iface = self.sys.get_interface(name).unwrap();
+            let Some((idx, method_ty)) = iface.methods.get(member_token.lexeme) else {
+                return Err(TypeCheckerError::UndefinedMethod {
+                    line: member_token.line,
+                    found: Type::Interface(iface.name.clone()),
+                    method_name: member_token.lexeme.to_string(),
+                });
+            };
+
+            let ty = match method_ty {
+                Type::Function(func) => {
+                    let params = func.param_types.iter().skip(1).cloned().collect();
+                    Type::new_function(params, func.return_type.clone())
+                }
+                other => other.clone(),
+            };
+            let ty = if is_safe { ty.wrap_in_optional() } else { ty };
+            return Ok(TypedExpr {
+                ty,
+                kind: ExprKind::InterfaceMethodGet {
+                    object: Box::new(object_typed),
+                    method_index: *idx as u8,
+                    safe: is_safe,
+                },
+                line: member_token.line,
+            });
+        }
+
+        // Method Lookup
+        self.handle_instance_method(member_token, &actual_ty, object_typed, is_safe)
+    }
+
+    fn handle_instance_method(
+        &mut self,
+        field: &Token,
+        lookup_type: &Type,
+        object_expr: TypedExpr,
+        safe: bool,
+    ) -> Result<TypedExpr, TypeCheckerError> {
+        let type_name = lookup_type
+            .get_name()
+            .ok_or(TypeCheckerError::TypeHasNoFields {
+                found: lookup_type.clone(),
+                line: object_expr.line,
+            })?;
+
+        let mangled_name = format!("{}.{}", type_name, field.lexeme);
+
+        let method =
+            self.scopes
+                .lookup(mangled_name.as_str())
+                .ok_or(TypeCheckerError::UndefinedMethod {
+                    line: field.line,
+                    found: lookup_type.clone(),
+                    method_name: field.lexeme.to_string(),
+                })?;
+
+        let ty = match &method.0.type_info {
+            Type::Function(func) => {
+                let return_type = func.return_type.clone();
+
+                if func.param_types.is_empty()
+                    || &func.param_types[0] != lookup_type
+                    || func.is_static
+                {
+                    return Err(TypeCheckerError::StaticMethodOnInstance {
+                        method_name: field.lexeme.to_string(),
+                        line: field.line,
+                    });
+                }
+
+                let params = func.param_types.iter().skip(1).cloned().collect();
+                Type::new_function(params, return_type)
+            }
+            ty => ty.clone(),
+        };
+
+        let ty = if safe { ty.wrap_in_optional() } else { ty };
+
+        Ok(TypedExpr {
+            ty,
+            kind: ExprKind::MethodGet {
+                object: Box::new(object_expr),
+                method: method.1,
+                safe,
+            },
+            line: field.line,
+        })
+    }
+}
