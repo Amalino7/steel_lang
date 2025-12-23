@@ -166,6 +166,25 @@ impl<'src> Parser<'src> {
                     Ok(func_type)
                 }
             }
+            TokT::LeftParen => {
+                self.consume(TokT::LeftParen, "Expected '(' after tuple type definition.")?;
+                // Tuple
+                let mut types = vec![];
+                while !match_token_type!(self, TokT::RightParen) {
+                    let type_ = self.type_block()?;
+                    types.push(type_);
+                    if match_token_type!(self, TokT::Comma) {}
+                }
+                if types.len() < 2 {
+                    self.error_previous("Tuple types must have at least 2 fields.");
+                }
+                let type_name = TypeAst::Tuple(types);
+                if match_token_type!(self, TokT::Question) {
+                    Ok(TypeAst::Optional(Box::new(type_name)))
+                } else {
+                    Ok(type_name)
+                }
+            }
             TokT::Identifier => {
                 self.consume(TokT::Identifier, "Expected the name of the type.")?;
                 let type_name = TypeAst::Named(self.previous_token.clone());
@@ -221,9 +240,7 @@ impl<'src> Parser<'src> {
         })
     }
     fn if_statement(&mut self) -> Result<Stmt<'src>, ParserError<'src>> {
-        self.allow_struct_init = false;
         let condition = self.expression();
-        self.allow_struct_init = true;
         let condition = condition?;
         let then_branch = self.block()?;
         let mut else_branch = None;
@@ -242,9 +259,7 @@ impl<'src> Parser<'src> {
     }
 
     fn match_statement(&mut self) -> Result<Stmt<'src>, ParserError<'src>> {
-        self.allow_struct_init = false;
         let expr = self.expression();
-        self.allow_struct_init = true;
         let expr = expr?;
 
         self.consume(TokT::LeftBrace, "Expected '{' after match statement.")?;
@@ -294,9 +309,7 @@ impl<'src> Parser<'src> {
     }
 
     fn while_statement(&mut self) -> Result<Stmt<'src>, ParserError<'src>> {
-        self.allow_struct_init = false;
         let condition = self.expression();
-        self.allow_struct_init = true;
         let condition = condition?;
 
         let body = self.block()?;

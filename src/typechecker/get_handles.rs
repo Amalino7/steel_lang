@@ -100,6 +100,39 @@ impl<'src> TypeChecker<'src> {
         } else {
             object_typed.ty.clone()
         };
+        // Try tuple access
+        if let Type::Tuple(tuple_type) = &actual_ty {
+            let idx = match member_token.lexeme.parse::<u8>() {
+                Ok(idx) => idx,
+                Err(err) => {
+                    return Err(TypeCheckerError::InvalidTupleIndex {
+                        tuple_type: actual_ty,
+                        index: err.to_string(),
+                        line: member_token.line,
+                    });
+                }
+            };
+            if idx >= tuple_type.types.len() as u8 {
+                return Err(TypeCheckerError::InvalidTupleIndex {
+                    tuple_type: actual_ty,
+                    index: idx.to_string(),
+                    line: member_token.line,
+                });
+            }
+            let mut expr = TypedExpr {
+                ty: tuple_type.types[idx as usize].clone(),
+                kind: ExprKind::GetField {
+                    object: Box::new(object_typed),
+                    index: idx,
+                    safe: is_safe,
+                },
+                line: member_token.line,
+            };
+            if is_safe {
+                expr.ty = expr.ty.wrap_in_optional();
+            }
+            return Ok(expr);
+        }
 
         // Try field access
         if let Type::Struct(name) = &actual_ty {

@@ -19,6 +19,7 @@ pub enum TypeAst<'src> {
         param_types: Box<[TypeAst<'src>]>,
         return_type: Box<TypeAst<'src>>,
     },
+    Tuple(Vec<TypeAst<'src>>),
     Infer,
 }
 
@@ -67,6 +68,9 @@ pub enum Expr<'src> {
         object: Box<Expr<'src>>,
         field: Token<'src>,
         value: Box<Expr<'src>>,
+    },
+    Tuple {
+        elements: Vec<Expr<'src>>,
     },
     ForceUnwrap {
         expression: Box<Expr<'src>>,
@@ -151,7 +155,7 @@ pub struct InterfaceSig<'src> {
 }
 
 impl Display for Literal {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Literal::Number(n) => write!(f, "{}", n),
             Literal::String(s) => write!(f, "{}", s),
@@ -165,6 +169,16 @@ impl Display for Literal {
 impl Display for Expr<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
+            Expr::Tuple { elements } => {
+                write!(f, "(")?;
+                for (i, element) in elements.iter().enumerate() {
+                    write!(f, "{}", element)?;
+                    if i != elements.len() - 1 {
+                        write!(f, ", ")?;
+                    }
+                }
+                write!(f, ")")
+            }
             Expr::Unary {
                 operator,
                 expression,
@@ -270,6 +284,17 @@ impl Display for TypeAst<'_> {
             }
             TypeAst::Infer => write!(f, "_"),
             TypeAst::Optional(inner) => write!(f, "{}?", inner),
+            TypeAst::Tuple(types) => {
+                write!(
+                    f,
+                    "({})",
+                    types
+                        .iter()
+                        .map(|t| format!("{}", t))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }
         }
     }
 }
@@ -393,6 +418,7 @@ impl Expr<'_> {
             Expr::Get { field, .. } => field.line,
             Expr::Set { value, .. } => value.get_line(),
             Expr::ForceUnwrap { line, .. } => *line,
+            Expr::Tuple { elements } => elements[0].get_line(),
         }
     }
 }

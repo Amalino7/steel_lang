@@ -502,7 +502,6 @@ impl<'a> Compiler<'a> {
                     self.emit_byte(*index, line);
                 }
             }
-
             ExprKind::MethodGet {
                 object,
                 method,
@@ -560,6 +559,17 @@ impl<'a> Compiler<'a> {
                 self.emit_op(Opcode::EnumAlloc, line);
                 self.emit_byte(args.len() as u8, line);
                 self.emit_byte(*variant_idx as u8, line);
+            }
+            ExprKind::Tuple { elements } => {
+                let str_name = self.gc.alloc(format!("Tuple{}", elements.len()));
+
+                self.chunk()
+                    .write_constant(Value::String(str_name), line as usize);
+                for element in elements.iter().rev() {
+                    self.compile_expr(element);
+                }
+                self.emit_op(Opcode::StructAlloc, line);
+                self.emit_byte(elements.len() as u8, line);
             }
             ExprKind::EnumConstructor { .. } => {
                 unreachable!("Enum constructors shouldn't be called")

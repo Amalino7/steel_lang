@@ -55,7 +55,10 @@ pub struct EnumType {
     pub name: Symbol,
     pub variants: HashMap<String, (usize, Vec<Type>)>,
 }
-
+#[derive(Debug, PartialEq, Clone)]
+pub struct TupleType {
+    pub types: Vec<Type>,
+}
 #[derive(Debug, PartialEq, Clone)]
 pub enum Type {
     Nil,
@@ -64,6 +67,7 @@ pub enum Type {
     Boolean,
     Void,
     Function(Rc<FunctionType>),
+    Tuple(Rc<TupleType>),
     Unknown,
     Struct(Symbol),
     Interface(Symbol),
@@ -123,6 +127,7 @@ impl Type {
             Type::Optional(_) => None,
             Type::Nil => Some("nil"),
             Type::Enum(name) => Some(name),
+            Type::Tuple(_) => None,
         }
     }
     pub fn new_function(params: Vec<(String, Type)>, return_type: Type) -> Type {
@@ -151,6 +156,13 @@ impl Type {
         type_system: &TypeSystem,
     ) -> Result<Type, TypeCheckerError> {
         match type_ast {
+            TypeAst::Tuple(types) => {
+                let mut types_vec = Vec::with_capacity(types.len());
+                for t in types {
+                    types_vec.push(Self::from_ast(t, type_system)?);
+                }
+                Ok(Type::Tuple(Rc::new(TupleType { types: types_vec })))
+            }
             TypeAst::Named(name) => Self::from_identifier(name, type_system),
             TypeAst::Function {
                 param_types,
@@ -262,6 +274,18 @@ impl Display for Type {
             Type::Optional(inner) => write!(f, "Optional<{}>", inner),
             Type::Nil => write!(f, "Nil"),
             Type::Enum(name) => write!(f, "enum {} ", name),
+            Type::Tuple(types) => {
+                write!(
+                    f,
+                    "Tuple({})",
+                    types
+                        .types
+                        .iter()
+                        .map(|t| format!("{}", t))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }
         }
     }
 }
@@ -368,6 +392,9 @@ pub enum ExprKind {
         object: Box<TypedExpr>,
         method: ResolvedVar,
         safe: bool,
+    },
+    Tuple {
+        elements: Vec<TypedExpr>,
     },
     Call {
         callee: Box<TypedExpr>, // 8 bytes

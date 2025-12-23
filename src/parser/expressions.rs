@@ -1,3 +1,4 @@
+use crate::parser::ast::Expr::Tuple;
 use crate::parser::ast::{CallArg, Expr, Literal};
 use crate::parser::error::ParserError;
 use crate::parser::TokT;
@@ -212,6 +213,16 @@ impl<'src> Parser<'src> {
                     safe: prev.token_type == TokT::QuestionParen,
                 };
             } else if match_token_type!(self, TokT::Dot) {
+                if match_token_type!(self, TokT::Number) {
+                    let idx = self.previous_token.clone();
+                    expr = Expr::Get {
+                        safe: false,
+                        object: Box::new(expr),
+                        field: idx,
+                    };
+                    continue;
+                }
+
                 self.consume(TokT::Identifier, "Expected property name after '.'.")?;
                 let field = self.previous_token.clone();
                 expr = Expr::Get {
@@ -291,11 +302,18 @@ impl<'src> Parser<'src> {
                 name: self.previous_token.clone(),
             }),
             TokT::LeftParen => {
-                let previous_allow = self.allow_struct_init;
-                self.allow_struct_init = true;
-                let expr = self.expression();
-                self.allow_struct_init = previous_allow;
-                let expr = expr?;
+                let expr = self.expression()?;
+                let mut tuple_args = vec![];
+                if match_token_type!(self, TokT::Comma) {
+                    tuple_args.push(expr);
+                    while !match_token_type!(self, TokT::RightParen) {
+                        let expr = self.expression()?;
+                        tuple_args.push(expr);
+                    }
+                    return Ok(Tuple {
+                        elements: tuple_args,
+                    });
+                }
 
                 self.consume(TokT::RightParen, "Expect ')' after expression.")?;
                 Ok(Expr::Grouping {

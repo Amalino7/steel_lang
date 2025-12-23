@@ -6,9 +6,10 @@ use crate::typechecker::error::TypeCheckerError::AssignmentToCapturedVariable;
 use crate::typechecker::scope_manager::ScopeType;
 use crate::typechecker::type_ast::Type::Enum;
 use crate::typechecker::type_ast::{
-    BinaryOp, ExprKind, LogicalOp, StructType, Type, TypedExpr, UnaryOp,
+    BinaryOp, ExprKind, LogicalOp, StructType, TupleType, Type, TypedExpr, UnaryOp,
 };
 use crate::typechecker::TypeChecker;
+use std::rc::Rc;
 
 impl<'src> TypeChecker<'src> {
     pub(crate) fn infer_expression(
@@ -16,6 +17,24 @@ impl<'src> TypeChecker<'src> {
         expr: &Expr<'src>,
     ) -> Result<TypedExpr, TypeCheckerError> {
         match expr {
+            Expr::Tuple { elements } => {
+                let mut typed_elements = Vec::with_capacity(elements.len());
+                let mut type_vec = vec![];
+                for element in elements {
+                    let el = self.infer_expression(element)?;
+                    type_vec.push(el.ty.clone());
+                    typed_elements.push(el);
+                }
+
+                let ty = Type::Tuple(Rc::new(TupleType { types: type_vec }));
+                Ok(TypedExpr {
+                    ty,
+                    kind: ExprKind::Tuple {
+                        elements: typed_elements,
+                    },
+                    line: elements[0].get_line(),
+                })
+            }
             Expr::Unary {
                 operator,
                 expression,
@@ -254,7 +273,7 @@ impl<'src> TypeChecker<'src> {
                     && let Some(struct_def) = self.sys.get_struct(&name.lexeme)
                 {
                     let owned_name = struct_def.name.clone();
-                    let bound_args = self.bind_arguments(
+                    let bound_args = self.sys.bind_arguments(
                         &name.lexeme,
                         &struct_def.ordered_fields,
                         inferred_args,
@@ -305,7 +324,7 @@ impl<'src> TypeChecker<'src> {
                 } = &callee_typed.kind
                     && let Type::Function(func) = lookup_type
                 {
-                    let bound_args = self.bind_arguments(
+                    let bound_args = self.sys.bind_arguments(
                         enum_name.as_ref(),
                         &func.params,
                         inferred_args,
@@ -327,7 +346,7 @@ impl<'src> TypeChecker<'src> {
                 // Check for Normal Function Call
                 match lookup_type {
                     Type::Function(func) => {
-                        let bound_args = self.bind_arguments(
+                        let bound_args = self.sys.bind_arguments(
                             "function",
                             &func.params,
                             inferred_args,
@@ -368,6 +387,7 @@ impl<'src> TypeChecker<'src> {
                 {
                     return self.resolve_static_access(name, field);
                 }
+
                 let object_typed = self.infer_expression(object)?;
 
                 self.resolve_instance_access(object_typed, field, *safe)
@@ -378,24 +398,59 @@ impl<'src> TypeChecker<'src> {
                 value,
                 safe,
             } => {
-                let object = self.infer_expression(object)?;
+                let object_typed = self.infer_expression(object)?;
                 let value = self.infer_expression(value)?;
 
                 let type_ = if *safe {
-                    match &object.ty {
+                    match &object_typed.ty {
                         Type::Optional(inner) => inner.as_ref().clone(),
                         _ => {
                             return Err(TypeCheckerError::TypeMismatch {
                                 expected: Type::Optional(Box::new(Type::Any)),
-                                found: object.ty.clone(),
+                                found: object_typed.ty.clone(),
                                 line: field.line,
                                 message: "Cannot access safe property of non-optional type. Use simply '.'",
                             });
                         }
                     }
                 } else {
-                    object.ty.clone()
+                    object_typed.ty.clone()
                 };
+
+                if let Type::Tuple(tuple_type) = &type_ {
+                    let idx = match field.lexeme.parse::<u8>() {
+                        Ok(idx) => idx,
+                        Err(err) => {
+                            return Err(TypeCheckerError::InvalidTupleIndex {
+                                tuple_type: type_,
+                                index: err.to_string(),
+                                line: field.line,
+                            });
+                        }
+                    };
+                    if idx >= tuple_type.types.len() as u8 {
+                        return Err(TypeCheckerError::InvalidTupleIndex {
+                            tuple_type: type_,
+                            index: idx.to_string(),
+                            line: field.line,
+                        });
+                    }
+
+                    return Ok(TypedExpr {
+                        ty: tuple_type.types[idx as usize].clone(),
+                        kind: ExprKind::SetField {
+                            object: Box::from(object_typed),
+                            index: idx,
+                            safe: *safe,
+                            value: Box::new(self.sys.verify_assignment(
+                                &tuple_type.types[idx as usize],
+                                value,
+                                field.line,
+                            )?),
+                        },
+                        line: field.line,
+                    });
+                }
 
                 if let Type::Struct(struct_def) = type_ {
                     let struct_def = self
@@ -410,7 +465,7 @@ impl<'src> TypeChecker<'src> {
                         ty: field_type,
                         kind: ExprKind::SetField {
                             safe: *safe,
-                            object: Box::new(object),
+                            object: Box::new(object_typed),
                             index: field_idx as u8,
                             value: Box::new(value),
                         },
@@ -419,7 +474,7 @@ impl<'src> TypeChecker<'src> {
                 } else {
                     Err(TypeCheckerError::TypeHasNoFields {
                         found: type_,
-                        line: object.line,
+                        line: object_typed.line,
                     })
                 }
             }

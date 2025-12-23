@@ -1452,4 +1452,52 @@ mod tests {
         "#;
         execute_source(src, false, "run", true);
     }
+
+    #[test]
+    fn test_inner_type() {
+        let src = r#"
+        struct Vector {
+            start: Point,
+            end: Point,
+        }
+        struct Point { x: number, y: number }
+        impl Point {
+            func print(self) {
+                println("{",self.x ,",", self.y, "}");
+            }
+        }
+        let vec = Vector(start: Point(x: 1, y: 2), end: Point(x: 3, y: 4));
+        vec.start.print();
+        "#;
+        execute_source(src, false, "run", true);
+    }
+    #[test]
+    fn test_tuples() {
+        let src = r#"
+            func takes_str(a: string) {}
+            func takes_tuple(a: (number, string)) {
+                println(a);
+                println(a.0);
+                println(a.1);
+            }
+            func takes_num(a: number) {}
+            let tuple = (1, "What");
+            takes_tuple(tuple);
+            takes_str(tuple.1);
+            takes_num(tuple.0);
+            assert(tuple.0, 1);
+            assert(tuple.1, "What");
+        "#;
+        execute_source(src, false, "lex", true);
+    }
+    #[test]
+    fn test_tuples2() {
+        let src = r#"
+            func returns_tuple(): (number, number) { return (1, 2);}
+            let tuple = returns_tuple();
+            assert(tuple.0, 1);
+            assert(tuple.1, 2);
+        "#;
+        execute_source(src, false, "run", true);
+    }
 }

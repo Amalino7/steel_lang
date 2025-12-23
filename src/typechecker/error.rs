@@ -111,6 +111,11 @@ pub enum TypeCheckerError {
         message: &'static str,
         line: u32,
     },
+    InvalidTupleIndex {
+        tuple_type: Type,
+        index: String,
+        line: u32,
+    },
 }
 
 impl TypeCheckerError {
@@ -140,6 +145,7 @@ impl TypeCheckerError {
             TypeCheckerError::UndefinedParameter { line, .. } => *line,
             TypeCheckerError::MissingArgument { line, .. } => *line,
             TypeCheckerError::PositionalArgumentAfterNamed { line, .. } => *line,
+            TypeCheckerError::InvalidTupleIndex { line, .. } => *line,
         }
     }
 }
@@ -352,6 +358,17 @@ impl std::fmt::Display for TypeCheckerError {
                     f,
                     "[line {}] Error: Positional argument after named in function '{}'. {}",
                     line, callee, message
+                )
+            }
+            TypeCheckerError::InvalidTupleIndex {
+                tuple_type,
+                index,
+                line,
+            } => {
+                write!(
+                    f,
+                    "[line {}] Error: Invalid tuple index '{}' of {}.",
+                    line, index, tuple_type
                 )
             }
         }
