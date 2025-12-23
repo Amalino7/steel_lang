@@ -89,10 +89,10 @@ mod tests {
                 assert!(
                     errors
                         .iter()
-                        .any(|e| matches!(e, TypeCheckerError::CalleeIsNotAFunction { .. }))
+                        .any(|e| matches!(e, TypeCheckerError::CalleeIsNotCallable { .. }))
                 );
             }
-            _ => panic!("Expected CalleeIsNotAFunction error"),
+            _ => panic!("Expected CalleeIsNotCallable error"),
         }
     }
 
@@ -219,7 +219,7 @@ mod tests {
                 TypeCheckerError::InvalidReturnOutsideFunction { .. } => {
                     found_invalid_return = true
                 }
-                TypeCheckerError::CalleeIsNotAFunction { .. } => {
+                TypeCheckerError::CalleeIsNotCallable { .. } => {
                     found_callee_is_not_function = true;
                 }
                 _ => {}

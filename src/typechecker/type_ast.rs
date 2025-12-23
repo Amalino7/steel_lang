@@ -8,18 +8,40 @@ use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::rc::Rc;
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone)]
 pub struct FunctionType {
     pub is_static: bool,
     pub is_vararg: bool,
-    pub param_types: Vec<Type>,
+    pub params: Vec<(String, Type)>,
     pub return_type: Type,
+}
+
+impl PartialEq for FunctionType {
+    fn eq(&self, other: &Self) -> bool {
+        self.return_type == other.return_type
+            && self.params.len() == other.params.len()
+            && self.is_vararg == other.is_vararg
+            && self
+                .params
+                .iter()
+                .zip(&other.params)
+                .all(|(a, b)| a.1 == b.1)
+    }
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct StructType {
-    pub fields: HashMap<String, (usize, Type)>,
+    pub fields: HashMap<String, usize>,
+    pub ordered_fields: Vec<(String, Type)>,
     pub name: Symbol,
+}
+
+impl StructType {
+    pub fn get_field(&self, name: &str) -> Option<(usize, Type)> {
+        self.fields
+            .get(name)
+            .map(|idx| (*idx, self.ordered_fields[*idx].1.clone()))
+    }
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -103,12 +125,11 @@ impl Type {
             Type::Enum(name) => Some(name),
         }
     }
-
-    pub fn new_function(param_types: Vec<Type>, return_type: Type) -> Type {
+    pub fn new_function(params: Vec<(String, Type)>, return_type: Type) -> Type {
         Type::Function(Rc::new(FunctionType {
             is_static: true,
             is_vararg: false,
-            param_types,
+            params,
             return_type,
         }))
     }
@@ -117,7 +138,10 @@ impl Type {
         Type::Function(Rc::new(FunctionType {
             is_static: true,
             is_vararg: true,
-            param_types,
+            params: param_types
+                .into_iter()
+                .map(|e| ("_".to_string(), e))
+                .collect(),
             return_type,
         }))
     }
@@ -132,15 +156,19 @@ impl Type {
                 param_types,
                 return_type,
             } => {
-                let param_types = param_types
-                    .iter()
-                    .map(|e| Self::from_ast(e, type_system))
-                    .collect::<Result<Vec<Type>, TypeCheckerError>>()?;
+                let mut params = Vec::with_capacity(param_types.len());
 
-                Ok(Type::new_function(
-                    param_types,
-                    Self::from_ast(return_type, type_system)?,
-                ))
+                for p_ast in param_types {
+                    let ty = Self::from_ast(p_ast, type_system)?;
+                    params.push(("_".to_string(), ty));
+                }
+
+                Ok(Type::Function(Rc::new(FunctionType {
+                    is_static: false,
+                    is_vararg: false,
+                    params,
+                    return_type: Self::from_ast(return_type, type_system)?,
+                })))
             }
             TypeAst::Optional(inner) => {
                 let inner_ty = Self::from_ast(inner, type_system)?;
@@ -160,31 +188,49 @@ impl Type {
                 param_types,
                 return_type,
             } => {
-                let first_param_type = param_types.first();
-                let mut result_param_type = vec![];
+                let mut resolved_params = Vec::new();
 
-                let is_instance_method = if let Some(TypeAst::Named(name)) = first_param_type {
+                let is_instance_method = if let Some(TypeAst::Named(name)) = param_types.first() {
                     name.lexeme == "Self"
                 } else {
                     false
                 };
 
                 if is_instance_method {
-                    result_param_type.push(Type::from_identifier(self_type, type_system)?);
+                    let self_ty = Type::from_identifier(self_type, type_system)?;
+                    resolved_params.push(("self".to_string(), self_ty));
                 }
 
-                for param_type in param_types.iter().skip(0 + is_instance_method as usize) {
-                    result_param_type.push(Self::from_ast(param_type, type_system)?);
+                for param_ast in param_types
+                    .iter()
+                    .skip(if is_instance_method { 1 } else { 0 })
+                {
+                    let ty = Self::from_ast(param_ast, type_system)?;
+                    resolved_params.push(("_".to_string(), ty));
                 }
 
                 Ok(Type::Function(Rc::new(FunctionType {
                     is_static: !is_instance_method,
                     is_vararg: false,
                     return_type: Self::from_ast(return_type.as_ref(), type_system)?,
-                    param_types: result_param_type,
+                    params: resolved_params,
                 })))
             }
             _ => unreachable!(),
+        }
+    }
+
+    pub fn patch_param_names(self, params: &[Token]) -> Type {
+        if let Type::Function(mut func_rc) = self {
+            let func = Rc::make_mut(&mut func_rc);
+
+            for (i, param_token) in params.iter().enumerate() {
+                func.params[i].0 = param_token.lexeme.to_string();
+            }
+
+            Type::Function(func_rc)
+        } else {
+            unreachable!("Type::from_ast returned non-function for Function AST");
         }
     }
 }
@@ -201,9 +247,9 @@ impl Display for Type {
                     f,
                     "fn({}) -> {}",
                     function_type
-                        .param_types
+                        .params
                         .iter()
-                        .map(|t| format!("{}", t))
+                        .map(|t| format!("{}", t.1))
                         .collect::<Vec<_>>()
                         .join(", "),
                     function_type.return_type

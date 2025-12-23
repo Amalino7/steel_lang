@@ -7,6 +7,7 @@ use crate::typechecker::type_system::TypeSystem;
 use std::mem::replace;
 use std::rc::Rc;
 
+mod call_bindings;
 pub mod error;
 mod expressions;
 mod get_handles;
@@ -25,7 +26,6 @@ enum FunctionContext {
     Function(Type),
 }
 pub type Symbol = Rc<str>;
-
 pub struct TypeChecker<'src> {
     current_function: FunctionContext,
     sys: TypeSystem,

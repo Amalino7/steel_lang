@@ -22,7 +22,7 @@ pub fn get_natives() -> Vec<NativeDef> {
         },
         NativeDef {
             name: "panic",
-            type_: Type::new_function(vec![Type::Any], Type::Void),
+            type_: Type::new_function(vec![("msg".into(), Type::Any)], Type::Void),
             func: |args| {
                 // TODO add language level error handling
                 panic!("{}", args[0]);
@@ -40,7 +40,10 @@ pub fn get_natives() -> Vec<NativeDef> {
         },
         NativeDef {
             name: "assert",
-            type_: Type::new_function(vec![Type::Any, Type::Any], Type::Void),
+            type_: Type::new_function(
+                vec![("left".into(), Type::Any), ("right".into(), Type::Any)],
+                Type::Void,
+            ),
             func: |args| {
                 if args[0] != args[1] {
                     panic!("Assertion failed: {} != {}", args[0], args[1]);

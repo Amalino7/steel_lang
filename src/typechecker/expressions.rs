@@ -4,12 +4,11 @@ use crate::token::{Token, TokenType};
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::error::TypeCheckerError::AssignmentToCapturedVariable;
 use crate::typechecker::scope_manager::ScopeType;
+use crate::typechecker::type_ast::Type::Enum;
 use crate::typechecker::type_ast::{
     BinaryOp, ExprKind, LogicalOp, StructType, Type, TypedExpr, UnaryOp,
 };
 use crate::typechecker::TypeChecker;
-use std::cmp::min;
-use std::collections::HashSet;
 
 impl<'src> TypeChecker<'src> {
     pub(crate) fn infer_expression(
@@ -235,52 +234,45 @@ impl<'src> TypeChecker<'src> {
                 arguments,
                 safe,
             } => {
-                let callee_typed = self.infer_expression(callee)?;
+                // Handle args
+                let mut inferred_args = Vec::with_capacity(arguments.len());
 
-                // Enum logic
-                if let ExprKind::EnumConstructor {
-                    enum_name,
-                    variant_idx,
-                } = &callee_typed.kind
-                {
-                    if let Type::Function(func) = &callee_typed.ty {
-                        if func.param_types.len() != arguments.len() {
-                            return Err(TypeCheckerError::IncorrectArity {
-                                callee_name: "Enum Variant Constructor".to_string(),
-                                expected: func.param_types.len(),
-                                found: arguments.len(),
-                                line: callee_typed.line,
-                            });
-                        }
+                for arg in arguments {
+                    let typed_val = self.infer_expression(&arg.expr)?;
 
-                        let mut typed_args = Vec::with_capacity(arguments.len());
-                        for (i, arg) in arguments.iter().enumerate() {
-                            let arg_typed = self.infer_expression(arg)?;
-                            let expected_type = &func.param_types[i];
+                    let label = arg.label.as_ref().map(|t| t.lexeme);
+                    let line = arg
+                        .label
+                        .as_ref()
+                        .map(|t| t.line)
+                        .unwrap_or(callee.get_line());
 
-                            let coerced_arg = self
-                                .sys
-                                .verify_assignment(expected_type, arg_typed, callee_typed.line)
-                                .map_err(|_| TypeCheckerError::FunctionParameterTypeMismatch {
-                                    expected: expected_type.clone(),
-                                    found: self.infer_expression(arg).unwrap().ty,
-                                    param_index: i,
-                                    line: callee_typed.line,
-                                })?;
-                            typed_args.push(coerced_arg);
-                        }
-
-                        return Ok(TypedExpr {
-                            ty: func.return_type.clone(),
-                            kind: ExprKind::EnumInit {
-                                enum_name: enum_name.clone(),
-                                variant_idx: *variant_idx,
-                                args: typed_args,
-                            },
-                            line: callee_typed.line,
-                        });
-                    }
+                    inferred_args.push((label, typed_val, line));
                 }
+                // Handle Struct constructor
+                if let Expr::Variable { name } = &**callee
+                    && let Some(struct_def) = self.sys.get_struct(&name.lexeme)
+                {
+                    let owned_name = struct_def.name.clone();
+                    let bound_args = self.bind_arguments(
+                        &name.lexeme,
+                        &struct_def.ordered_fields,
+                        inferred_args,
+                        false,
+                        callee.get_line(),
+                    )?;
+
+                    return Ok(TypedExpr {
+                        ty: Type::Struct(owned_name.clone()),
+                        kind: ExprKind::StructInit {
+                            name: Box::from(owned_name.to_string()),
+                            args: bound_args,
+                        },
+                        line: callee.get_line(),
+                    });
+                }
+
+                let callee_typed = self.infer_expression(callee)?;
 
                 let safe = if let ExprKind::MethodGet { safe, .. } = callee_typed.kind {
                     safe
@@ -306,132 +298,71 @@ impl<'src> TypeChecker<'src> {
                     callee_typed.ty.clone()
                 };
 
-                if let Type::Function(func) = lookup_type {
-                    // Check arity
-                    if (func.param_types.len() != arguments.len() && !func.is_vararg)
-                        || (func.is_vararg && arguments.len() < func.param_types.len())
-                    {
-                        return Err(TypeCheckerError::IncorrectArity {
-                            callee_name: callee.to_string(),
-                            expected: func.param_types.len(),
-                            found: arguments.len(),
-                            line: callee_typed.line,
-                        });
-                    }
+                // Handle enum case
+                if let ExprKind::EnumConstructor {
+                    enum_name,
+                    variant_idx,
+                } = &callee_typed.kind
+                    && let Type::Function(func) = lookup_type
+                {
+                    let bound_args = self.bind_arguments(
+                        enum_name.as_ref(),
+                        &func.params,
+                        inferred_args,
+                        func.is_vararg,
+                        callee_typed.line,
+                    )?;
 
-                    let mut typed_args = Vec::with_capacity(arguments.len());
-
-                    for (mut i, arg) in arguments.iter().enumerate() {
-                        let arg_typed = self.infer_expression(arg)?;
-                        i = min(i, func.param_types.len() - 1);
-
-                        let expected_param_type = &func.param_types[i];
-                        let found = arg_typed.ty.clone();
-
-                        if *expected_param_type != Type::Any {
-                            let coerced_arg = self
-                                .sys
-                                .verify_assignment(
-                                    expected_param_type,
-                                    arg_typed,
-                                    callee_typed.line,
-                                )
-                                .map_err(|_| TypeCheckerError::FunctionParameterTypeMismatch {
-                                    expected: expected_param_type.clone(),
-                                    found,
-                                    param_index: i,
-                                    line: callee_typed.line,
-                                })?;
-                            typed_args.push(coerced_arg);
-                        } else {
-                            typed_args.push(arg_typed);
-                        }
-                    }
-                    let return_type = if safe {
-                        func.return_type.clone().wrap_in_optional()
-                    } else {
-                        func.return_type.clone()
-                    };
-
-                    Ok(TypedExpr {
-                        ty: return_type,
+                    return Ok(TypedExpr {
+                        ty: Enum(enum_name.clone()),
                         line: callee_typed.line,
-                        kind: ExprKind::Call {
-                            callee: Box::new(callee_typed),
-                            arguments: typed_args,
-                            safe,
+                        kind: ExprKind::EnumInit {
+                            enum_name: enum_name.clone(),
+                            variant_idx: *variant_idx,
+                            args: bound_args,
                         },
-                    })
-                } else {
-                    Err(TypeCheckerError::CalleeIsNotAFunction {
+                    });
+                }
+
+                // Check for Normal Function Call
+                match lookup_type {
+                    Type::Function(func) => {
+                        let bound_args = self.bind_arguments(
+                            "function",
+                            &func.params,
+                            inferred_args,
+                            func.is_vararg,
+                            callee_typed.line,
+                        )?;
+
+                        let ret_type = if safe {
+                            func.return_type.clone().wrap_in_optional()
+                        } else {
+                            func.return_type.clone()
+                        };
+
+                        Ok(TypedExpr {
+                            ty: ret_type,
+                            line: callee_typed.line,
+                            kind: ExprKind::Call {
+                                callee: Box::new(callee_typed),
+                                arguments: bound_args,
+                                safe,
+                            },
+                        })
+                    }
+                    _ => Err(TypeCheckerError::CalleeIsNotCallable {
                         found: callee_typed.ty,
                         line: callee_typed.line,
-                    })
+                    }),
                 }
-            }
-            Expr::StructInitializer { name, fields } => {
-                let struct_type = self
-                    .sys
-                    .get_struct(name.lexeme)
-                    .ok_or(TypeCheckerError::UndefinedType {
-                        name: name.lexeme.to_string(),
-                        line: name.line,
-                        message: "Expected a struct type here.",
-                    })?
-                    .clone();
-
-                let mut args = vec![];
-                let mut defined_fields = HashSet::new();
-
-                for (field_tok, expr) in fields {
-                    let arg_expr = self.infer_expression(expr)?;
-
-                    let (idx, expected_type) = match struct_type.fields.get(field_tok.lexeme) {
-                        Some(f) => f.clone(),
-                        None => {
-                            return Err(TypeCheckerError::UndefinedField {
-                                struct_name: struct_type.name.to_string(),
-                                field_name: field_tok.lexeme.to_string(),
-                                line: field_tok.line,
-                            });
-                        }
-                    };
-
-                    let coerced_arg =
-                        self.sys
-                            .verify_assignment(&expected_type, arg_expr, field_tok.line)?;
-
-                    args.push((idx, coerced_arg));
-                    defined_fields.insert(field_tok.lexeme);
-                }
-
-                // Sorting and Missing Field checks...
-                args.sort_by(|a, b| a.0.cmp(&b.0));
-                for field in struct_type.fields.keys() {
-                    if !defined_fields.contains(field.as_str()) {
-                        return Err(TypeCheckerError::MissingField {
-                            struct_name: struct_type.name.to_string(),
-                            field_name: field.to_string(),
-                            line: name.line,
-                        });
-                    }
-                }
-
-                Ok(TypedExpr {
-                    ty: Type::Struct(struct_type.name),
-                    kind: ExprKind::StructInit {
-                        name: Box::from(name.lexeme),
-                        args: args.into_iter().map(|(_, arg)| arg).collect(),
-                    },
-                    line: name.line,
-                })
             }
             Expr::Get {
                 object,
                 field,
                 safe,
             } => {
-                // Ignores safe static access probably should be a warning
+                //TODO Ignores safe static access probably should be a warning
                 if let Expr::Variable { name } = object.as_ref()
                     && self.sys.does_type_exist(name.lexeme)
                 {
@@ -521,7 +452,11 @@ impl<'src> TypeChecker<'src> {
         field: &Token,
         field_value: &TypedExpr,
     ) -> Result<(usize, Type), TypeCheckerError> {
-        let field_type = struct_def.fields.get(field.lexeme);
+        let field_type = struct_def
+            .fields
+            .get(field.lexeme)
+            .map(|id| (*id, struct_def.ordered_fields[*id].1.clone()));
+
         match field_type {
             None => Err(TypeCheckerError::UndefinedField {
                 struct_name: struct_def.name.to_string(),
@@ -530,8 +465,8 @@ impl<'src> TypeChecker<'src> {
             }),
             Some((id, field_type)) => {
                 self.sys
-                    .verify_assignment(field_type, field_value.clone(), field.line)?;
-                Ok((*id, field_type.clone()))
+                    .verify_assignment(&field_type, field_value.clone(), field.line)?;
+                Ok((id, field_type))
             }
         }
     }

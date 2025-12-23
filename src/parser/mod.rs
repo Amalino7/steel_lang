@@ -13,6 +13,7 @@ pub struct Parser<'src> {
     scanner: Scanner<'src>,
     previous_token: Token<'src>,
     current_token: Token<'src>,
+    next_token: Token<'src>,
     allow_struct_init: bool,
 }
 macro_rules! check_token_type {
@@ -39,19 +40,32 @@ macro_rules! match_token_type {
 
 use match_token_type;
 
+macro_rules! check_next_token_type {
+    ($parser:expr, $( $token_type:pat $(,)?)*) => {
+        match $parser.next_token.token_type {
+            $( $token_type )|+  => true,
+            _ => false,
+        }
+    };
+}
+use check_next_token_type;
+
 impl<'src> Parser<'src> {
     pub fn new(mut scanner: Scanner<'src>) -> Self {
         let start_token = scanner.next_token();
+        let next = scanner.next_token();
         Parser {
             scanner,
             previous_token: start_token.clone(),
             current_token: start_token,
+            next_token: next,
             allow_struct_init: true,
         }
     }
     fn advance(&mut self) -> Result<(), ParserError<'src>> {
         self.previous_token = self.current_token.clone();
-        self.current_token = self.scanner.next_token();
+        self.current_token = self.next_token.clone();
+        self.next_token = self.scanner.next_token();
         if self.current_token.token_type == TokenType::UnexpectedSymbolError {
             Err(ParserError::UnexpectedToken {
                 found: self.current_token.clone(),

@@ -34,8 +34,14 @@ impl<'src> TypeChecker<'src> {
                 line: variant_name.line,
             })
         } else {
-            let func_type =
-                Type::new_function(variant_types.clone(), Type::Enum(enum_def.name.clone()));
+            let func_type = Type::new_function(
+                variant_types
+                    .iter()
+                    .enumerate()
+                    .map(|(id, type_)| (id.to_string(), type_.clone()))
+                    .collect(),
+                Type::Enum(enum_def.name.clone()),
+            );
             Some(TypedExpr {
                 ty: func_type,
                 kind: ExprKind::EnumConstructor {
@@ -102,12 +108,12 @@ impl<'src> TypeChecker<'src> {
                 .get_struct(name)
                 .expect("Struct type missing definition");
 
-            if let Some((idx, field_type)) = struct_def.fields.get(member_token.lexeme) {
+            if let Some((idx, field_type)) = struct_def.get_field(member_token.lexeme) {
                 let mut expr = TypedExpr {
                     ty: field_type.clone(),
                     kind: ExprKind::GetField {
                         object: Box::new(object_typed),
-                        index: *idx as u8,
+                        index: idx as u8,
                         safe: is_safe,
                     },
                     line: member_token.line,
@@ -133,7 +139,7 @@ impl<'src> TypeChecker<'src> {
 
             let ty = match method_ty {
                 Type::Function(func) => {
-                    let params = func.param_types.iter().skip(1).cloned().collect();
+                    let params = func.params.iter().skip(1).cloned().collect();
                     Type::new_function(params, func.return_type.clone())
                 }
                 other => other.clone(),
@@ -183,17 +189,14 @@ impl<'src> TypeChecker<'src> {
             Type::Function(func) => {
                 let return_type = func.return_type.clone();
 
-                if func.param_types.is_empty()
-                    || &func.param_types[0] != lookup_type
-                    || func.is_static
-                {
+                if func.params.is_empty() || &func.params[0].1 != lookup_type || func.is_static {
                     return Err(TypeCheckerError::StaticMethodOnInstance {
                         method_name: field.lexeme.to_string(),
                         line: field.line,
                     });
                 }
 
-                let params = func.param_types.iter().skip(1).cloned().collect();
+                let params = func.params.iter().skip(1).cloned().collect();
                 Type::new_function(params, return_type)
             }
             ty => ty.clone(),

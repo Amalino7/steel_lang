@@ -28,10 +28,6 @@ pub enum Expr<'src> {
         operator: Token<'src>,
         expression: Box<Expr<'src>>,
     },
-    StructInitializer {
-        name: Token<'src>,
-        fields: Vec<(Token<'src>, Expr<'src>)>,
-    },
     Binary {
         operator: Token<'src>,
         left: Box<Expr<'src>>,
@@ -58,7 +54,7 @@ pub enum Expr<'src> {
     },
     Call {
         callee: Box<Expr<'src>>,
-        arguments: Vec<Expr<'src>>,
+        arguments: Vec<CallArg<'src>>,
         safe: bool,
     },
     Get {
@@ -76,6 +72,11 @@ pub enum Expr<'src> {
         expression: Box<Expr<'src>>,
         line: u32,
     },
+}
+#[derive(Clone, Debug, PartialEq)]
+pub struct CallArg<'src> {
+    pub label: Option<Token<'src>>,
+    pub expr: Expr<'src>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -234,17 +235,17 @@ impl Display for Expr<'_> {
                     write!(f, "{}.{} = {}", object, name.lexeme, value)
                 }
             }
-            Expr::StructInitializer { name, fields } => {
-                write!(f, "{} {{", name.lexeme)?;
-                for (name, value) in fields {
-                    write!(f, "{} : {},", name.lexeme, value)?;
-                }
-                write!(f, "}}")
-            }
-
             Expr::ForceUnwrap { expression, .. } => {
                 write!(f, "!!({})", expression)
             }
+        }
+    }
+}
+impl Display for CallArg<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match &self.label {
+            None => write!(f, "{}", self.expr),
+            Some(label) => write!(f, "{} : {} ", label.lexeme, self.expr),
         }
     }
 }
@@ -391,7 +392,6 @@ impl Expr<'_> {
             Expr::Call { callee, .. } => callee.get_line(),
             Expr::Get { field, .. } => field.line,
             Expr::Set { value, .. } => value.get_line(),
-            Expr::StructInitializer { name, .. } => name.line,
             Expr::ForceUnwrap { line, .. } => *line,
         }
     }

@@ -240,13 +240,16 @@ impl<'src> TypeChecker<'src> {
                 body,
                 type_,
             } => {
-                // global functions are already declared
-                let type_ = Type::from_ast(type_, &self.sys)?;
+                let raw_type = Type::from_ast(type_, &self.sys)?;
+
+                let final_type = raw_type.patch_param_names(params);
+
                 if !self.scopes.is_global() {
-                    self.scopes.declare(name.lexeme.into(), type_.clone())?;
+                    self.scopes
+                        .declare(name.lexeme.into(), final_type.clone())?;
                 }
 
-                self.check_function(name, params, body, type_, name.lexeme.into())
+                self.check_function(name, params, body, final_type, name.lexeme.into())
             }
             Stmt::Return(expr) => {
                 let return_expr = self.infer_expression(expr)?;
@@ -390,7 +393,7 @@ impl<'src> TypeChecker<'src> {
             // Declare parameters.
             for (i, param) in params.iter().enumerate() {
                 self.scopes
-                    .declare(param.lexeme.into(), func.param_types[i].clone())?;
+                    .declare(param.lexeme.into(), func.params[i].1.clone())?;
             }
 
             let func_body = body

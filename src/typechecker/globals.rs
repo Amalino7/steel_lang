@@ -1,4 +1,5 @@
 use crate::parser::ast::Stmt;
+use crate::token::Token;
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::type_ast::Type;
 use crate::typechecker::{Symbol, TypeChecker};
@@ -10,12 +11,12 @@ impl<'src> TypeChecker<'src> {
             match stmt {
                 Stmt::Function {
                     name,
-                    params: _,
+                    params,
                     type_: type_info,
                     body: _,
                 } => {
                     let type_info = Type::from_ast(type_info, &self.sys);
-                    self.declare_function(name.lexeme.into(), type_info);
+                    self.declare_function(name.lexeme.into(), type_info, params);
                 }
                 Stmt::Impl {
                     interfaces,
@@ -36,14 +37,14 @@ impl<'src> TypeChecker<'src> {
                         match method {
                             Stmt::Function {
                                 name: func_name,
-                                params: _,
+                                params,
                                 type_: type_info,
                                 body: _,
                             } => {
                                 let func_type = Type::from_method_ast(type_info, name, &self.sys);
                                 let mangled_name: Symbol =
                                     format!("{}.{}", name.lexeme, func_name.lexeme).into();
-                                self.declare_function(mangled_name, func_type);
+                                self.declare_function(mangled_name, func_type, params);
                             }
                             _ => unreachable!(),
                         }
@@ -68,13 +69,19 @@ impl<'src> TypeChecker<'src> {
         }
     }
 
-    fn declare_function(&mut self, name: Symbol, func_type: Result<Type, TypeCheckerError>) {
+    fn declare_function(
+        &mut self,
+        name: Symbol,
+        func_type: Result<Type, TypeCheckerError>,
+        params: &[Token],
+    ) {
         if let Err(e) = func_type {
             self.errors.push(e);
             return;
         }
+        let func_type = func_type.unwrap().patch_param_names(params);
 
-        let res = self.scopes.declare(name, func_type.unwrap());
+        let res = self.scopes.declare(name, func_type);
 
         if let Err(e) = res {
             self.errors.push(e);

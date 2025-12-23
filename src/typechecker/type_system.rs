@@ -29,6 +29,7 @@ impl TypeSystem {
             StructType {
                 name,
                 fields: HashMap::new(),
+                ordered_fields: vec![],
             },
         );
     }
@@ -57,8 +58,21 @@ impl TypeSystem {
         );
     }
 
-    pub fn define_struct(&mut self, name: &str, fields: HashMap<String, (usize, Type)>) {
-        self.structs.get_mut(name).map(|e| e.fields = fields);
+    pub fn define_struct(&mut self, name: &str, fields_map: HashMap<String, (usize, Type)>) {
+        if let Some(s) = self.structs.get_mut(name) {
+            s.fields = fields_map
+                .iter()
+                .map(|(k, (idx, _))| (k.clone(), *idx))
+                .collect();
+
+            let mut vec_fields = vec![None; fields_map.len()];
+            for (k, (idx, t)) in fields_map {
+                if idx < vec_fields.len() {
+                    vec_fields[idx] = Some((k, t));
+                }
+            }
+            s.ordered_fields = vec_fields.into_iter().map(|opt| opt.unwrap()).collect();
+        }
     }
 
     pub fn define_interface(&mut self, name: &str, methods: HashMap<String, (usize, Type)>) {
@@ -124,6 +138,9 @@ impl TypeSystem {
         expr: TypedExpr,
         line: u32,
     ) -> Result<TypedExpr, TypeCheckerError> {
+        if expected_type == &Type::Any {
+            return Ok(expr);
+        }
         if let Type::Optional(_) = expected_type {
             if expr.ty == Type::Nil {
                 return Ok(expr);
@@ -170,19 +187,14 @@ impl TypeSystem {
                 if func.is_static {
                     return implementation == expected;
                 }
-                if impls.param_types.len() != func.param_types.len() {
+                if impls.params.len() != func.params.len() {
                     return false;
                 }
                 if impls.return_type != func.return_type {
                     return false;
                 }
-                for (param, impl_param) in func
-                    .param_types
-                    .iter()
-                    .zip(impls.param_types.iter())
-                    .skip(1)
-                {
-                    if param != impl_param {
+                for (param, impl_param) in func.params.iter().zip(impls.params.iter()).skip(1) {
+                    if param.1 != impl_param.1 {
                         return false;
                     }
                 }

@@ -11,7 +11,7 @@ pub enum TypeCheckerError {
         name: String,
         line: u32,
     },
-    CalleeIsNotAFunction {
+    CalleeIsNotCallable {
         found: Type,
         line: u32,
     },
@@ -86,6 +86,31 @@ pub enum TypeCheckerError {
         variant: String,
         line: u32,
     },
+    TooManyArguments {
+        callee: String,
+        expected: usize,
+        found: usize,
+        line: u32,
+    },
+    DuplicateArgument {
+        name: String,
+        line: u32,
+    },
+    UndefinedParameter {
+        param_name: String,
+        callee: String,
+        line: u32,
+    },
+    MissingArgument {
+        param_name: String,
+        callee: String,
+        line: u32,
+    },
+    PositionalArgumentAfterNamed {
+        callee: String,
+        message: &'static str,
+        line: u32,
+    },
 }
 
 impl TypeCheckerError {
@@ -93,7 +118,7 @@ impl TypeCheckerError {
         match self {
             TypeCheckerError::UndefinedType { line, .. } => *line,
             TypeCheckerError::UndefinedVariable { line, .. } => *line,
-            TypeCheckerError::CalleeIsNotAFunction { line, .. } => *line,
+            TypeCheckerError::CalleeIsNotCallable { line, .. } => *line,
             TypeCheckerError::TypeMismatch { line, .. } => *line,
             TypeCheckerError::IncorrectArity { line, .. } => *line,
             TypeCheckerError::InvalidReturnOutsideFunction { line, .. } => *line,
@@ -110,6 +135,11 @@ impl TypeCheckerError {
             TypeCheckerError::Redeclaration { line, .. } => *line,
             TypeCheckerError::DoesNotImplementInterface { line, .. } => *line,
             TypeCheckerError::UncoveredPattern { line, .. } => *line,
+            TypeCheckerError::TooManyArguments { line, .. } => *line,
+            TypeCheckerError::DuplicateArgument { line, .. } => *line,
+            TypeCheckerError::UndefinedParameter { line, .. } => *line,
+            TypeCheckerError::MissingArgument { line, .. } => *line,
+            TypeCheckerError::PositionalArgumentAfterNamed { line, .. } => *line,
         }
     }
 }
@@ -120,7 +150,7 @@ impl std::fmt::Display for TypeCheckerError {
             TypeCheckerError::UndefinedVariable { name, line } => {
                 write!(f, "[line {}] Error: Undefined variable '{}'.", line, name)
             }
-            TypeCheckerError::CalleeIsNotAFunction { found, line } => {
+            TypeCheckerError::CalleeIsNotCallable { found, line } => {
                 write!(
                     f,
                     "[line {}] Error: Cannot call type different from function.\n Found type '{}' where a function was expected.",
@@ -269,6 +299,59 @@ impl std::fmt::Display for TypeCheckerError {
                     f,
                     "[line {}] Error: Uncovered pattern matching variant '{}'.",
                     line, variant
+                )
+            }
+            TypeCheckerError::DuplicateArgument { name, line } => {
+                write!(
+                    f,
+                    "[line {}] Error: Duplicate argument name '{}'.",
+                    line, name
+                )
+            }
+            TypeCheckerError::UndefinedParameter {
+                param_name,
+                callee,
+                line,
+            } => {
+                write!(
+                    f,
+                    "[line {}] Error: Undefined parameter '{}' in function '{}'.",
+                    line, param_name, callee
+                )
+            }
+
+            TypeCheckerError::TooManyArguments {
+                callee,
+                expected,
+                found,
+                line,
+            } => {
+                write!(
+                    f,
+                    "[line {}] Error: Too many arguments for function '{}'. Expected {} but found {}.",
+                    line, callee, expected, found
+                )
+            }
+            TypeCheckerError::MissingArgument {
+                param_name,
+                callee,
+                line,
+            } => {
+                write!(
+                    f,
+                    "[line {}] Error: Missing argument '{}' in function '{}'.",
+                    line, param_name, callee
+                )
+            }
+            TypeCheckerError::PositionalArgumentAfterNamed {
+                callee,
+                message,
+                line,
+            } => {
+                write!(
+                    f,
+                    "[line {}] Error: Positional argument after named in function '{}'. {}",
+                    line, callee, message
                 )
             }
         }
