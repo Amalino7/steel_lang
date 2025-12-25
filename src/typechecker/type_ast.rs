@@ -419,16 +419,17 @@ pub enum StmtKind {
     Global {
         global_count: u32,
         stmts: Vec<TypedStmt>,
+        reserved: u16,
     },
     Expression(TypedExpr),
     Return(TypedExpr),
     Let {
-        target: ResolvedVar,
+        binding: TypedBinding,
         value: TypedExpr,
     },
     Block {
         body: Vec<TypedStmt>,
-        variable_count: u8,
+        reserved: u16,
     },
     If {
         condition: TypedExpr,
@@ -449,6 +450,13 @@ pub enum StmtKind {
         body: Box<TypedStmt>,
         captures: Box<[ResolvedVar]>,
     },
+}
+#[derive(Debug)]
+pub enum TypedBinding {
+    Variable(ResolvedVar),
+    Ignored,
+    Tuple(Vec<TypedBinding>),
+    Struct(Vec<(u8, TypedBinding)>),
 }
 
 #[derive(Debug)]

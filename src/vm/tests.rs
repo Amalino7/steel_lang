@@ -399,7 +399,8 @@ mod tests {
 
     #[test]
     fn test_local_override() {
-        let src = r#"{
+        let src = r#"
+        {
             let a = 1;
             {
                 let b = 2;
@@ -1495,8 +1496,46 @@ mod tests {
         let src = r#"
             func returns_tuple(): (number, number) { return (1, 2);}
             let tuple = returns_tuple();
+            let (a,b) = returns_tuple();
+            println(a," ", b);
+
+            let tuple2: (number, number)? = (3, 4);
+            println(tuple2?.0);
+            println(tuple2?.1);
+            assert(tuple2?.0, 3);
+            assert(tuple2?.1, 4);
+
+            tuple2?.1 = 2;
+            assert(tuple2?.1, 2);
+            assert(( 2 + 5) * 5, 35);
+            tuple2 = nil;
+            assert(tuple2?.0, nil);
+            assert(tuple2?.1, nil);
             assert(tuple.0, 1);
             assert(tuple.1, 2);
+        "#;
+        execute_source(src, false, "run", true);
+    }
+    #[test]
+    fn test_destructuring() {
+        let src = r#"
+            struct Point {x: number, y: number}
+
+            let Point(y: x, x: y) = Point(x: 1, y: 2);
+            assert(x, 2);
+            assert(y, 1);
+            struct Complex {one: (number, number, Other, Other), two: Other}
+            struct Other{a: number, b: number}
+
+            let Complex(one: (a,b, _, other), two: Other(a: c,b: d) )  = Complex(one: (1, 2, Other(3,4) , Other(5,6) ), two: Other(7,8));
+            println(a,b,other.a,other.b, c, d);
+            assert(1, a);
+            assert(2, b);
+            assert(other.a, 5);
+            assert(other.b, 6);
+            assert(c, 7);
+            assert(d, 8);
+
         "#;
         execute_source(src, false, "run", true);
     }

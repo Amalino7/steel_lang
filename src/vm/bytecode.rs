@@ -28,6 +28,9 @@ pub enum Opcode {
 
     Nil,
     Pop,
+    Reserve,
+    Dup,
+
     JumpIfFalse,
     Jump,
     JumpBack,

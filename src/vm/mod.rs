@@ -202,6 +202,15 @@ impl VM {
                 Opcode::Pop => {
                     self.stack.pop();
                 }
+                Opcode::Dup => {
+                    let val = self.stack.get_top();
+                    self.stack.push(val);
+                }
+                Opcode::Reserve => {
+                    let amount = chunk.instructions[current_frame.ip] as usize;
+                    current_frame.ip += 1;
+                    self.stack.top += amount;
+                }
                 Opcode::Nil => {
                     self.stack.push(Value::Nil);
                 }

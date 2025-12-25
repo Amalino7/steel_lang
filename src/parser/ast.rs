@@ -91,16 +91,62 @@ pub struct MatchArm<'src> {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Pattern<'src> {
-    pub enum_name: Token<'src>,
+    pub enum_name: Option<Token<'src>>,
     pub variant_name: Token<'src>,
-    pub captures: Vec<Token<'src>>,
+    pub bind: Binding<'src>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Binding<'src> {
+    Struct {
+        name: Token<'src>,
+        fields: Vec<(Token<'src>, Binding<'src>)>,
+    },
+    Tuple {
+        fields: Vec<Binding<'src>>,
+    },
+    Variable(Token<'src>),
+}
+
+impl<'src> Binding<'src> {
+    pub(crate) fn get_line(&self) -> u32 {
+        match self {
+            Binding::Struct { name, .. } => name.line,
+            Binding::Tuple { fields } => fields[0].get_line(),
+            Binding::Variable(name) => name.line,
+        }
+    }
+}
+impl Display for Binding<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Binding::Struct { name, fields } => {
+                write!(f, "{}", name.lexeme)?;
+                write!(f, "(")?;
+                for field in fields {
+                    write!(f, " {}: {} ,", field.0.lexeme, field.1)?;
+                }
+                write!(f, ")")
+            }
+            Binding::Tuple { fields } => {
+                write!(f, "(")?;
+                for field in fields {
+                    write!(f, " {} ,", field)?;
+                }
+                write!(f, ")")
+            }
+            Binding::Variable(name) => {
+                write!(f, "{}", name.lexeme)
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Stmt<'src> {
     Expression(Expr<'src>),
     Let {
-        identifier: Token<'src>,
+        binding: Binding<'src>,
         value: Expr<'src>,
         type_info: TypeAst<'src>,
     },
@@ -304,11 +350,11 @@ impl Display for Stmt<'_> {
         match self {
             Stmt::Expression(expr) => write!(f, "{}", expr),
             Stmt::Let {
-                identifier,
+                binding,
                 value,
                 type_info,
                 ..
-            } => write!(f, "let {}: {} = {}", identifier.lexeme, type_info, value),
+            } => write!(f, "let {}: {} = {}", binding, type_info, value),
             Stmt::Block { body, .. } => {
                 write!(f, "do\n")?;
                 for statement in body {
@@ -427,7 +473,10 @@ impl Stmt<'_> {
     pub fn get_line(&self) -> u32 {
         match self {
             Stmt::Expression(expr) => expr.get_line(),
-            Stmt::Let { identifier, .. } => identifier.line,
+            Stmt::Let {
+                binding: identifier,
+                ..
+            } => identifier.get_line(),
             Stmt::Block { body, .. } => {
                 if let Some(first_stmt) = body.first() {
                     first_stmt.get_line()

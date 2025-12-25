@@ -3,7 +3,7 @@ pub mod analysis;
 use crate::compiler::analysis::ResolvedVar;
 use crate::parser::ast::Literal;
 use crate::typechecker::type_ast::{
-    BinaryOp, ExprKind, LogicalOp, StmtKind, TypedExpr, TypedStmt, UnaryOp,
+    BinaryOp, ExprKind, LogicalOp, StmtKind, TypedBinding, TypedExpr, TypedStmt, UnaryOp,
 };
 use crate::vm::bytecode::{Chunk, Opcode};
 use crate::vm::gc::GarbageCollector;
@@ -38,33 +38,21 @@ impl<'a> Compiler<'a> {
                 self.compile_expr(e);
                 self.emit_op(Opcode::Pop, stmt.line);
             }
-            StmtKind::Let { target, value } => {
+            StmtKind::Let { binding, value } => {
                 self.compile_expr(value);
 
-                match target {
-                    ResolvedVar::Local(_) => {
-                        // there is no need to set the variable it is already in the right slot
-                    }
-                    ResolvedVar::Global(idx) => {
-                        self.emit_op(Opcode::SetGlobal, stmt.line);
-                        self.emit_byte(*idx as u8, stmt.line);
-
-                        self.emit_op(Opcode::Pop, stmt.line);
-                    }
-                    ResolvedVar::Closure(_) => {
-                        unreachable!("Closures shouldn't be assigned to")
-                    }
-                }
+                self.compile_binding(binding, stmt.line);
             }
             StmtKind::Block {
                 body: stmts,
-                variable_count,
+                reserved,
             } => {
+                if *reserved != 0 {
+                    self.emit_op(Opcode::Reserve, stmt.line);
+                    self.emit_byte(*reserved as u8, stmt.line);
+                }
                 for stmt in stmts {
                     self.compile_stmt(stmt);
-                }
-                for _ in 0..*variable_count {
-                    self.emit_op(Opcode::Pop, stmt.line);
                 }
             }
             StmtKind::If {
@@ -171,8 +159,11 @@ impl<'a> Compiler<'a> {
                 }
 
                 match target {
-                    ResolvedVar::Local(_) => {
-                        // there is no need to set the variable it is already in the right slot
+                    ResolvedVar::Local(idx) => {
+                        self.emit_op(Opcode::SetLocal, stmt.line);
+                        self.emit_byte(*idx, stmt.line);
+
+                        self.emit_op(Opcode::Pop, stmt.line);
                     }
                     ResolvedVar::Global(idx) => {
                         self.emit_op(Opcode::SetGlobal, line);
@@ -189,8 +180,14 @@ impl<'a> Compiler<'a> {
                 self.compile_expr(val);
                 self.emit_op(Opcode::Return, stmt.line);
             }
-            StmtKind::Global { stmts: stmt, .. } => {
-                for s in stmt {
+            StmtKind::Global {
+                stmts, reserved, ..
+            } => {
+                if *reserved != 0 {
+                    self.emit_op(Opcode::Reserve, stmt.line);
+                    self.emit_byte(*reserved as u8, stmt.line);
+                }
+                for s in stmts {
                     match &s.kind {
                         StmtKind::Function { .. } => self.compile_stmt(s),
                         StmtKind::Impl { .. } => {
@@ -201,7 +198,7 @@ impl<'a> Compiler<'a> {
                 }
 
                 // Second: compile the rest
-                for s in stmt {
+                for s in stmts {
                     match &s.kind {
                         StmtKind::Function { .. } | StmtKind::Impl { .. } => continue,
                         _ => self.compile_stmt(s),
@@ -210,6 +207,48 @@ impl<'a> Compiler<'a> {
             }
             StmtKind::EnumDecl { .. } => {}
             StmtKind::StructDecl { .. } => {}
+        }
+    }
+
+    fn compile_binding(&mut self, binding: &TypedBinding, line: u32) {
+        match binding {
+            TypedBinding::Variable(var) => {
+                match var {
+                    ResolvedVar::Local(idx) => {
+                        self.emit_op(Opcode::SetLocal, line);
+                        self.emit_byte(*idx, line);
+                    }
+                    ResolvedVar::Global(idx) => {
+                        self.emit_op(Opcode::SetGlobal, line);
+                        self.emit_byte(*idx as u8, line);
+                    }
+                    ResolvedVar::Closure(_) => {
+                        unreachable!("Closures shouldn't be assigned to")
+                    }
+                }
+                self.emit_op(Opcode::Pop, line);
+            }
+            TypedBinding::Ignored => {
+                self.emit_op(Opcode::Pop, line);
+            }
+            TypedBinding::Tuple(bindings) => {
+                for (idx, binding) in bindings.iter().enumerate() {
+                    self.emit_op(Opcode::Dup, line);
+                    self.emit_op(Opcode::GetField, line);
+                    self.emit_byte(idx as u8, line);
+                    self.compile_binding(binding, line);
+                }
+                self.emit_op(Opcode::Pop, line);
+            }
+            TypedBinding::Struct(bindings) => {
+                for (idx, binding) in bindings {
+                    self.emit_op(Opcode::Dup, line);
+                    self.emit_op(Opcode::GetField, line);
+                    self.emit_byte(*idx, line);
+                    self.compile_binding(binding, line);
+                }
+                self.emit_op(Opcode::Pop, line);
+            }
         }
     }
 

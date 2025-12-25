@@ -82,6 +82,7 @@ impl<'src> TypeChecker<'src> {
         }
 
         let global_count = self.scopes.global_size();
+        let reserved = self.scopes.end_scope() as u16;
 
         self.check_returns(&typed_ast);
         if !self.errors.is_empty() {
@@ -91,6 +92,7 @@ impl<'src> TypeChecker<'src> {
                 kind: StmtKind::Global {
                     global_count,
                     stmts: typed_ast,
+                    reserved,
                 },
                 line: 1,
                 type_info: Type::Void,

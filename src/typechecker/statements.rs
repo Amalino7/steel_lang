@@ -1,11 +1,12 @@
 use crate::compiler::analysis::ResolvedVar;
-use crate::parser::ast::Stmt;
+use crate::parser::ast::{Binding, Stmt};
 use crate::token::Token;
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::scope_manager::ScopeType;
-use crate::typechecker::type_ast::{MatchCase, StmtKind, Type, TypedStmt};
+use crate::typechecker::type_ast::{MatchCase, StmtKind, TupleType, Type, TypedBinding, TypedStmt};
 use crate::typechecker::type_system::TypeSystem;
 use crate::typechecker::{FunctionContext, Symbol, TypeChecker};
+use std::rc::Rc;
 
 impl<'src> TypeChecker<'src> {
     pub(crate) fn check_stmt(&mut self, stmt: &Stmt<'src>) -> Result<TypedStmt, TypeCheckerError> {
@@ -16,7 +17,7 @@ impl<'src> TypeChecker<'src> {
                 type_info: Type::Void,
             }),
             Stmt::Let {
-                identifier,
+                binding,
                 value,
                 type_info,
             } => {
@@ -24,31 +25,31 @@ impl<'src> TypeChecker<'src> {
                 let declared_type = Type::from_ast(type_info, &self.sys)?;
 
                 if declared_type == Type::Unknown {
-                    self.scopes
-                        .declare(identifier.lexeme.into(), value_node.ty.clone())?;
+                    let typed_binding = self.check_binding(binding, &value_node.ty)?;
                     Ok(TypedStmt {
                         kind: StmtKind::Let {
-                            target: self.scopes.lookup(identifier.lexeme).unwrap().1,
+                            binding: typed_binding,
                             value: value_node,
                         },
                         type_info: Type::Void,
-                        line: identifier.line,
+                        line: binding.get_line(),
                     })
                 } else {
-                    let coerced_value =
-                        self.sys
-                            .verify_assignment(&declared_type, value_node, identifier.line)?;
+                    let coerced_value = self.sys.verify_assignment(
+                        &declared_type,
+                        value_node,
+                        binding.get_line(),
+                    )?;
 
-                    self.scopes
-                        .declare(identifier.lexeme.into(), declared_type)?;
+                    let typed_binding = self.check_binding(binding, &declared_type)?;
 
                     Ok(TypedStmt {
                         kind: StmtKind::Let {
-                            target: self.scopes.lookup(identifier.lexeme).unwrap().1,
+                            binding: typed_binding,
                             value: coerced_value,
                         },
                         type_info: Type::Void,
-                        line: identifier.line,
+                        line: binding.get_line(),
                     })
                 }
             }
@@ -141,13 +142,12 @@ impl<'src> TypeChecker<'src> {
                     .map(|stmt| self.check_stmt(stmt))
                     .collect::<Result<Vec<TypedStmt>, TypeCheckerError>>()?;
 
-                let variable_count = self.scopes.scope_size() as u8;
                 self.scopes.end_scope();
 
                 Ok(TypedStmt {
                     kind: StmtKind::Block {
                         body: stmts,
-                        variable_count,
+                        reserved: 0, // Only function scopes have reserved
                     },
                     type_info: Type::Void,
                     line: brace_token.line,
@@ -302,6 +302,7 @@ impl<'src> TypeChecker<'src> {
                 })
             }
             Stmt::Match { value, arms } => {
+                todo!("To be refactored");
                 let value_typed = self.infer_expression(value)?;
                 let enum_name = match &value_typed.ty {
                     Type::Enum(name) => name,
@@ -334,9 +335,9 @@ impl<'src> TypeChecker<'src> {
                     let mut field_vars = vec![];
                     self.scopes.begin_scope(ScopeType::Block);
                     for (i, field_type) in variant_def.1.iter().enumerate() {
-                        let bound_name = arm.pattern.captures[i].lexeme;
-                        self.scopes.declare(bound_name.into(), field_type.clone())?;
-                        field_vars.push(self.scopes.lookup(bound_name).unwrap().1);
+                        // let bound_name = arm.pattern.captures[i].lexeme;
+                        // self.scopes.declare(bound_name.into(), field_type.clone())?;
+                        // field_vars.push(self.scopes.lookup(bound_name).unwrap().1);
                     }
 
                     let typed_body = self.check_stmt(&arm.body)?;
@@ -373,6 +374,97 @@ impl<'src> TypeChecker<'src> {
             }
         }
     }
+    fn check_binding(
+        &mut self,
+        binding: &Binding,
+        type_to_match: &Type,
+    ) -> Result<TypedBinding, TypeCheckerError> {
+        match binding {
+            Binding::Struct { name, fields } => {
+                if let Type::Struct(struct_name) = type_to_match {
+                    if name.lexeme != struct_name.as_ref() {
+                        return Err(TypeCheckerError::TypeMismatch {
+                            expected: Type::Struct(name.lexeme.into()),
+                            found: type_to_match.clone(),
+                            line: binding.get_line(),
+                            message: "Can only use structure destructure syntax on structs",
+                        });
+                    }
+                    let Some(struct_def) = self.sys.get_struct(name.lexeme) else {
+                        return Err(TypeCheckerError::UndefinedType {
+                            name: name.lexeme.to_string(),
+                            line: binding.get_line(),
+                            message: "Struct with that name wasn't found.",
+                        });
+                    };
+                    let mut bindings = vec![];
+                    for (field_name, binding) in fields {
+                        let Some(&field_idx) = struct_def.fields.get(field_name.lexeme) else {
+                            return Err(TypeCheckerError::UndefinedField {
+                                struct_name: struct_def.name.to_string(),
+                                field_name: field_name.lexeme.to_string(),
+                                line: field_name.line,
+                            });
+                        };
+                        let (_, field_type) = struct_def.ordered_fields[field_idx].clone();
+
+                        bindings.push((field_idx, field_type, binding));
+                    }
+                    let mut typed_fields = vec![];
+                    for (idx, ty, binding) in bindings {
+                        let typed_binding = self.check_binding(binding, &ty)?;
+                        typed_fields.push((idx as u8, typed_binding))
+                    }
+
+                    Ok(TypedBinding::Struct(typed_fields))
+                } else {
+                    Err(TypeCheckerError::TypeMismatch {
+                        expected: Type::Struct("Any".into()),
+                        found: type_to_match.clone(),
+                        line: binding.get_line(),
+                        message: "Can only use structure destructure syntax on structs",
+                    })
+                }
+            }
+            Binding::Tuple { fields } => {
+                if let Type::Tuple(tuple) = type_to_match {
+                    if tuple.types.len() != fields.len() {
+                        return Err(TypeCheckerError::TypeMismatch {
+                            expected: Type::Tuple(Rc::new(TupleType {
+                                types: vec![Type::Any; fields.len()],
+                            })),
+                            found: type_to_match.clone(),
+                            line: binding.get_line(),
+                            message: "Wrong number of tuple destructure.",
+                        });
+                    }
+                    let mut bindings = vec![];
+                    for (i, field) in fields.iter().enumerate() {
+                        bindings.push(self.check_binding(field, &tuple.types[i])?);
+                    }
+                    Ok(TypedBinding::Tuple(bindings))
+                } else {
+                    Err(TypeCheckerError::TypeMismatch {
+                        expected: Type::Tuple(Rc::new(TupleType {
+                            types: vec![Type::Any; fields.len()],
+                        })),
+                        found: type_to_match.clone(),
+                        line: binding.get_line(),
+                        message: "Can only use tuple destructure on tuples.",
+                    })
+                }
+            }
+            Binding::Variable(token) => {
+                if token.lexeme == "_" {
+                    return Ok(TypedBinding::Ignored);
+                }
+                self.scopes
+                    .declare(token.lexeme.into(), type_to_match.clone())?;
+                let (_, resolved) = self.scopes.lookup(token.lexeme).unwrap();
+                Ok(TypedBinding::Variable(resolved))
+            }
+        }
+    }
 
     fn check_function(
         &mut self,
@@ -401,7 +493,7 @@ impl<'src> TypeChecker<'src> {
                 .map(|stmt| self.check_stmt(stmt))
                 .collect::<Result<Vec<TypedStmt>, TypeCheckerError>>()?;
 
-            self.scopes.end_scope();
+            let reserved = self.scopes.end_scope();
             self.current_function = enclosing_function_context;
 
             let (_, func_location) = self
@@ -426,7 +518,7 @@ impl<'src> TypeChecker<'src> {
                     body: Box::from(TypedStmt {
                         kind: StmtKind::Block {
                             body: func_body,
-                            variable_count: 0,
+                            reserved: reserved as u16,
                         },
                         line: name.line,
                         type_info: Type::Void,

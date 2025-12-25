@@ -1,4 +1,4 @@
-use crate::parser::ast::{Expr, InterfaceSig, Literal, MatchArm, Pattern, Stmt, TypeAst};
+use crate::parser::ast::{Binding, Expr, InterfaceSig, Literal, MatchArm, Pattern, Stmt, TypeAst};
 use crate::parser::error::ParserError;
 use crate::parser::TokT;
 use crate::parser::{check_token_type, match_token_type, Parser};
@@ -23,26 +23,55 @@ impl<'src> Parser<'src> {
         }
     }
     fn let_declaration(&mut self) -> Result<Stmt<'src>, ParserError<'src>> {
-        if !match_token_type!(self, TokT::Identifier) {
-            Err(self.error_current("Expected variable field."))
+        let binding = self.parse_binding()?;
+        let type_info = if match_token_type!(self, TokT::Colon) {
+            self.type_block()?
         } else {
-            let name = self.previous_token.clone();
-            let type_info = if match_token_type!(self, TokT::Colon) {
-                self.type_block()?
-            } else {
-                TypeAst::Infer // The type will be inferred by the compiler later on.
-            };
+            TypeAst::Infer // The type will be inferred by the compiler later on.
+        };
 
-            self.consume(TokT::Equal, "Expected '=' after variable field.")?;
-            let expr = self.expression()?;
-            self.consume(TokT::Semicolon, "Expected ';' after variable declaration.")?;
-            Ok(Stmt::Let {
-                identifier: name,
-                value: expr,
-                type_info,
-            })
+        self.consume(TokT::Equal, "Expected '=' after variable field.")?;
+        let expr = self.expression()?;
+        self.consume(TokT::Semicolon, "Expected ';' after variable declaration.")?;
+        Ok(Stmt::Let {
+            binding,
+            value: expr,
+            type_info,
+        })
+    }
+
+    fn parse_binding(&mut self) -> Result<Binding<'src>, ParserError<'src>> {
+        if match_token_type!(self, TokT::LeftParen) {
+            // Tuple
+            let mut fields = vec![];
+            while !match_token_type!(self, TokT::RightParen) {
+                let binding = self.parse_binding()?;
+                fields.push(binding);
+                match_token_type!(self, TokT::Comma);
+            }
+            Ok(Binding::Tuple { fields })
+        } else if match_token_type!(self, TokT::Identifier) {
+            let name = self.previous_token.clone();
+            if match_token_type!(self, TokT::LeftParen) {
+                // structure
+                let mut fields = vec![];
+                while !match_token_type!(self, TokT::RightParen) {
+                    self.consume(TokT::Identifier, "Expected struct field name.")?;
+                    let field_name = self.previous_token.clone();
+                    self.consume(TokT::Colon, "Expected ':' after field name")?;
+                    let binding = self.parse_binding()?;
+                    fields.push((field_name, binding));
+                    match_token_type!(self, TokT::Comma);
+                }
+                Ok(Binding::Struct { name, fields })
+            } else {
+                Ok(Binding::Variable(name))
+            }
+        } else {
+            Err(self.error_current("Expected variable name."))
         }
     }
+
     fn func_declaration(&mut self, is_method: bool) -> Result<Stmt<'src>, ParserError<'src>> {
         let (name, params, type_) = self.func_signature(is_method)?;
 
@@ -301,11 +330,12 @@ impl<'src> Parser<'src> {
                 "Expected ')' after enum variant parameters.",
             )?;
         }
-        Ok(Pattern {
-            enum_name,
-            variant_name,
-            captures: params,
-        })
+        todo!();
+        // Ok(Pattern {
+        //     enum_name,
+        //     variant_name,
+        //     captures: params,
+        // })
     }
 
     fn while_statement(&mut self) -> Result<Stmt<'src>, ParserError<'src>> {

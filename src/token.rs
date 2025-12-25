@@ -112,7 +112,7 @@ impl Display for TokenType {
             TokenType::GreaterEqual => f.write_str(">="),
             TokenType::Less => f.write_str("<"),
             TokenType::LessEqual => f.write_str("<="),
-            TokenType::Identifier => f.write_str("identifier"),
+            TokenType::Identifier => f.write_str("binding"),
             TokenType::String => f.write_str("string"),
             TokenType::Number => f.write_str("number"),
             TokenType::And => f.write_str("and"),

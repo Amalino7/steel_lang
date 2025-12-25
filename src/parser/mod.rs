@@ -147,7 +147,7 @@ impl<'src> Parser<'src> {
 
 #[cfg(test)]
 mod tests {
-    use crate::parser::ast::{Expr, Literal, Stmt, TypeAst};
+    use crate::parser::ast::{Binding, Expr, Literal, Stmt, TypeAst};
     use crate::parser::Parser;
     use crate::scanner::Scanner;
     use crate::token::{Token, TokenType};
@@ -245,11 +245,11 @@ mod tests {
 
         let mut expected = vec![];
         expected.push(Stmt::Let {
-            identifier: Token {
+            binding: Binding::Variable(Token {
                 token_type: TokenType::Identifier,
                 line: 2,
                 lexeme: "a",
-            },
+            }),
             value: *number(10.0, 2),
             type_info: TypeAst::Named(Token::new(TokenType::Identifier, 2, "number")),
         });

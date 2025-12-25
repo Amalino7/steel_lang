@@ -173,6 +173,11 @@ pub fn disassemble_instruction(
         }
         Opcode::Nil => println!("Nil"),
         Opcode::Unwrap => println!("Unwrap"),
+        Opcode::Reserve => {
+            offset += 1;
+            println!("Reserve {}", bytecode[offset])
+        }
+        Opcode::Dup => println!("Dup"),
     };
     offset + 1
 }

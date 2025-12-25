@@ -21,19 +21,7 @@ pub enum TypeCheckerError {
         line: u32,
         message: &'static str,
     },
-    IncorrectArity {
-        callee_name: String,
-        expected: usize,
-        found: usize,
-        line: u32,
-    },
     InvalidReturnOutsideFunction {
-        line: u32,
-    },
-    FunctionParameterTypeMismatch {
-        expected: Type,
-        found: Type,
-        param_index: usize,
         line: u32,
     },
     UnreachableCode {
@@ -51,11 +39,6 @@ pub enum TypeCheckerError {
         line: u32,
     },
     UndefinedField {
-        struct_name: String,
-        field_name: String,
-        line: u32,
-    },
-    MissingField {
         struct_name: String,
         field_name: String,
         line: u32,
@@ -125,15 +108,12 @@ impl TypeCheckerError {
             TypeCheckerError::UndefinedVariable { line, .. } => *line,
             TypeCheckerError::CalleeIsNotCallable { line, .. } => *line,
             TypeCheckerError::TypeMismatch { line, .. } => *line,
-            TypeCheckerError::IncorrectArity { line, .. } => *line,
             TypeCheckerError::InvalidReturnOutsideFunction { line, .. } => *line,
-            TypeCheckerError::FunctionParameterTypeMismatch { line, .. } => *line,
             TypeCheckerError::UnreachableCode { line, .. } => *line,
             TypeCheckerError::MissingReturnStatement { line, .. } => *line,
             TypeCheckerError::AssignmentToCapturedVariable { line, .. } => *line,
             TypeCheckerError::TypeHasNoFields { line, .. } => *line,
             TypeCheckerError::UndefinedField { line, .. } => *line,
-            TypeCheckerError::MissingField { line, .. } => *line,
             TypeCheckerError::StructOutsideOfGlobalScope { line, .. } => *line,
             TypeCheckerError::UndefinedMethod { line, .. } => *line,
             TypeCheckerError::StaticMethodOnInstance { line, .. } => *line,
@@ -175,35 +155,11 @@ impl std::fmt::Display for TypeCheckerError {
                     line, message, expected, found
                 )
             }
-            TypeCheckerError::IncorrectArity {
-                callee_name,
-                expected,
-                found,
-                line,
-            } => {
-                write!(
-                    f,
-                    "[line {}] Error: Incorrect number of arguments for function '{}'. Expected {} but found {}.",
-                    line, callee_name, expected, found
-                )
-            }
             TypeCheckerError::InvalidReturnOutsideFunction { line } => {
                 write!(
                     f,
                     "[line {}] Error: 'return' statement outside of a function body.",
                     line
-                )
-            }
-            TypeCheckerError::FunctionParameterTypeMismatch {
-                expected,
-                found,
-                line,
-                param_index,
-            } => {
-                write!(
-                    f,
-                    "[line {}] Error: Function parameter type mismatch for parameter in position '{}'. Expected '{}' but found '{}'.",
-                    line, param_index, expected, found
                 )
             }
             TypeCheckerError::UnreachableCode { line } => {
@@ -241,17 +197,6 @@ impl std::fmt::Display for TypeCheckerError {
                 write!(
                     f,
                     "[line {}] Error: Struct '{}' has no field '{}'.",
-                    line, struct_name, field_name
-                )
-            }
-            TypeCheckerError::MissingField {
-                struct_name,
-                field_name,
-                line,
-            } => {
-                write!(
-                    f,
-                    "[line {}] Error: Struct '{}' is missing field '{}' from its initializer.",
                     line, struct_name, field_name
                 )
             }

@@ -112,7 +112,7 @@ mod tests {
                 assert!(
                     errors
                         .iter()
-                        .any(|e| matches!(e, TypeCheckerError::IncorrectArity { .. }))
+                        .any(|e| matches!(e, TypeCheckerError::MissingArgument { .. }))
                 );
             }
             _ => panic!("Expected IncorrectArity error"),
@@ -174,10 +174,9 @@ mod tests {
         match res {
             Err(errors) => {
                 assert!(
-                    errors.iter().any(|e| matches!(
-                        e,
-                        TypeCheckerError::FunctionParameterTypeMismatch { .. }
-                    ))
+                    errors
+                        .iter()
+                        .any(|e| matches!(e, TypeCheckerError::TypeMismatch { .. }))
                 );
             }
             _ => panic!("Expected FunctionParameterTypeMismatch error"),

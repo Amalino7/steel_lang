@@ -231,6 +231,16 @@ impl<'src> Parser<'src> {
                     field,
                 };
             } else if match_token_type!(self, TokT::QuestionDot) {
+                if match_token_type!(self, TokT::Number) {
+                    let idx = self.previous_token.clone();
+                    expr = Expr::Get {
+                        safe: true,
+                        object: Box::new(expr),
+                        field: idx,
+                    };
+                    continue;
+                }
+
                 self.consume(TokT::Identifier, "Expected property name after '?.'.")?;
                 let field = self.previous_token.clone();
                 expr = Expr::Get {
@@ -306,10 +316,15 @@ impl<'src> Parser<'src> {
                 let mut tuple_args = vec![];
                 if match_token_type!(self, TokT::Comma) {
                     tuple_args.push(expr);
-                    while !match_token_type!(self, TokT::RightParen) {
+                    loop {
                         let expr = self.expression()?;
                         tuple_args.push(expr);
+                        if !match_token_type!(self, TokT::Comma) {
+                            break;
+                        }
                     }
+                    self.consume(TokT::RightParen, "Expected ')' to close tuple")?;
+
                     return Ok(Tuple {
                         elements: tuple_args,
                     });
