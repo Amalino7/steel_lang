@@ -410,19 +410,15 @@ impl VM {
                     self.stack.push(instance);
                 }
                 Opcode::EnumAlloc => {
-                    let field_count = chunk.instructions[current_frame.ip] as usize;
-                    current_frame.ip += 1;
                     let tag = chunk.instructions[current_frame.ip] as usize;
                     current_frame.ip += 1;
-                    let mut values = Vec::with_capacity(field_count);
-                    for _ in 0..field_count {
-                        values.push(self.stack.pop());
-                    }
+                    let payload = self.stack.pop();
+
                     let name = self.stack.pop();
                     let enum_variant = self.alloc_enum(
                         EnumVariant {
                             tag,
-                            payload: values,
+                            payload,
                             enum_name: name,
                         },
                         &current_frame,
@@ -433,9 +429,7 @@ impl VM {
                     let enumeration = self.stack.pop();
                     match enumeration {
                         Value::Enum(enum_obj) => {
-                            for field in enum_obj.payload.iter() {
-                                self.stack.push(*field);
-                            }
+                            self.stack.push(enum_obj.payload);
                         }
                         _ => unreachable!("Expected enum on stack"),
                     }

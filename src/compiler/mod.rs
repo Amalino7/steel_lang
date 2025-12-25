@@ -93,6 +93,8 @@ impl<'a> Compiler<'a> {
                     self.emit_op(Opcode::Pop, stmt.line);
 
                     self.emit_op(Opcode::DestructureEnum, stmt.line);
+                    self.compile_binding(&case.binding, stmt.line);
+
                     self.compile_stmt(&case.body);
                     end_jumps.push(self.emit_jump(Opcode::Jump, stmt.line));
 
@@ -587,16 +589,13 @@ impl<'a> Compiler<'a> {
             ExprKind::EnumInit {
                 enum_name,
                 variant_idx,
-                args,
+                value,
             } => {
                 let enum_name = self.gc.alloc(enum_name.to_string());
                 self.chunk()
                     .write_constant(Value::String(enum_name), line as usize);
-                for arg in args.iter().rev() {
-                    self.compile_expr(arg);
-                }
+                self.compile_expr(value); // Simple like 8 or complex like struct alloc.
                 self.emit_op(Opcode::EnumAlloc, line);
-                self.emit_byte(args.len() as u8, line);
                 self.emit_byte(*variant_idx as u8, line);
             }
             ExprKind::Tuple { elements } => {

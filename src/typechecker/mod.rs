@@ -2,8 +2,9 @@ use crate::parser::ast::Stmt;
 use crate::stdlib::NativeDef;
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::scope_manager::{ScopeManager, ScopeType};
-use crate::typechecker::type_ast::{StmtKind, Type, TypedStmt};
+use crate::typechecker::type_ast::{StmtKind, TypedStmt};
 use crate::typechecker::type_system::TypeSystem;
+use crate::typechecker::types::Type;
 use std::mem::replace;
 use std::rc::Rc;
 
@@ -18,6 +19,7 @@ mod statements;
 mod tests;
 pub mod type_ast;
 mod type_system;
+pub mod types;
 
 #[derive(Debug, PartialEq, Clone)]
 enum FunctionContext {
@@ -67,7 +69,7 @@ impl<'src> TypeChecker<'src> {
         // then global functions are declared and interfaces defined
         self.declare_global_functions(ast);
         // finally, fields of structs and enums are defined
-        self.define_struct_fields(ast);
+        self.define_global_structs(ast);
         self.define_enum_variants(ast);
 
         for stmt in ast.iter() {

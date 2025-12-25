@@ -1,4 +1,4 @@
-use crate::typechecker::type_ast::Type;
+use crate::typechecker::types::Type;
 use crate::vm::value::{NativeFn, Value};
 
 pub struct NativeDef {

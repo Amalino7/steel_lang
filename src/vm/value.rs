@@ -25,7 +25,7 @@ pub struct Instance {
 pub struct EnumVariant {
     pub enum_name: Value, // Name for debugging purposes
     pub tag: usize,
-    pub payload: Vec<Value>,
+    pub payload: Value,
 }
 
 #[derive(Debug, Clone)]

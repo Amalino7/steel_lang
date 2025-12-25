@@ -1,6 +1,6 @@
 use crate::compiler::analysis::ResolvedVar;
 use crate::typechecker::error::TypeCheckerError;
-use crate::typechecker::type_ast::Type;
+use crate::typechecker::types::Type;
 use crate::typechecker::Symbol;
 use std::collections::HashMap;
 

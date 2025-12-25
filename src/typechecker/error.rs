@@ -1,4 +1,4 @@
-use crate::typechecker::type_ast::Type;
+use crate::typechecker::types::Type;
 
 #[derive(Debug)]
 pub enum TypeCheckerError {

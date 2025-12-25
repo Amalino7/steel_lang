@@ -1,7 +1,6 @@
 use crate::typechecker::error::TypeCheckerError;
-use crate::typechecker::type_ast::{
-    EnumType, ExprKind, InterfaceType, StructType, Type, TypedExpr,
-};
+use crate::typechecker::type_ast::{ExprKind, TypedExpr};
+use crate::typechecker::types::{EnumType, InterfaceType, StructType, Type};
 use crate::typechecker::Symbol;
 use std::collections::HashMap;
 
@@ -44,7 +43,7 @@ impl TypeSystem {
         );
     }
 
-    pub fn define_enum(&mut self, name: &str, variants: HashMap<String, (usize, Vec<Type>)>) {
+    pub fn define_enum(&mut self, name: &str, variants: HashMap<String, (usize, Type)>) {
         self.enums.get_mut(name).map(|e| e.variants = variants);
     }
 

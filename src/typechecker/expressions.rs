@@ -4,10 +4,8 @@ use crate::token::{Token, TokenType};
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::error::TypeCheckerError::AssignmentToCapturedVariable;
 use crate::typechecker::scope_manager::ScopeType;
-use crate::typechecker::type_ast::Type::Enum;
-use crate::typechecker::type_ast::{
-    BinaryOp, ExprKind, LogicalOp, StructType, TupleType, Type, TypedExpr, UnaryOp,
-};
+use crate::typechecker::type_ast::{BinaryOp, ExprKind, LogicalOp, TypedExpr, UnaryOp};
+use crate::typechecker::types::{StructType, TupleType, Type};
 use crate::typechecker::TypeChecker;
 use std::rc::Rc;
 
@@ -290,6 +288,25 @@ impl<'src> TypeChecker<'src> {
                         line: callee.get_line(),
                     });
                 }
+                // Check for Enum constructor pattern
+                if let Expr::Get { object, field, .. } = callee.as_ref() {
+                    if let Expr::Variable { name } = object.as_ref() {
+                        if let Some(enum_def) = self.sys.get_enum(name.lexeme) {
+                            if let Some((variant_idx, variant_type)) =
+                                enum_def.variants.get(field.lexeme)
+                            {
+                                return self.handle_enum_call(
+                                    variant_type,
+                                    *variant_idx,
+                                    inferred_args,
+                                    field,
+                                    enum_def,
+                                    callee.get_line(),
+                                );
+                            }
+                        }
+                    }
+                }
 
                 let callee_typed = self.infer_expression(callee)?;
 
@@ -316,32 +333,6 @@ impl<'src> TypeChecker<'src> {
                 } else {
                     callee_typed.ty.clone()
                 };
-
-                // Handle enum case
-                if let ExprKind::EnumConstructor {
-                    enum_name,
-                    variant_idx,
-                } = &callee_typed.kind
-                    && let Type::Function(func) = lookup_type
-                {
-                    let bound_args = self.sys.bind_arguments(
-                        enum_name.as_ref(),
-                        &func.params,
-                        inferred_args,
-                        func.is_vararg,
-                        callee_typed.line,
-                    )?;
-
-                    return Ok(TypedExpr {
-                        ty: Enum(enum_name.clone()),
-                        line: callee_typed.line,
-                        kind: ExprKind::EnumInit {
-                            enum_name: enum_name.clone(),
-                            variant_idx: *variant_idx,
-                            args: bound_args,
-                        },
-                    });
-                }
 
                 // Check for Normal Function Call
                 match lookup_type {

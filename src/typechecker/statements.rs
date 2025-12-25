@@ -1,11 +1,13 @@
 use crate::compiler::analysis::ResolvedVar;
-use crate::parser::ast::{Binding, Stmt};
+use crate::parser::ast::{Binding, Pattern, Stmt};
 use crate::token::Token;
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::scope_manager::ScopeType;
-use crate::typechecker::type_ast::{MatchCase, StmtKind, TupleType, Type, TypedBinding, TypedStmt};
+use crate::typechecker::type_ast::{MatchCase, StmtKind, TypedBinding, TypedStmt};
 use crate::typechecker::type_system::TypeSystem;
+use crate::typechecker::types::{TupleType, Type};
 use crate::typechecker::{FunctionContext, Symbol, TypeChecker};
+use std::collections::HashSet;
 use std::rc::Rc;
 
 impl<'src> TypeChecker<'src> {
@@ -302,7 +304,6 @@ impl<'src> TypeChecker<'src> {
                 })
             }
             Stmt::Match { value, arms } => {
-                todo!("To be refactored");
                 let value_typed = self.infer_expression(value)?;
                 let enum_name = match &value_typed.ty {
                     Type::Enum(name) => name,
@@ -317,45 +318,63 @@ impl<'src> TypeChecker<'src> {
                 };
 
                 let enum_def = self.sys.get_enum(enum_name).unwrap().clone();
-                let mut matched_variants = std::collections::HashSet::new();
+                let mut matched_variants = HashSet::new();
                 let mut typed_cases = vec![];
 
                 for arm in arms {
-                    let variant_name = arm.pattern.variant_name.lexeme;
-                    let variant_def = enum_def
+                    let Pattern::Named {
+                        enum_name,
+                        variant_name,
+                        bind,
+                    } = &arm.pattern
+                    else {
+                        todo!()
+                    };
+
+                    let (variant_idx, field_types) = enum_def
                         .variants
-                        .get(variant_name)
-                        .ok_or_else(|| todo!("Add specific error message for missing variant"))?;
+                        .get(variant_name.lexeme)
+                        .ok_or_else(|| TypeCheckerError::UndefinedField {
+                            struct_name: enum_def.name.to_string(),
+                            field_name: variant_name.lexeme.to_string(),
+                            line: variant_name.line,
+                        })?;
 
-                    if matched_variants.contains(variant_name) {
+                    if matched_variants.contains(variant_name.lexeme) {
                         // TODO Optional: Error for unreachable pattern
+                        // return Err(TypeCheckerError::Generic {
+                        //     message: format!("Duplicate match arm for '{}'", variant_name),
+                        //     line: variant_name_token.line
+                        // });
                     }
-                    matched_variants.insert(variant_name.to_string());
+                    matched_variants.insert(variant_name.lexeme);
 
-                    let mut field_vars = vec![];
+                    let payload_type = field_types;
+
                     self.scopes.begin_scope(ScopeType::Block);
-                    for (i, field_type) in variant_def.1.iter().enumerate() {
-                        // let bound_name = arm.pattern.captures[i].lexeme;
-                        // self.scopes.declare(bound_name.into(), field_type.clone())?;
-                        // field_vars.push(self.scopes.lookup(bound_name).unwrap().1);
-                    }
+                    let typed_binding = if let Some(binding) = &bind {
+                        self.check_binding(binding, &payload_type)?
+                    } else {
+                        if !matches!(payload_type, Type::Void) {}
+                        TypedBinding::Ignored
+                    };
 
+                    // E. Check the Body
                     let typed_body = self.check_stmt(&arm.body)?;
 
                     self.scopes.end_scope();
 
-                    let variant_idx = enum_def.variants.get(variant_name).unwrap().0;
                     typed_cases.push(MatchCase {
-                        variant_name: variant_name.to_string(),
-                        variant_idx,
-                        fields: field_vars,
+                        variant_name: variant_name.lexeme.to_string(),
+                        variant_idx: *variant_idx,
+                        binding: typed_binding,
                         body: typed_body,
                     });
                 }
 
                 // Exhaustiveness check
                 for variant in enum_def.variants.keys() {
-                    if !matched_variants.contains(variant) {
+                    if !matched_variants.contains(variant.as_str()) {
                         return Err(TypeCheckerError::UncoveredPattern {
                             variant: variant.clone(),
                             line: value_typed.line,
@@ -382,7 +401,10 @@ impl<'src> TypeChecker<'src> {
         match binding {
             Binding::Struct { name, fields } => {
                 if let Type::Struct(struct_name) = type_to_match {
-                    if name.lexeme != struct_name.as_ref() {
+                    if !(name.lexeme == struct_name.as_ref()
+                        || struct_name.contains(".") && struct_name.ends_with(name.lexeme))
+                    // Allows match variants
+                    {
                         return Err(TypeCheckerError::TypeMismatch {
                             expected: Type::Struct(name.lexeme.into()),
                             found: type_to_match.clone(),
@@ -390,7 +412,7 @@ impl<'src> TypeChecker<'src> {
                             message: "Can only use structure destructure syntax on structs",
                         });
                     }
-                    let Some(struct_def) = self.sys.get_struct(name.lexeme) else {
+                    let Some(struct_def) = self.sys.get_struct(struct_name.as_ref()) else {
                         return Err(TypeCheckerError::UndefinedType {
                             name: name.lexeme.to_string(),
                             line: binding.get_line(),

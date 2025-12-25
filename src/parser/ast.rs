@@ -1,6 +1,6 @@
 use crate::token::Token;
 use std::fmt;
-use std::fmt::{Display, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Literal {
@@ -88,12 +88,14 @@ pub struct MatchArm<'src> {
     pub pattern: Pattern<'src>,
     pub body: Stmt<'src>,
 }
-
 #[derive(Clone, Debug, PartialEq)]
-pub struct Pattern<'src> {
-    pub enum_name: Option<Token<'src>>,
-    pub variant_name: Token<'src>,
-    pub bind: Binding<'src>,
+pub enum Pattern<'src> {
+    Variable(Token<'src>),
+    Named {
+        enum_name: Option<Token<'src>>,
+        variant_name: Token<'src>,
+        bind: Option<Binding<'src>>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -185,12 +187,19 @@ pub enum Stmt<'src> {
     },
     Enum {
         name: Token<'src>,
-        variants: Vec<(Token<'src>, Vec<TypeAst<'src>>)>,
+        variants: Vec<(Token<'src>, VariantType<'src>)>,
     },
     Match {
         value: Box<Expr<'src>>,
         arms: Vec<MatchArm<'src>>,
     },
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum VariantType<'src> {
+    Tuple(Vec<TypeAst<'src>>),
+    Struct(Vec<(Token<'src>, TypeAst<'src>)>),
+    Unit,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -435,16 +444,35 @@ impl Display for Stmt<'_> {
             Stmt::Enum { name, variants } => {
                 write!(f, "Enum {} {{", name.lexeme)?;
                 for case in variants {
-                    write!(f, "case {} (", case.0.lexeme,)?;
-                    for type_ in &case.1 {
-                        write!(f, "{}", type_)?;
+                    write!(f, "case {} ", case.0.lexeme,)?;
+                    match &case.1 {
+                        VariantType::Tuple(els) => {
+                            write!(f, "(")?;
+                            for e in els {
+                                write!(f, "{}, ", e)?;
+                            }
+                            write!(f, ")")?;
+                        }
+                        VariantType::Struct(str) => {
+                            write!(f, "{{")?;
+                            for (name, ty) in str {
+                                write!(f, "{} : {},", name.lexeme, ty)?;
+                            }
+                            write!(f, "}}")?;
+                        }
+                        VariantType::Unit => {}
                     }
                     write!(f, ")")?;
                 }
                 write!(f, "}}")
             }
-            Stmt::Match { .. } => {
-                todo!()
+            Stmt::Match { value, arms } => {
+                write!(f, "match {} {{", value)?;
+                for arm in arms {
+                    arm.pattern.fmt(f)?;
+                    write!(f, " => {}", arm.body)?;
+                }
+                write!(f, "}}")
             }
         }
     }
@@ -477,13 +505,7 @@ impl Stmt<'_> {
                 binding: identifier,
                 ..
             } => identifier.get_line(),
-            Stmt::Block { body, .. } => {
-                if let Some(first_stmt) = body.first() {
-                    first_stmt.get_line()
-                } else {
-                    0 //might need to add an alternative for empty blocks.
-                }
-            }
+            Stmt::Block { brace_token, .. } => brace_token.line,
             Stmt::If { condition, .. } => condition.get_line(),
             Stmt::While { condition, .. } => condition.get_line(),
             Stmt::Function { name, .. } => name.line,

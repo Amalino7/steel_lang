@@ -1,5 +1,7 @@
-use crate::typechecker::type_ast::{BinaryOp, ExprKind, LogicalOp, Type, TypedExpr, UnaryOp};
+use crate::typechecker::type_ast::{BinaryOp, ExprKind, LogicalOp, TypedExpr, UnaryOp};
+use crate::typechecker::types::Type;
 use crate::typechecker::{Symbol, TypeChecker};
+
 type Refinement = (Symbol, Type);
 
 pub(crate) struct BranchRefinements {

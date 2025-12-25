@@ -1382,6 +1382,33 @@ mod tests {
         execute_source(src, false, "run", true);
     }
     #[test]
+    fn test_structure_enums() {
+        let src = r#"
+            enum Message {
+             Quit,
+             Move{
+                x: number,
+                y: number,
+             },
+             ChangeColor{
+                r: number,
+                g: number,
+                b: number,
+             }
+            }
+            let msg = Message.Move(x: 10, y: 20);
+            msg = Message.Quit;
+            // msg = Message.ChangeColor(r: 10, g: 20, b: 30);
+            match msg {
+                Quit => {println("Quit");}
+                Move{x: x, y: y} => {println(x, y);}
+                ChangeColor(a) => {println(a.r, a.g, a.b);}
+            }
+
+           "#;
+        execute_source(src, false, "run", true);
+    }
+    #[test]
     fn test_val_enums() {
         let src = r#"
             enum Shape { Circle(number), Rectangle(number, number) }
@@ -1391,12 +1418,19 @@ mod tests {
                     Shape.Rectangle(width, height) => {return width * height;}
                 }
             }
-            println(Shape.Rectangle(6, 10));
-
+            func area2(s: Shape): number {
+                match s {
+                    Circle(radius) => {return 3.14 * radius * radius;}
+                    Rectangle(rect) => {return rect.0 * rect.1;}
+                }
+            }
+            let rect = Shape.Rectangle(6, 10);
+            println(rect);
+            println(area2(rect));
             assert(area(Shape.Circle(5)), 78.5);
             assert(area(Shape.Rectangle(10, 5)), 50);
         "#;
-        execute_source(src, true, "run", true);
+        execute_source(src, false, "run", true);
     }
     #[test]
     fn test_number_result() {
@@ -1409,6 +1443,7 @@ mod tests {
                         Result.Err(err) => {
                             println("Unwrapping error: ", err);
                             panic("");
+                            return 0; // Ureachable 
                         }
                     }
                 }
@@ -1538,5 +1573,14 @@ mod tests {
 
         "#;
         execute_source(src, false, "run", true);
+    }
+    #[test]
+    fn test_generic_struct() {
+        let src = r#"
+            struct Point<T> {x: T, y: T}
+            let p = Point(x: 1, y: 2);
+            assert(p.x, 1);
+            assert(p.y, 2);
+            "#;
     }
 }

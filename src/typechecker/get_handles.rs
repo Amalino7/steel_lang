@@ -1,6 +1,8 @@
+use crate::parser::ast::Literal;
 use crate::token::Token;
 use crate::typechecker::error::TypeCheckerError;
-use crate::typechecker::type_ast::{ExprKind, Type, TypedExpr};
+use crate::typechecker::type_ast::{ExprKind, TypedExpr};
+use crate::typechecker::types::{EnumType, Type};
 use crate::typechecker::TypeChecker;
 use std::rc::Rc;
 
@@ -22,35 +24,101 @@ impl<'src> TypeChecker<'src> {
 
         let (idx, variant_types) = enum_def.variants.get(variant_name.lexeme)?;
 
-        // Handle Type.Variant and Type.Variant(arg..)
-        if variant_types.is_empty() {
+        // Handle Type.Variant
+        if *variant_types == Type::Void {
             Some(TypedExpr {
                 ty: Type::Enum(enum_def.name.clone()),
                 kind: ExprKind::EnumInit {
                     enum_name: enum_def.name.clone(),
                     variant_idx: *idx,
-                    args: vec![],
+                    value: Box::new(TypedExpr {
+                        ty: Type::Nil,
+                        kind: ExprKind::Literal(Literal::Nil),
+                        line: variant_name.line,
+                    }),
                 },
                 line: variant_name.line,
             })
         } else {
-            let func_type = Type::new_function(
-                variant_types
+            // TODO error on an empty constructor
+            None
+        }
+    }
+
+    pub(crate) fn handle_enum_call(
+        &self,
+        variant_type: &Type,
+        variant_idx: usize,
+        inferred_args: Vec<(Option<&str>, TypedExpr, u32)>,
+        field: &Token,
+        enum_def: &EnumType,
+        line: u32,
+    ) -> Result<TypedExpr, TypeCheckerError> {
+        let val_expr = match variant_type {
+            Type::Struct(struct_name) => {
+                let struct_def = self
+                    .sys
+                    .get_struct(struct_name)
+                    .expect("Enum variant points to non-existent struct");
+
+                let bound_args = self.sys.bind_arguments(
+                    &struct_name,
+                    &struct_def.ordered_fields,
+                    inferred_args,
+                    false,
+                    line,
+                )?;
+
+                TypedExpr {
+                    ty: Type::Struct(struct_name.clone()),
+                    kind: ExprKind::StructInit {
+                        name: Box::from(struct_name.to_string()),
+                        args: bound_args,
+                    },
+                    line,
+                }
+            }
+            // Tuple variant
+            Type::Tuple(tuple_types) => {
+                let params: Vec<(String, Type)> = tuple_types
+                    .types
                     .iter()
                     .enumerate()
-                    .map(|(id, type_)| (id.to_string(), type_.clone()))
-                    .collect(),
-                Type::Enum(enum_def.name.clone()),
-            );
-            Some(TypedExpr {
-                ty: func_type,
-                kind: ExprKind::EnumConstructor {
-                    enum_name: enum_def.name.clone(),
-                    variant_idx: *idx,
-                },
-                line: variant_name.line,
-            })
-        }
+                    .map(|(i, t)| (i.to_string(), t.clone()))
+                    .collect();
+
+                let bound_args =
+                    self.sys
+                        .bind_arguments(&field.lexeme, &params, inferred_args, false, line)?;
+
+                TypedExpr {
+                    ty: variant_type.clone(),
+                    kind: ExprKind::Tuple {
+                        elements: bound_args,
+                    },
+                    line,
+                }
+            }
+            _ => {
+                // One argument
+                let params = vec![("value".to_string(), variant_type.clone())];
+
+                let mut bound_args =
+                    self.sys
+                        .bind_arguments(&field.lexeme, &params, inferred_args, false, line)?;
+
+                bound_args.pop().unwrap() // Safe because bind_arguments guarantees match
+            }
+        };
+        Ok(TypedExpr {
+            ty: Type::Enum(enum_def.name.clone()),
+            line,
+            kind: ExprKind::EnumInit {
+                enum_name: enum_def.name.clone(),
+                variant_idx,
+                value: Box::new(val_expr),
+            },
+        })
     }
 
     fn handle_static_method_access(

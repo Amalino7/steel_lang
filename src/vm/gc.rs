@@ -274,9 +274,7 @@ impl Trace for VTable {
 impl Trace for EnumVariant {
     fn trace(&self, gc: &mut GarbageCollector) {
         gc.mark_value(&self.enum_name);
-        for payload in self.payload.iter() {
-            gc.mark_value(payload);
-        }
+        gc.mark_value(&self.payload);
     }
 }
 

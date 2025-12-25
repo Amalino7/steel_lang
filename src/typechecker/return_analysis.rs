@@ -1,5 +1,6 @@
 use crate::typechecker::error::TypeCheckerError;
-use crate::typechecker::type_ast::{StmtKind, Type, TypedStmt};
+use crate::typechecker::type_ast::{StmtKind, TypedStmt};
+use crate::typechecker::types::Type;
 use crate::typechecker::TypeChecker;
 
 impl<'src> TypeChecker<'src> {
@@ -87,9 +88,13 @@ impl<'src> TypeChecker<'src> {
                     false
                 }
             }
-            StmtKind::Match { cases, .. } => cases
-                .iter()
-                .all(|case| self.stmt_returns(&case.body).is_ok()), // TODO probably should return error
+            StmtKind::Match { cases, .. } => {
+                let mut returns = true;
+                for case in cases {
+                    returns &= self.stmt_returns(&case.body)?;
+                }
+                returns
+            }
             StmtKind::While { .. } => false,
             StmtKind::Function { .. } => false,
             StmtKind::Return(_) => true,
