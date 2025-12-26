@@ -28,6 +28,9 @@ pub enum Opcode {
 
     Nil,
     Pop,
+    Reserve,
+    Dup,
+
     JumpIfFalse,
     Jump,
     JumpBack,
@@ -49,13 +52,18 @@ pub enum Opcode {
     GetField,
     SetField,
 
+    CheckEnumTag,
+    EnumAlloc,
+    DestructureEnum,
+
     MakeVTable,
     MakeInterfaceObj,
     InterfaceBindMethod,
     GetInterfaceMethod,
 
     Return,
-    Halt,
+    #[allow(dead_code)]
+    Halt, // Can be reached only with the wrong bytecode.
 }
 #[derive(Debug)]
 pub struct Chunk {
@@ -86,7 +94,7 @@ impl Chunk {
             eprintln!("Too many constants");
         } else if pos > u8::MAX as usize {
             self.write_op(Opcode::ConstantLong as u8, line);
-            // Little endian is standard for modern processor architectures
+            // Little endian is the standard for modern processor architectures
             pos.to_le_bytes()
                 .iter()
                 .take(3)

@@ -22,6 +22,13 @@ pub struct Instance {
 }
 
 #[derive(Debug, Clone)]
+pub struct EnumVariant {
+    pub enum_name: Value, // Name for debugging purposes
+    pub tag: usize,
+    pub payload: Value,
+}
+
+#[derive(Debug, Clone)]
 pub struct BoundMethod {
     pub receiver: Value,
     pub method: Gc<Function>,
@@ -55,6 +62,7 @@ pub enum Value {
     NativeFunction(NativeFn),
     BoundMethod(Gc<BoundMethod>),
     Instance(Gc<Instance>),
+    Enum(Gc<EnumVariant>),
     InterfaceObj(Gc<InterfaceObj>),
 }
 
@@ -76,6 +84,7 @@ impl PartialEq for Value {
             (Value::String(l), Value::String(r)) => l.as_str() == r.as_str(),
             (Value::Boolean(l), Value::Boolean(r)) => l == r,
             (Value::Nil, Value::Nil) => true,
+            (Value::Enum(l), Value::Enum(r)) => l.enum_name == r.enum_name && l.tag == r.tag,
             _ => false,
         }
     }
@@ -98,6 +107,7 @@ impl Display for Value {
                 bound_method.method.name.as_str(),
                 bound_method.receiver
             ),
+            Value::Enum(enum_variant) => write!(f, "<enum {}>", enum_variant.enum_name),
             Value::InterfaceObj(_) => write!(f, "<interface>"),
         }
     }

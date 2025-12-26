@@ -1,213 +1,7 @@
 use crate::compiler::analysis::ResolvedVar;
-use crate::parser::ast::{Literal, TypeAst};
-use crate::token::Token;
-use crate::typechecker::error::TypeCheckerError;
-use crate::typechecker::type_system::TypeSystem;
+use crate::parser::ast::Literal;
+use crate::typechecker::types::Type;
 use crate::typechecker::Symbol;
-use std::collections::HashMap;
-use std::fmt::{Display, Formatter};
-use std::rc::Rc;
-
-#[derive(Debug, PartialEq, Clone)]
-pub struct FunctionType {
-    pub is_static: bool,
-    pub is_vararg: bool,
-    pub param_types: Vec<Type>,
-    pub return_type: Type,
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub struct StructType {
-    pub fields: HashMap<String, (usize, Type)>,
-    pub name: Symbol,
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub struct InterfaceType {
-    pub methods: HashMap<String, (usize, Type)>,
-    pub name: Symbol,
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub enum Type {
-    Nil,
-    Number,
-    String,
-    Boolean,
-    Void,
-    Function(Rc<FunctionType>),
-    Unknown,
-    Struct(Symbol),
-    Interface(Symbol),
-    Optional(Box<Type>),
-    Any, //TODO replace with generic types, this is for native functions.
-}
-
-impl Type {
-    pub fn from_identifier(
-        name: &Token,
-        type_system: &TypeSystem,
-    ) -> Result<Type, TypeCheckerError> {
-        let line = name.line;
-        let name = name.lexeme;
-        if name == "number" {
-            Ok(Type::Number)
-        } else if name == "string" {
-            Ok(Type::String)
-        } else if name == "boolean" {
-            Ok(Type::Boolean)
-        } else if name == "void" {
-            Ok(Type::Void)
-        } else if let Some(struct_type) = type_system.get_struct(name) {
-            Ok(Type::Struct(struct_type.name.clone()))
-        } else if let Some(iface) = type_system.get_interface(name) {
-            Ok(Type::Interface(iface.name.clone()))
-        } else {
-            Err(TypeCheckerError::UndefinedType {
-                name: name.to_string(),
-                line,
-                message: "Could not find type with that name.",
-            })
-        }
-    }
-
-    pub fn wrap_in_optional(self) -> Type {
-        match self {
-            Type::Optional(_) => self,
-            _ => Type::Optional(Box::new(self)),
-        }
-    }
-
-    pub fn get_name(&self) -> Option<&str> {
-        match self {
-            Type::Interface(name) => Some(name),
-            Type::Number => Some("number"),
-            Type::String => Some("string"),
-            Type::Boolean => Some("boolean"),
-            Type::Void => Some("void"),
-            Type::Function(_) => None,
-            Type::Unknown => None,
-            Type::Struct(name) => Some(name),
-            Type::Any => None,
-            Type::Optional(_) => None,
-            Type::Nil => Some("nil"),
-        }
-    }
-
-    pub fn new_function(param_types: Vec<Type>, return_type: Type) -> Type {
-        Type::Function(Rc::new(FunctionType {
-            is_static: true,
-            is_vararg: false,
-            param_types,
-            return_type,
-        }))
-    }
-
-    pub fn new_vararg(param_types: Vec<Type>, return_type: Type) -> Type {
-        Type::Function(Rc::new(FunctionType {
-            is_static: true,
-            is_vararg: true,
-            param_types,
-            return_type,
-        }))
-    }
-
-    pub fn from_ast(
-        type_ast: &TypeAst<'_>,
-        type_system: &TypeSystem,
-    ) -> Result<Type, TypeCheckerError> {
-        match type_ast {
-            TypeAst::Named(name) => Self::from_identifier(name, type_system),
-            TypeAst::Function {
-                param_types,
-                return_type,
-            } => {
-                let param_types = param_types
-                    .iter()
-                    .map(|e| Self::from_ast(e, type_system))
-                    .collect::<Result<Vec<Type>, TypeCheckerError>>()?;
-
-                Ok(Type::new_function(
-                    param_types,
-                    Self::from_ast(return_type, type_system)?,
-                ))
-            }
-            TypeAst::Optional(inner) => {
-                let inner_ty = Self::from_ast(inner, type_system)?;
-                Ok(Type::Optional(Box::new(inner_ty)))
-            }
-            TypeAst::Infer => Ok(Type::Unknown),
-        }
-    }
-
-    pub fn from_method_ast(
-        type_ast: &TypeAst<'_>,
-        self_type: &Token,
-        type_system: &TypeSystem,
-    ) -> Result<Type, TypeCheckerError> {
-        match type_ast {
-            TypeAst::Function {
-                param_types,
-                return_type,
-            } => {
-                let first_param_type = param_types.first();
-                let mut result_param_type = vec![];
-
-                let is_instance_method = if let Some(TypeAst::Named(name)) = first_param_type {
-                    name.lexeme == "Self"
-                } else {
-                    false
-                };
-
-                if is_instance_method {
-                    result_param_type.push(Type::from_identifier(self_type, type_system)?);
-                }
-
-                for param_type in param_types.iter().skip(0 + is_instance_method as usize) {
-                    result_param_type.push(Self::from_ast(param_type, type_system)?);
-                }
-
-                Ok(Type::Function(Rc::new(FunctionType {
-                    is_static: !is_instance_method,
-                    is_vararg: false,
-                    return_type: Self::from_ast(return_type.as_ref(), type_system)?,
-                    param_types: result_param_type,
-                })))
-            }
-            _ => unreachable!(),
-        }
-    }
-}
-
-impl Display for Type {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Type::Number => write!(f, "Number"),
-            Type::Boolean => write!(f, "Bool"),
-            Type::String => write!(f, "String"),
-            Type::Void => write!(f, "Void"),
-            Type::Function(function_type) => {
-                write!(
-                    f,
-                    "fn({}) -> {}",
-                    function_type
-                        .param_types
-                        .iter()
-                        .map(|t| format!("{}", t))
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                    function_type.return_type
-                )
-            }
-            Type::Unknown => write!(f, "Unknown"),
-            Type::Any => write!(f, "any"),
-            Type::Struct(name) => write!(f, "struct {} ", name),
-            Type::Interface(name) => write!(f, "interface {} ", name),
-            Type::Optional(inner) => write!(f, "Optional<{}>", inner),
-            Type::Nil => write!(f, "Nil"),
-        }
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct TypedExpr {
@@ -270,18 +64,24 @@ pub enum ExprKind {
         name: Box<str>,
         args: Vec<TypedExpr>,
     },
-
+    EnumInit {
+        enum_name: Symbol,
+        variant_idx: u16,
+        value: Box<TypedExpr>,
+    },
     InterfaceUpcast {
         expr: Box<TypedExpr>,
         vtable_idx: u32,
     },
-
+    Is {
+        target: Box<TypedExpr>,
+        variant_idx: u16,
+    },
     InterfaceMethodGet {
         object: Box<TypedExpr>,
         method_index: u8,
         safe: bool,
     },
-
     Unary {
         operator: UnaryOp,
         operand: Box<TypedExpr>,
@@ -294,6 +94,7 @@ pub enum ExprKind {
     Logical {
         left: Box<TypedExpr>,
         operator: LogicalOp,
+        typed_refinements: Vec<(ResolvedVar, ResolvedVar)>,
         right: Box<TypedExpr>,
     },
     Assign {
@@ -304,6 +105,9 @@ pub enum ExprKind {
         object: Box<TypedExpr>,
         method: ResolvedVar,
         safe: bool,
+    },
+    Tuple {
+        elements: Vec<TypedExpr>,
     },
     Call {
         callee: Box<TypedExpr>, // 8 bytes
@@ -324,24 +128,31 @@ pub enum StmtKind {
         vtables: Box<[Vec<ResolvedVar>]>,
     }, // Might add meta-information later
     StructDecl {},
+    EnumDecl {},
     Global {
         global_count: u32,
         stmts: Vec<TypedStmt>,
+        reserved: u16,
     },
     Expression(TypedExpr),
     Return(TypedExpr),
     Let {
-        target: ResolvedVar,
+        binding: TypedBinding,
         value: TypedExpr,
     },
     Block {
         body: Vec<TypedStmt>,
-        variable_count: u8,
+        reserved: u16,
     },
     If {
         condition: TypedExpr,
         then_branch: Box<TypedStmt>,
         else_branch: Option<Box<TypedStmt>>,
+        typed_refinements: Box<TypedRefinements>,
+    },
+    Match {
+        value: Box<TypedExpr>,
+        cases: Vec<MatchCase>,
     },
     While {
         condition: TypedExpr,
@@ -353,4 +164,30 @@ pub enum StmtKind {
         body: Box<TypedStmt>,
         captures: Box<[ResolvedVar]>,
     },
+}
+#[derive(Debug)]
+pub enum TypedBinding {
+    Variable(ResolvedVar),
+    Ignored,
+    Tuple(Vec<TypedBinding>),
+    Struct(Vec<(u8, TypedBinding)>),
+}
+
+#[derive(Debug)]
+pub enum MatchCase {
+    Variable {
+        binding: TypedBinding,
+        body: TypedStmt,
+    },
+    Named {
+        variant_idx: u16,
+        binding: TypedBinding,
+        body: TypedStmt,
+    },
+}
+#[derive(Debug)]
+pub struct TypedRefinements {
+    pub true_path: Vec<(ResolvedVar, ResolvedVar)>,
+    pub else_path: Vec<(ResolvedVar, ResolvedVar)>,
+    pub after_path: Vec<(ResolvedVar, ResolvedVar)>,
 }

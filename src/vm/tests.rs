@@ -399,7 +399,8 @@ mod tests {
 
     #[test]
     fn test_local_override() {
-        let src = r#"{
+        let src = r#"
+        {
             let a = 1;
             {
                 let b = 2;
@@ -578,12 +579,13 @@ mod tests {
                 x: number,
                 y: number,
             }
-            let p1 = Point{x: 1, y: 2};
+            let p1 = Point(1, 2);
+            
             assert(p1.x, 1);
             assert(p1.y, 2);
 
             func make_point(x: number, y: number): Point {
-                return Point { x: x, y: y };
+                return Point (x: x, y: y);
             }
 
             func print_point(p: Point): void {
@@ -596,6 +598,7 @@ mod tests {
             assert(p2.x + p2.y, 30);
             p2.x = 100;
             print_point(p2);
+            print_point(p1);
             assert(p2.x, 100);
         "#;
         execute_source(src, false, "run", true);
@@ -614,7 +617,7 @@ mod tests {
                  return a + b;
             }
 
-            let p1 = Point {x: 1, y: 2, add: add};
+            let p1 = Point (x: 1, y: 2, add: add);
             assert(p1.x, 1);
             assert(p1.y, 2);
             assert(p1.add(6,7), 13);
@@ -635,7 +638,7 @@ mod tests {
                 height: number,
                 corner: Point,
             }
-            let rect = Rectangle{width: 10, height: 20, corner: Point{x: 1, y: 2}};
+            let rect = Rectangle(width: 10, height: 20, corner: Point(x: 1, y: 2));
             assert(rect.corner.x, 1);
             assert(rect.corner.y, 2);
             assert(rect.width, 10);
@@ -653,12 +656,12 @@ mod tests {
         let src = r#"
             struct Node {
                 value: number,
-                next: Node,
+                next: Node?,
             }
-            // let head = Node{value: 1, next: null};
-            // let tail = Node{value: 2, next: head};
-            // head.next = tail;
-            // assert(head.next.value, 2);
+            let head = Node(value: 1, next: nil);
+            let tail = Node(value: 2, next: head);
+            head.next = tail;
+            assert(head.next?.value, 2);
             "#;
         execute_source(src, false, "run", true);
     }
@@ -670,7 +673,7 @@ mod tests {
                 x: number,
                 y: string,
             }
-            let p1 = Point{x: 1, y: "2"};
+            let p1 = Point(x: 1, y: "2");
             assert(p1.x, 1);
             assert(p1.y, "2");
             println(p1.x," ", p1.y);
@@ -688,13 +691,13 @@ mod tests {
                 w: number,
                 v: number,
             }
-            let v = Vec5{v: 1, w: 2, x: 3, y: 4, z: 5};
+            let v = Vec5(v: 1, w: 2, x: 3, y: 4, z: 5);
             assert(v.v, 1);
             assert(v.w, 2);
             assert(v.x, 3);
             assert(v.y, 4);
             assert(v.z, 5);
-            let v1 = Vec5{w: 2, v: 1,z: 1 + 4, y: 4, x: 3};
+            let v1 = Vec5(w: 2, v: 1,z: 1 + 4, y: 4, x: 3);
             assert(v1.v, 1);
             assert(v1.w, 2);
             assert(v1.x, 3);
@@ -712,7 +715,7 @@ mod tests {
             }
             impl Point {
                 func add(self, other: Point): Point {
-                    return Point{x: self.x + other.x, y: self.y + other.y};
+                    return Point(x: self.x + other.x, y: self.y + other.y);
                 }
             }
             impl number {
@@ -731,8 +734,8 @@ mod tests {
             }
 
 
-            let p1 = Point{x: 1, y: 2};
-            let p2 = Point{x: 3, y: 4};
+            let p1 = Point(x: 1, y: 2);
+            let p2 = Point(x: 3, y: 4);
             let p3 = p1.add(p2);
             assert(p3.x, 4);
             assert(p3.y, 6);
@@ -754,7 +757,7 @@ mod tests {
                     return self;
                 }
                 func new(): Counter {
-                    return Counter{value: 0};
+                    return Counter(0);
                 }
 
                 func add(stg: Counter, other: number) {
@@ -806,15 +809,15 @@ mod tests {
             impl Point {
                 // normal method
                 func add(self, other: Point): Point {
-                    return Point{x: self.x + other.x, y: self.y + other.y};
+                    return Point(x: self.x + other.x, y: self.y + other.y);
                 }
                 // static method
                 func add2(one: Point, two: Point): Point {
                     return one.add(two);
                 }
             }
-            let instance1 = Point{x: 1, y: 2};
-            let instance2 = Point{x: 3, y: 4};
+            let instance1 = Point(x: 1, y: 2);
+            let instance2 = Point(3, y: 4);
             let result = Point.add2(instance1, instance2); // static
             assert(result.x, 4); assert(result.y, 6);
             let result2 = instance1.add(instance2); // normal
@@ -839,8 +842,8 @@ mod tests {
                     return self.fib(num - 1) + self.fib(num - 2);
                 }
             }
-            let res = Fiber{}.fib(20);
-            let fib = Fiber{}.fib;
+            let res = Fiber().fib(20);
+            let fib = Fiber().fib;
             assert(fib(20), 6765);
             assert(res, 6765);
             println(res);
@@ -864,7 +867,7 @@ mod tests {
                     self.val += 1;
                 }
             }
-            let c = Counter{val: 0};
+            let c = Counter(val: 0);
             c.inc();
             assert(c.val, 1);
             let inc = c.inc;
@@ -900,9 +903,9 @@ mod tests {
 
             func draw(d: Drawable): void { d.draw(); }
 
-            let d: Drawable = Point { x: 1, y: 2 };
+            let d: Drawable = Point ( x: 1, y: 2 );
             d.draw();
-            let o: Drawable = Other{};
+            let o: Drawable = Other();
 
             o.draw();
             draw(d);
@@ -925,12 +928,12 @@ mod tests {
 
             func something(a: Drawable): void { a.draw(); }
 
-            let p: Drawable = Point { x: 1, y: 2 };
-            p = Point { x: 3, y: 4 };
+            let p: Drawable = Point ( x: 1, y: 2 );
+            p = Point ( x: 3, y: 4 );
             p.draw();
-            something(Point { x: 5, y: 6 });
+            something(Point ( x: 5, y: 6 ));
 
-            let other = Point { x: 7, y: 8 };
+            let other = Point ( x: 7, y: 8);
             other.draw();
 
             "#;
@@ -968,8 +971,8 @@ mod tests {
                 }
             }
 
-            let p1 = Point { x: 1, y: 2 };
-            let p2 = Point { x: 3, y: 4 };
+            let p1 = Point ( x: 1, y: 2 );
+            let p2 = Point ( x: 3, y: 4 );
             println(p1.eq(p2));
             assert(p1.eq(p2), true);
 
@@ -1001,7 +1004,7 @@ mod tests {
 
             func myPrint(p: Printable): void { p.print(); }
 
-            myPrint(Point { x: 3, y: 4 });
+            myPrint(Point ( x: 3, y: 4 ));
             myPrint(10);
             "#;
         execute_source(src, false, "run", true);
@@ -1031,8 +1034,8 @@ mod tests {
                 assert(s.perimeter(), (10 + 5) * 2 );
                 println(s.perimeter());
             }
-            printArea(Circle { radius: 5 });
-            printPerimeter(Rectangle { width: 10, height: 5 });
+            printArea(Circle ( radius: 5 ));
+            printPerimeter(Rectangle ( width: 10, height: 5 ));
 
             "#;
         execute_source(src, false, "run", true);
@@ -1055,7 +1058,7 @@ mod tests {
     fn test_nil_access() {
         let src = r#"
             struct Point { x: number, y: number }
-            let p: Point? = Point { x: 1, y: 2 };
+            let p: Point? = Point ( x: 1, y: 2 );
             assert(p?.x, 1);
             assert(p?.y, 2);
             p = nil;
@@ -1076,8 +1079,8 @@ mod tests {
                 value: number,
                 next: Node?,
             }
-            let head = Node{value: 1, next: nil};
-            let tail = Node{value: 2, next: head};
+            let head = Node(value: 1, next: nil);
+            let tail = Node(value: 2, next: head);
             head.next = tail;
             assert(head.next?.value, 2);
             head.next?.value = 3;
@@ -1092,7 +1095,7 @@ mod tests {
     fn test_unwrap() {
         let src = r#"
             struct Point { x: number, y: number }
-            let p: Point? = Point { x: 1, y: 2 };
+            let p: Point? = Point ( x: 1, y: 2 );
             let strong_p = p!;
             p = nil;
             assert(strong_p.x, 1);
@@ -1112,7 +1115,7 @@ mod tests {
             }
             impl LinkedList {
                 func new(): LinkedList {
-                    return LinkedList{size: 0, head: nil};
+                    return LinkedList(size: 0, head: nil);
                 }
                 func get(self, index: number): number? {
                     let head = self.head;
@@ -1132,7 +1135,7 @@ mod tests {
                 }
                 func push(self, value: number) {
                     self.size += 1;
-                    let new_node = Node{value: value, next: nil};
+                    let new_node = Node(value: value, next: nil);
                     if self.head != nil {
                         let head = self.head!;
                         while head.next != nil {
@@ -1221,7 +1224,7 @@ mod tests {
             fun?();
 
             p?.do_something();
-            p = Point{x: 1, y: 2};
+            p = Point(1, 2);
 
             p?.other();
             fun?();
@@ -1272,7 +1275,7 @@ mod tests {
             }
             func main()
             {
-                let p: Printable? = Point{x: 1, y: 2};
+                let p: Printable? = Point(x: 1, y: 2);
                 if p != nil {
                     // normal check
                     p.print();
@@ -1345,7 +1348,7 @@ mod tests {
             struct Array {length: number}
             func main()
             {
-                let x: Array? = Array{length: 10};
+                let x: Array? = Array(length: 10);
                 if x != nil and x.length > 0 {
                     assert(x.length, 10);
                     println(x.length);
@@ -1362,5 +1365,258 @@ mod tests {
             main();
             "#;
         execute_source(src, false, "run", true);
+    }
+    #[test]
+    fn test_enums() {
+        let src = r#"
+            enum Color { Red, Green, Blue }
+            let c = Color.Red;
+            match c {
+                Color.Red => {println("Red");}
+                Color.Green => {println("Green");}
+                Color.Blue => {println("Blue");}
+            }
+            assert(c, Color.Red);
+            println(c);
+            "#;
+        execute_source(src, false, "run", true);
+    }
+    #[test]
+    fn test_structure_enums() {
+        let src = r#"
+            enum Message {
+             Quit,
+             Move{
+                x: number,
+                y: number,
+             },
+             ChangeColor{
+                r: number,
+                g: number,
+                b: number,
+             }
+            }
+            let msg = Message.Move(x: 10, y: 20);
+            // msg = Message.Quit;
+            // msg = Message.ChangeColor(r: 10, g: 20, b: 30);
+            match msg {
+                .Quit => {println("Quit");}
+                .Move(:x, :y) => {println(x, y);}
+                .ChangeColor(a) => {println(a.r, a.g, a.b);}
+            }
+            msg = Message.ChangeColor(r: 10, g: 20, b: 30);
+            msg = Message.Quit;
+
+            match msg {
+                .ChangeColor(a) => {println(a.r, a.g, a.b);}
+                _ => {println("Not a change color");}
+            }
+           "#;
+        execute_source(src, false, "run", true);
+    }
+    #[test]
+    fn test_val_enums() {
+        let src = r#"
+            enum Shape { Circle(number), Rectangle(number, number) }
+            func area(s: Shape): number {
+                match s {
+                    Shape.Circle(radius) => {return 3.14 * radius * radius;}
+                    Shape.Rectangle(width, height) => {return width * height;}
+                }
+            }
+            func area2(s: Shape): number {
+                match s {
+                    .Circle(radius) => {return 3.14 * radius * radius;}
+                    .Rectangle(rect) => {return rect.0 * rect.1;}
+                }
+            }
+            let rect = Shape.Rectangle(6, 10);
+            println(rect);
+            println(area2(rect));
+            assert(area(Shape.Circle(5)), 78.5);
+            assert(area(Shape.Rectangle(10, 5)), 50);
+        "#;
+        execute_source(src, false, "run", true);
+    }
+    #[test]
+    fn test_enum_branch_analysis() {
+        let src = r#"
+            enum Res {Ok(number), Err(string)}
+            {
+                let res = Res.Ok(10);
+                let res2 = Res.Ok(20);
+                // res = Res.Err("Hello");
+                if res is Ok and res2 is Ok {
+                    println(res + res2);
+                } else {
+                    // println("Error is "+ res);
+                }
+
+                if res2 is Ok and res2 > 10 {
+                    println("res is bigger than 10: ", res2);
+                }
+            }
+
+            func main() {
+                let res = Res.Ok(15);
+                if res is Err {
+                    return;
+                }
+                println(res * 7);
+            }
+            main();
+        "#;
+        execute_source(src, true, "run", true);
+    }
+    #[test]
+    fn test_number_result() {
+        let src = r#"
+            enum Result { Ok(number), Err(string) }
+            impl Result {
+                func unwrap(self): number {
+                    match self {
+                        Result.Ok(val) => {return val;}
+                        Result.Err(err) => {
+                            println("Unwrapping error: ", err);
+                            panic("");
+                            return 0; // Ureachable 
+                        }
+                    }
+                }
+                func unwrap_or(self, default: number): number {
+                    match self{
+                        Result.Ok(val) => {return val;}
+                        Result.Err(_) => {return default;}
+                    }
+                }
+            }
+            let res = Result.Ok(10);
+            let sum = res.unwrap() + 15;
+            println(sum);
+            assert(sum, 25);
+            let res2 = Result.Err("Error");
+            // res2.unwrap();
+            assert(res2.unwrap_or(10), 10);
+        "#;
+        execute_source(src, false, "run", true);
+    }
+    #[test]
+    fn test_func_named_args() {
+        let src = r#"
+            func print_msg(msg: string) {
+                println("Here ->", msg);
+            }
+            func other(no: string) {
+                println("No: ", no);
+            }
+            impl number {
+                func add(self, other: number): number{
+                    return self + other;
+                }
+            }
+            println(10.add(other: 12));
+            print_msg(msg: "Nice to meet you!");
+
+            let a = print_msg;
+            a(msg: "Ok");
+            a = other;
+            a(msg: "Not ok!");
+        "#;
+        execute_source(src, false, "run", true);
+    }
+
+    #[test]
+    fn test_inner_type() {
+        let src = r#"
+        struct Vector {
+            start: Point,
+            end: Point,
+        }
+        struct Point { x: number, y: number }
+        impl Point {
+            func print(self) {
+                println("{",self.x ,",", self.y, "}");
+            }
+        }
+        let vec = Vector(start: Point(x: 1, y: 2), end: Point(x: 3, y: 4));
+        vec.start.print();
+        "#;
+        execute_source(src, false, "run", true);
+    }
+    #[test]
+    fn test_tuples() {
+        let src = r#"
+            func takes_str(a: string) {}
+            func takes_tuple(a: (number, string)) {
+                println(a);
+                println(a.0);
+                println(a.1);
+            }
+            func takes_num(a: number) {}
+            let tuple = (1, "What");
+            takes_tuple(tuple);
+            takes_str(tuple.1);
+            takes_num(tuple.0);
+            assert(tuple.0, 1);
+            assert(tuple.1, "What");
+        "#;
+        execute_source(src, false, "lex", true);
+    }
+    #[test]
+    fn test_tuples2() {
+        let src = r#"
+            func returns_tuple(): (number, number) { return (1, 2);}
+            let tuple = returns_tuple();
+            let (a,b) = returns_tuple();
+            println(a," ", b);
+
+            let tuple2: (number, number)? = (3, 4);
+            println(tuple2?.0);
+            println(tuple2?.1);
+            assert(tuple2?.0, 3);
+            assert(tuple2?.1, 4);
+
+            tuple2?.1 = 2;
+            assert(tuple2?.1, 2);
+            assert(( 2 + 5) * 5, 35);
+            tuple2 = nil;
+            assert(tuple2?.0, nil);
+            assert(tuple2?.1, nil);
+            assert(tuple.0, 1);
+            assert(tuple.1, 2);
+        "#;
+        execute_source(src, false, "run", true);
+    }
+    #[test]
+    fn test_destructuring() {
+        let src = r#"
+            struct Point {x: number, y: number}
+
+            let Point(y: x, x: y) = Point(x: 1, y: 2);
+            assert(x, 2);
+            assert(y, 1);
+            struct Complex {one: (number, number, Other, Other), two: Other}
+            struct Other{a: number, b: number}
+
+            let Complex(one: (a,b, _, other), two: Other(a: c,b: d) )  = Complex(one: (1, 2, Other(3,4) , Other(5,6) ), two: Other(7,8));
+            println(a,b,other.a,other.b, c, d);
+            assert(1, a);
+            assert(2, b);
+            assert(other.a, 5);
+            assert(other.b, 6);
+            assert(c, 7);
+            assert(d, 8);
+
+        "#;
+        execute_source(src, false, "run", true);
+    }
+    #[test]
+    fn test_generic_struct() {
+        let src = r#"
+            struct Point<T> {x: T, y: T}
+            let p = Point(x: 1, y: 2);
+            assert(p.x, 1);
+            assert(p.y, 2);
+            "#;
     }
 }

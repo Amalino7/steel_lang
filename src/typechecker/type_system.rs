@@ -1,5 +1,6 @@
 use crate::typechecker::error::TypeCheckerError;
-use crate::typechecker::type_ast::{ExprKind, InterfaceType, StructType, Type, TypedExpr};
+use crate::typechecker::type_ast::{ExprKind, TypedExpr};
+use crate::typechecker::types::{EnumType, InterfaceType, StructType, Type};
 use crate::typechecker::Symbol;
 use std::collections::HashMap;
 
@@ -7,6 +8,7 @@ pub struct TypeSystem {
     structs: HashMap<Symbol, StructType>,
     interfaces: HashMap<Symbol, InterfaceType>,
     impls: HashMap<(Symbol, Symbol), u32>,
+    enums: HashMap<Symbol, EnumType>,
 }
 
 impl TypeSystem {
@@ -15,6 +17,7 @@ impl TypeSystem {
             structs: HashMap::new(),
             interfaces: HashMap::new(),
             impls: HashMap::new(),
+            enums: HashMap::new(),
         }
     }
 
@@ -25,6 +28,18 @@ impl TypeSystem {
             StructType {
                 name,
                 fields: HashMap::new(),
+                ordered_fields: vec![],
+            },
+        );
+    }
+
+    pub fn declare_enum(&mut self, name: Symbol) {
+        self.enums.insert(
+            name.clone(),
+            EnumType {
+                name,
+                variants: HashMap::new(),
+                ordered_variants: vec![],
             },
         );
     }
@@ -39,8 +54,36 @@ impl TypeSystem {
         );
     }
 
-    pub fn define_struct(&mut self, name: &str, fields: HashMap<String, (usize, Type)>) {
-        self.structs.get_mut(name).map(|e| e.fields = fields);
+    pub fn define_struct(&mut self, name: &str, fields_map: HashMap<String, (usize, Type)>) {
+        if let Some(s) = self.structs.get_mut(name) {
+            s.fields = fields_map
+                .iter()
+                .map(|(k, (idx, _))| (k.clone(), *idx))
+                .collect();
+
+            let mut vec_fields = vec![None; fields_map.len()];
+            for (k, (idx, t)) in fields_map {
+                if idx < vec_fields.len() {
+                    vec_fields[idx] = Some((k, t));
+                }
+            }
+            s.ordered_fields = vec_fields.into_iter().map(|opt| opt.unwrap()).collect();
+        }
+    }
+    pub fn define_enum(&mut self, name: &str, variants: HashMap<String, (usize, Type)>) {
+        if let Some(e) = self.enums.get_mut(name) {
+            e.variants = variants
+                .iter()
+                .map(|(k, (idx, _))| (k.clone(), *idx))
+                .collect();
+            let mut vec_variants = vec![None; variants.len()];
+            for (k, (idx, t)) in variants {
+                if idx < vec_variants.len() {
+                    vec_variants[idx] = Some((k, t));
+                }
+            }
+            e.ordered_variants = vec_variants.into_iter().map(|opt| opt.unwrap()).collect();
+        }
     }
 
     pub fn define_interface(&mut self, name: &str, methods: HashMap<String, (usize, Type)>) {
@@ -60,9 +103,17 @@ impl TypeSystem {
         self.interfaces.get(name)
     }
 
+    pub fn get_enum(&self, name: &str) -> Option<&EnumType> {
+        self.enums.get(name)
+    }
+
+    pub fn does_enum_exist(&self, name: &str) -> bool {
+        self.enums.contains_key(name)
+    }
     pub fn does_type_exist(&self, name: &str) -> bool {
         if self.structs.contains_key(name)
             || self.interfaces.contains_key(name)
+            || self.enums.contains_key(name)
             || name == "string"
             || name == "number"
             || name == "boolean"
@@ -98,6 +149,9 @@ impl TypeSystem {
         expr: TypedExpr,
         line: u32,
     ) -> Result<TypedExpr, TypeCheckerError> {
+        if expected_type == &Type::Any {
+            return Ok(expr);
+        }
         if let Type::Optional(_) = expected_type {
             if expr.ty == Type::Nil {
                 return Ok(expr);
@@ -144,19 +198,14 @@ impl TypeSystem {
                 if func.is_static {
                     return implementation == expected;
                 }
-                if impls.param_types.len() != func.param_types.len() {
+                if impls.params.len() != func.params.len() {
                     return false;
                 }
                 if impls.return_type != func.return_type {
                     return false;
                 }
-                for (param, impl_param) in func
-                    .param_types
-                    .iter()
-                    .zip(impls.param_types.iter())
-                    .skip(1)
-                {
-                    if param != impl_param {
+                for (param, impl_param) in func.params.iter().zip(impls.params.iter()).skip(1) {
+                    if param.1 != impl_param.1 {
                         return false;
                     }
                 }
@@ -164,5 +213,108 @@ impl TypeSystem {
             }
             _ => false,
         }
+    }
+
+    pub fn bind_arguments(
+        &self,
+        callee_name: &str,
+        params: &[(String, Type)],
+        args: Vec<(Option<&str>, TypedExpr, u32)>,
+        is_vararg: bool,
+        call_line: u32,
+    ) -> Result<Vec<TypedExpr>, TypeCheckerError> {
+        let fixed_len = params.len();
+        let mut fixed: Vec<Option<TypedExpr>> = vec![None; fixed_len];
+        let mut used = vec![false; fixed_len];
+        let mut extras = Vec::new(); // Used for varargs
+        let mut pos_cursor = 0;
+        let mut seen_named = false;
+
+        for (label, expr, line) in args {
+            match label {
+                Some(name) => {
+                    seen_named = true;
+
+                    let idx = self.resolve_named_arg(callee_name, params, name, line)?;
+
+                    if used[idx] {
+                        return Err(TypeCheckerError::DuplicateArgument {
+                            name: params[idx].0.clone(),
+                            line,
+                        });
+                    }
+
+                    let expected = &params[idx].1;
+                    let coerced = self.verify_assignment(expected, expr, line)?;
+                    fixed[idx] = Some(coerced);
+                    used[idx] = true;
+                }
+
+                None => {
+                    if seen_named {
+                        return Err(TypeCheckerError::PositionalArgumentAfterNamed {
+                            callee: callee_name.to_string(),
+                            message: "positional arguments cannot appear after named arguments",
+                            line,
+                        });
+                    }
+
+                    while pos_cursor < fixed_len && used[pos_cursor] {
+                        pos_cursor += 1;
+                    }
+
+                    if pos_cursor < fixed_len {
+                        let expected = &params[pos_cursor].1;
+                        let coerced = self.verify_assignment(expected, expr, line)?;
+                        fixed[pos_cursor] = Some(coerced);
+                        used[pos_cursor] = true;
+                        pos_cursor += 1;
+                    } else if is_vararg {
+                        extras.push(self.verify_assignment(
+                            &params[pos_cursor - 1].1,
+                            expr,
+                            line,
+                        )?);
+                    } else {
+                        return Err(TypeCheckerError::TooManyArguments {
+                            callee: callee_name.to_string(),
+                            expected: fixed_len,
+                            found: fixed_len + extras.len() + 1,
+                            line,
+                        });
+                    }
+                }
+            }
+        }
+
+        let mut result = Vec::with_capacity(fixed_len + extras.len());
+
+        for (i, opt) in fixed.into_iter().enumerate() {
+            result.push(opt.ok_or_else(|| TypeCheckerError::MissingArgument {
+                param_name: params[i].0.clone(),
+                callee: callee_name.to_string(),
+                line: call_line,
+            })?);
+        }
+
+        result.extend(extras);
+        Ok(result)
+    }
+
+    fn resolve_named_arg(
+        &self,
+        callee: &str,
+        params: &[(String, Type)],
+        name: &str,
+        line: u32,
+    ) -> Result<usize, TypeCheckerError> {
+        params
+            .iter()
+            .position(|(pname, _)| pname == name)
+            .ok_or_else(|| TypeCheckerError::UndefinedParameter {
+                param_name: name.to_string(),
+                callee: callee.to_string(),
+                line,
+            })
     }
 }

@@ -47,6 +47,7 @@ pub enum TokenType {
     GreaterEqual,
     Less,
     LessEqual,
+    Arrow, // =>
 
     // Assignment arithmetic operators.
     PlusEqual,
@@ -62,6 +63,7 @@ pub enum TokenType {
     // Keywords.
     And,
     Or,
+    Is,
     If,
     Else,
     Func,
@@ -75,6 +77,9 @@ pub enum TokenType {
     Impl,
     Self_,
     Interface,
+
+    Enum,
+    Match,
 
     // Reports errors.
     Error,
@@ -108,7 +113,7 @@ impl Display for TokenType {
             TokenType::GreaterEqual => f.write_str(">="),
             TokenType::Less => f.write_str("<"),
             TokenType::LessEqual => f.write_str("<="),
-            TokenType::Identifier => f.write_str("identifier"),
+            TokenType::Identifier => f.write_str("binding"),
             TokenType::String => f.write_str("string"),
             TokenType::Number => f.write_str("number"),
             TokenType::And => f.write_str("and"),
@@ -137,6 +142,10 @@ impl Display for TokenType {
             TokenType::QuestionQuestion => f.write_str("??"),
             TokenType::QuestionParen => f.write_str("?("),
             TokenType::Nil => f.write_str("nil"),
+            TokenType::Enum => f.write_str("enum"),
+            TokenType::Match => f.write_str("match"),
+            TokenType::Arrow => f.write_str("=>"),
+            TokenType::Is => f.write_str("is"),
         }
     }
 }

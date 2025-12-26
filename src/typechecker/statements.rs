@@ -1,11 +1,16 @@
 use crate::compiler::analysis::ResolvedVar;
-use crate::parser::ast::Stmt;
+use crate::parser::ast::{Binding, MatchArm, Pattern, Stmt};
 use crate::token::Token;
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::scope_manager::ScopeType;
-use crate::typechecker::type_ast::{StmtKind, Type, TypedStmt};
+use crate::typechecker::type_ast::{
+    MatchCase, StmtKind, TypedBinding, TypedExpr, TypedRefinements, TypedStmt,
+};
 use crate::typechecker::type_system::TypeSystem;
+use crate::typechecker::types::{EnumType, TupleType, Type};
 use crate::typechecker::{FunctionContext, Symbol, TypeChecker};
+use std::collections::HashSet;
+use std::rc::Rc;
 
 impl<'src> TypeChecker<'src> {
     pub(crate) fn check_stmt(&mut self, stmt: &Stmt<'src>) -> Result<TypedStmt, TypeCheckerError> {
@@ -16,7 +21,7 @@ impl<'src> TypeChecker<'src> {
                 type_info: Type::Void,
             }),
             Stmt::Let {
-                identifier,
+                binding,
                 value,
                 type_info,
             } => {
@@ -24,31 +29,31 @@ impl<'src> TypeChecker<'src> {
                 let declared_type = Type::from_ast(type_info, &self.sys)?;
 
                 if declared_type == Type::Unknown {
-                    self.scopes
-                        .declare(identifier.lexeme.into(), value_node.ty.clone())?;
+                    let typed_binding = self.check_binding(binding, &value_node.ty)?;
                     Ok(TypedStmt {
                         kind: StmtKind::Let {
-                            target: self.scopes.lookup(identifier.lexeme).unwrap().1,
+                            binding: typed_binding,
                             value: value_node,
                         },
                         type_info: Type::Void,
-                        line: identifier.line,
+                        line: binding.get_line(),
                     })
                 } else {
-                    let coerced_value =
-                        self.sys
-                            .verify_assignment(&declared_type, value_node, identifier.line)?;
+                    let coerced_value = self.sys.verify_assignment(
+                        &declared_type,
+                        value_node,
+                        binding.get_line(),
+                    )?;
 
-                    self.scopes
-                        .declare(identifier.lexeme.into(), declared_type)?;
+                    let typed_binding = self.check_binding(binding, &declared_type)?;
 
                     Ok(TypedStmt {
                         kind: StmtKind::Let {
-                            target: self.scopes.lookup(identifier.lexeme).unwrap().1,
+                            binding: typed_binding,
                             value: coerced_value,
                         },
                         type_info: Type::Void,
-                        line: identifier.line,
+                        line: binding.get_line(),
                     })
                 }
             }
@@ -141,13 +146,12 @@ impl<'src> TypeChecker<'src> {
                     .map(|stmt| self.check_stmt(stmt))
                     .collect::<Result<Vec<TypedStmt>, TypeCheckerError>>()?;
 
-                let variable_count = self.scopes.scope_size() as u8;
                 self.scopes.end_scope();
 
                 Ok(TypedStmt {
                     kind: StmtKind::Block {
                         body: stmts,
-                        variable_count,
+                        reserved: 0, // Only function scopes have reserved
                     },
                     type_info: Type::Void,
                     line: brace_token.line,
@@ -165,14 +169,21 @@ impl<'src> TypeChecker<'src> {
                         expected: Type::Boolean,
                         found: cond_typed.ty,
                         line: condition.get_line(),
-                        message: "If condition must be a boolean.",
+                        message: "If value must be a boolean.",
                     });
                 }
 
                 let refinements = self.analyze_condition(&cond_typed);
+                let mut typed_refinements = TypedRefinements {
+                    true_path: vec![],
+                    else_path: vec![],
+                    after_path: vec![],
+                };
                 self.scopes.begin_scope(ScopeType::Block);
                 for (name, ty) in refinements.true_path.iter() {
-                    self.scopes.refine(name, ty.clone());
+                    if let Some(case) = self.scopes.refine(name, ty.clone()) {
+                        typed_refinements.true_path.push(case)
+                    }
                 }
                 let then_branch_typed = self.check_stmt(then_branch)?;
                 self.scopes.end_scope();
@@ -180,7 +191,9 @@ impl<'src> TypeChecker<'src> {
                 let else_branch_typed = if let Some(else_branch) = else_branch {
                     self.scopes.begin_scope(ScopeType::Block);
                     for (name, ty) in refinements.false_path.iter() {
-                        self.scopes.refine(name, ty.clone());
+                        if let Some(case) = self.scopes.refine(name, ty.clone()) {
+                            typed_refinements.else_path.push(case)
+                        }
                     }
                     let stmt = self.check_stmt(else_branch)?;
                     self.scopes.end_scope();
@@ -192,13 +205,17 @@ impl<'src> TypeChecker<'src> {
                 // Guard logic
                 if self.stmt_returns(&then_branch_typed)? {
                     for (name, ty) in refinements.false_path {
-                        self.scopes.refine(&name, ty);
+                        if let Some(case) = self.scopes.refine(&name, ty.clone()) {
+                            typed_refinements.after_path.push(case)
+                        }
                     }
                 }
                 if let Some(else_branch_typed) = &else_branch_typed {
                     if self.stmt_returns(&else_branch_typed)? {
                         for (name, ty) in refinements.true_path {
-                            self.scopes.refine(&name, ty);
+                            if let Some(case) = self.scopes.refine(&name, ty.clone()) {
+                                typed_refinements.after_path.push(case)
+                            }
                         }
                     }
                 }
@@ -208,6 +225,7 @@ impl<'src> TypeChecker<'src> {
                         condition: cond_typed,
                         then_branch: Box::new(then_branch_typed),
                         else_branch: else_branch_typed,
+                        typed_refinements: Box::new(typed_refinements),
                     },
                     type_info: Type::Void,
                     line: condition.get_line(),
@@ -221,7 +239,7 @@ impl<'src> TypeChecker<'src> {
                         expected: Type::Boolean,
                         found: cond_type.ty,
                         line: condition.get_line(),
-                        message: "While condition must be a boolean.",
+                        message: "While value must be a boolean.",
                     });
                 }
 
@@ -240,13 +258,16 @@ impl<'src> TypeChecker<'src> {
                 body,
                 type_,
             } => {
-                // global functions are already declared
-                let type_ = Type::from_ast(type_, &self.sys)?;
+                let raw_type = Type::from_ast(type_, &self.sys)?;
+
+                let final_type = raw_type.patch_param_names(params);
+
                 if !self.scopes.is_global() {
-                    self.scopes.declare(name.lexeme.into(), type_.clone())?;
+                    self.scopes
+                        .declare(name.lexeme.into(), final_type.clone())?;
                 }
 
-                self.check_function(name, params, body, type_, name.lexeme.into())
+                self.check_function(name, params, body, final_type, name.lexeme.into())
             }
             Stmt::Return(expr) => {
                 let return_expr = self.infer_expression(expr)?;
@@ -284,6 +305,255 @@ impl<'src> TypeChecker<'src> {
                     })
                 }
             }
+            Stmt::Enum { name, .. } => {
+                if !self.scopes.is_global() {
+                    return Err(TypeCheckerError::StructOutsideOfGlobalScope {
+                        name: name.lexeme.to_string(),
+                        line: name.line,
+                    });
+                }
+
+                Ok(TypedStmt {
+                    kind: StmtKind::EnumDecl {},
+                    line: name.line,
+                    type_info: Type::Void,
+                })
+            }
+            Stmt::Match { value, arms } => {
+                let value_typed = self.infer_expression(value)?;
+                let enum_name = match &value_typed.ty {
+                    Type::Enum(name) => name,
+                    _ => {
+                        return Err(TypeCheckerError::TypeMismatch {
+                            expected: Type::Enum("Any".into()),
+                            found: value_typed.ty,
+                            line: value_typed.line,
+                            message: "Match value must be an enum type.",
+                        });
+                    }
+                };
+
+                let enum_def = self.sys.get_enum(enum_name).unwrap().clone();
+                let mut matched_variants = HashSet::new();
+                let mut typed_cases = vec![];
+
+                let mut has_fallthrough = false;
+                for arm in arms {
+                    let res = self.handle_match_arm(
+                        &value_typed,
+                        &enum_def,
+                        &mut matched_variants,
+                        &mut typed_cases,
+                        &mut has_fallthrough,
+                        arm,
+                    );
+                    if let Err(err) = res {
+                        self.errors.push(err);
+                    }
+                }
+
+                // Exhaustiveness check
+                if !has_fallthrough {
+                    for variant in enum_def.variants.keys() {
+                        if !matched_variants.contains(variant.as_str()) {
+                            return Err(TypeCheckerError::UncoveredPattern {
+                                variant: variant.clone(),
+                                line: value_typed.line,
+                            });
+                        }
+                    }
+                }
+
+                Ok(TypedStmt {
+                    kind: StmtKind::Match {
+                        value: Box::new(value_typed),
+                        cases: typed_cases,
+                    },
+                    type_info: Type::Void,
+                    line: value.get_line(),
+                })
+            }
+        }
+    }
+
+    fn handle_match_arm(
+        &mut self,
+        value_typed: &TypedExpr,
+        enum_def: &EnumType,
+        matched_variants: &mut HashSet<&'src str>,
+        typed_cases: &mut Vec<MatchCase>,
+        has_fallthrough: &mut bool,
+        arm: &MatchArm<'src>,
+    ) -> Result<(), TypeCheckerError> {
+        if *has_fallthrough {
+            return Err(TypeCheckerError::UnreachablePattern {
+                line: arm.body.get_line(),
+                message: "Default case must be the last arm.".to_string(),
+            });
+        }
+
+        match &arm.pattern {
+            Pattern::Named {
+                enum_name,
+                variant_name,
+                bind,
+            } => {
+                if let Some(explicit_name) = enum_name
+                    && explicit_name.lexeme != enum_def.name.as_ref()
+                {
+                    return Err(TypeCheckerError::TypeMismatch {
+                        expected: Type::Enum(enum_def.name.clone()),
+                        found: value_typed.ty.clone(),
+                        line: value_typed.line,
+                        message: "Match value must be an enum of the same type as the enum being matched against.",
+                    });
+                }
+
+                let (variant_idx, field_types) = enum_def
+                    .get_variant(variant_name.lexeme)
+                    .ok_or_else(|| TypeCheckerError::UndefinedField {
+                        struct_name: enum_def.name.to_string(),
+                        field_name: variant_name.lexeme.to_string(),
+                        line: variant_name.line,
+                    })?;
+
+                if matched_variants.contains(variant_name.lexeme) {
+                    return Err(TypeCheckerError::UnreachablePattern {
+                        line: arm.body.get_line(),
+                        message: format!("Repeated pattern {}", variant_name.lexeme),
+                    });
+                }
+                matched_variants.insert(variant_name.lexeme);
+
+                let payload_type = field_types;
+
+                self.scopes.begin_scope(ScopeType::Block);
+                let typed_binding = if let Some(binding) = &bind {
+                    self.check_binding(binding, &payload_type)?
+                } else {
+                    if !matches!(payload_type, Type::Void) {}
+                    TypedBinding::Ignored
+                };
+
+                let typed_body = self.check_stmt(&arm.body)?;
+
+                self.scopes.end_scope();
+
+                typed_cases.push(MatchCase::Named {
+                    variant_idx: variant_idx as u16,
+                    binding: typed_binding,
+                    body: typed_body,
+                });
+                Ok(())
+            }
+            Pattern::Variable(name) => {
+                self.scopes.begin_scope(ScopeType::Block);
+                let typed_binding =
+                    self.check_binding(&Binding::Variable(name.clone()), &value_typed.ty)?;
+                let typed_body = self.check_stmt(&arm.body)?;
+                self.scopes.end_scope();
+                *has_fallthrough = true;
+                typed_cases.push(MatchCase::Variable {
+                    binding: typed_binding,
+                    body: typed_body,
+                });
+                Ok(())
+            }
+        }
+    }
+
+    fn check_binding(
+        &mut self,
+        binding: &Binding,
+        type_to_match: &Type,
+    ) -> Result<TypedBinding, TypeCheckerError> {
+        match binding {
+            Binding::Struct { name, fields } => {
+                if let Type::Struct(struct_name) = type_to_match {
+                    if !(name.lexeme == struct_name.as_ref()
+                        || struct_name.contains(".") && struct_name.ends_with(name.lexeme))
+                    // Allows match variants
+                    {
+                        return Err(TypeCheckerError::TypeMismatch {
+                            expected: Type::Struct(name.lexeme.into()),
+                            found: type_to_match.clone(),
+                            line: binding.get_line(),
+                            message: "Can only use structure destructure syntax on structs",
+                        });
+                    }
+                    let Some(struct_def) = self.sys.get_struct(struct_name.as_ref()) else {
+                        return Err(TypeCheckerError::UndefinedType {
+                            name: name.lexeme.to_string(),
+                            line: binding.get_line(),
+                            message: "Struct with that name wasn't found.",
+                        });
+                    };
+                    let mut bindings = vec![];
+                    for (field_name, binding) in fields {
+                        let Some(&field_idx) = struct_def.fields.get(field_name.lexeme) else {
+                            return Err(TypeCheckerError::UndefinedField {
+                                struct_name: struct_def.name.to_string(),
+                                field_name: field_name.lexeme.to_string(),
+                                line: field_name.line,
+                            });
+                        };
+                        let (_, field_type) = struct_def.ordered_fields[field_idx].clone();
+
+                        bindings.push((field_idx, field_type, binding));
+                    }
+                    let mut typed_fields = vec![];
+                    for (idx, ty, binding) in bindings {
+                        let typed_binding = self.check_binding(binding, &ty)?;
+                        typed_fields.push((idx as u8, typed_binding))
+                    }
+
+                    Ok(TypedBinding::Struct(typed_fields))
+                } else {
+                    Err(TypeCheckerError::TypeMismatch {
+                        expected: Type::Struct("Any".into()),
+                        found: type_to_match.clone(),
+                        line: binding.get_line(),
+                        message: "Can only use structure destructure syntax on structs",
+                    })
+                }
+            }
+            Binding::Tuple { fields } => {
+                if let Type::Tuple(tuple) = type_to_match {
+                    if tuple.types.len() != fields.len() {
+                        return Err(TypeCheckerError::TypeMismatch {
+                            expected: Type::Tuple(Rc::new(TupleType {
+                                types: vec![Type::Any; fields.len()],
+                            })),
+                            found: type_to_match.clone(),
+                            line: binding.get_line(),
+                            message: "Wrong number of tuple destructure.",
+                        });
+                    }
+                    let mut bindings = vec![];
+                    for (i, field) in fields.iter().enumerate() {
+                        bindings.push(self.check_binding(field, &tuple.types[i])?);
+                    }
+                    Ok(TypedBinding::Tuple(bindings))
+                } else {
+                    Err(TypeCheckerError::TypeMismatch {
+                        expected: Type::Tuple(Rc::new(TupleType {
+                            types: vec![Type::Any; fields.len()],
+                        })),
+                        found: type_to_match.clone(),
+                        line: binding.get_line(),
+                        message: "Can only use tuple destructure on tuples.",
+                    })
+                }
+            }
+            Binding::Variable(token) => {
+                if token.lexeme == "_" {
+                    return Ok(TypedBinding::Ignored);
+                }
+                self.scopes
+                    .declare(token.lexeme.into(), type_to_match.clone())?;
+                let (_, resolved) = self.scopes.lookup(token.lexeme).unwrap();
+                Ok(TypedBinding::Variable(resolved))
+            }
         }
     }
 
@@ -306,7 +576,7 @@ impl<'src> TypeChecker<'src> {
             // Declare parameters.
             for (i, param) in params.iter().enumerate() {
                 self.scopes
-                    .declare(param.lexeme.into(), func.param_types[i].clone())?;
+                    .declare(param.lexeme.into(), func.params[i].1.clone())?;
             }
 
             let func_body = body
@@ -314,7 +584,7 @@ impl<'src> TypeChecker<'src> {
                 .map(|stmt| self.check_stmt(stmt))
                 .collect::<Result<Vec<TypedStmt>, TypeCheckerError>>()?;
 
-            self.scopes.end_scope();
+            let reserved = self.scopes.end_scope();
             self.current_function = enclosing_function_context;
 
             let (_, func_location) = self
@@ -339,7 +609,7 @@ impl<'src> TypeChecker<'src> {
                     body: Box::from(TypedStmt {
                         kind: StmtKind::Block {
                             body: func_body,
-                            variable_count: 0,
+                            reserved: reserved as u16,
                         },
                         line: name.line,
                         type_info: Type::Void,

@@ -1,4 +1,4 @@
-use crate::typechecker::type_ast::Type;
+use crate::typechecker::types::Type;
 
 #[derive(Debug)]
 pub enum TypeCheckerError {
@@ -11,7 +11,7 @@ pub enum TypeCheckerError {
         name: String,
         line: u32,
     },
-    CalleeIsNotAFunction {
+    CalleeIsNotCallable {
         found: Type,
         line: u32,
     },
@@ -21,19 +21,7 @@ pub enum TypeCheckerError {
         line: u32,
         message: &'static str,
     },
-    IncorrectArity {
-        callee_name: String,
-        expected: usize,
-        found: usize,
-        line: u32,
-    },
     InvalidReturnOutsideFunction {
-        line: u32,
-    },
-    FunctionParameterTypeMismatch {
-        expected: Type,
-        found: Type,
-        param_index: usize,
         line: u32,
     },
     UnreachableCode {
@@ -51,11 +39,6 @@ pub enum TypeCheckerError {
         line: u32,
     },
     UndefinedField {
-        struct_name: String,
-        field_name: String,
-        line: u32,
-    },
-    MissingField {
         struct_name: String,
         field_name: String,
         line: u32,
@@ -82,6 +65,48 @@ pub enum TypeCheckerError {
         interface: String,
         line: u32,
     },
+    UncoveredPattern {
+        variant: String,
+        line: u32,
+    },
+    TooManyArguments {
+        callee: String,
+        expected: usize,
+        found: usize,
+        line: u32,
+    },
+    DuplicateArgument {
+        name: String,
+        line: u32,
+    },
+    UndefinedParameter {
+        param_name: String,
+        callee: String,
+        line: u32,
+    },
+    MissingArgument {
+        param_name: String,
+        callee: String,
+        line: u32,
+    },
+    PositionalArgumentAfterNamed {
+        callee: String,
+        message: &'static str,
+        line: u32,
+    },
+    InvalidTupleIndex {
+        tuple_type: Type,
+        index: String,
+        line: u32,
+    },
+    UnreachablePattern {
+        line: u32,
+        message: String,
+    },
+    InvalidIsUsage {
+        line: u32,
+        message: &'static str,
+    },
 }
 
 impl TypeCheckerError {
@@ -89,22 +114,28 @@ impl TypeCheckerError {
         match self {
             TypeCheckerError::UndefinedType { line, .. } => *line,
             TypeCheckerError::UndefinedVariable { line, .. } => *line,
-            TypeCheckerError::CalleeIsNotAFunction { line, .. } => *line,
+            TypeCheckerError::CalleeIsNotCallable { line, .. } => *line,
             TypeCheckerError::TypeMismatch { line, .. } => *line,
-            TypeCheckerError::IncorrectArity { line, .. } => *line,
             TypeCheckerError::InvalidReturnOutsideFunction { line, .. } => *line,
-            TypeCheckerError::FunctionParameterTypeMismatch { line, .. } => *line,
             TypeCheckerError::UnreachableCode { line, .. } => *line,
             TypeCheckerError::MissingReturnStatement { line, .. } => *line,
             TypeCheckerError::AssignmentToCapturedVariable { line, .. } => *line,
             TypeCheckerError::TypeHasNoFields { line, .. } => *line,
             TypeCheckerError::UndefinedField { line, .. } => *line,
-            TypeCheckerError::MissingField { line, .. } => *line,
             TypeCheckerError::StructOutsideOfGlobalScope { line, .. } => *line,
             TypeCheckerError::UndefinedMethod { line, .. } => *line,
             TypeCheckerError::StaticMethodOnInstance { line, .. } => *line,
             TypeCheckerError::Redeclaration { line, .. } => *line,
             TypeCheckerError::DoesNotImplementInterface { line, .. } => *line,
+            TypeCheckerError::UncoveredPattern { line, .. } => *line,
+            TypeCheckerError::TooManyArguments { line, .. } => *line,
+            TypeCheckerError::DuplicateArgument { line, .. } => *line,
+            TypeCheckerError::UndefinedParameter { line, .. } => *line,
+            TypeCheckerError::MissingArgument { line, .. } => *line,
+            TypeCheckerError::PositionalArgumentAfterNamed { line, .. } => *line,
+            TypeCheckerError::InvalidTupleIndex { line, .. } => *line,
+            TypeCheckerError::UnreachablePattern { line, .. } => *line,
+            TypeCheckerError::InvalidIsUsage { line, .. } => *line,
         }
     }
 }
@@ -115,7 +146,7 @@ impl std::fmt::Display for TypeCheckerError {
             TypeCheckerError::UndefinedVariable { name, line } => {
                 write!(f, "[line {}] Error: Undefined variable '{}'.", line, name)
             }
-            TypeCheckerError::CalleeIsNotAFunction { found, line } => {
+            TypeCheckerError::CalleeIsNotCallable { found, line } => {
                 write!(
                     f,
                     "[line {}] Error: Cannot call type different from function.\n Found type '{}' where a function was expected.",
@@ -134,35 +165,11 @@ impl std::fmt::Display for TypeCheckerError {
                     line, message, expected, found
                 )
             }
-            TypeCheckerError::IncorrectArity {
-                callee_name,
-                expected,
-                found,
-                line,
-            } => {
-                write!(
-                    f,
-                    "[line {}] Error: Incorrect number of arguments for function '{}'. Expected {} but found {}.",
-                    line, callee_name, expected, found
-                )
-            }
             TypeCheckerError::InvalidReturnOutsideFunction { line } => {
                 write!(
                     f,
                     "[line {}] Error: 'return' statement outside of a function body.",
                     line
-                )
-            }
-            TypeCheckerError::FunctionParameterTypeMismatch {
-                expected,
-                found,
-                line,
-                param_index,
-            } => {
-                write!(
-                    f,
-                    "[line {}] Error: Function parameter type mismatch for parameter in position '{}'. Expected '{}' but found '{}'.",
-                    line, param_index, expected, found
                 )
             }
             TypeCheckerError::UnreachableCode { line } => {
@@ -200,17 +207,6 @@ impl std::fmt::Display for TypeCheckerError {
                 write!(
                     f,
                     "[line {}] Error: Struct '{}' has no field '{}'.",
-                    line, struct_name, field_name
-                )
-            }
-            TypeCheckerError::MissingField {
-                struct_name,
-                field_name,
-                line,
-            } => {
-                write!(
-                    f,
-                    "[line {}] Error: Struct '{}' is missing field '{}' from its initializer.",
                     line, struct_name, field_name
                 )
             }
@@ -257,6 +253,91 @@ impl std::fmt::Display for TypeCheckerError {
                     line,
                     interface,
                     missing_methods.join(", ")
+                )
+            }
+            TypeCheckerError::UncoveredPattern { variant, line } => {
+                write!(
+                    f,
+                    "[line {}] Error: Uncovered pattern matching variant '{}'.",
+                    line, variant
+                )
+            }
+            TypeCheckerError::DuplicateArgument { name, line } => {
+                write!(
+                    f,
+                    "[line {}] Error: Duplicate argument name '{}'.",
+                    line, name
+                )
+            }
+            TypeCheckerError::UndefinedParameter {
+                param_name,
+                callee,
+                line,
+            } => {
+                write!(
+                    f,
+                    "[line {}] Error: Undefined parameter '{}' in function '{}'.",
+                    line, param_name, callee
+                )
+            }
+
+            TypeCheckerError::TooManyArguments {
+                callee,
+                expected,
+                found,
+                line,
+            } => {
+                write!(
+                    f,
+                    "[line {}] Error: Too many arguments for function '{}'. Expected {} but found {}.",
+                    line, callee, expected, found
+                )
+            }
+            TypeCheckerError::MissingArgument {
+                param_name,
+                callee,
+                line,
+            } => {
+                write!(
+                    f,
+                    "[line {}] Error: Missing argument '{}' in function '{}'.",
+                    line, param_name, callee
+                )
+            }
+            TypeCheckerError::PositionalArgumentAfterNamed {
+                callee,
+                message,
+                line,
+            } => {
+                write!(
+                    f,
+                    "[line {}] Error: Positional argument after named in function '{}'. {}",
+                    line, callee, message
+                )
+            }
+            TypeCheckerError::InvalidTupleIndex {
+                tuple_type,
+                index,
+                line,
+            } => {
+                write!(
+                    f,
+                    "[line {}] Error: Invalid tuple index '{}' of {}.",
+                    line, index, tuple_type
+                )
+            }
+            TypeCheckerError::UnreachablePattern { line, message } => {
+                write!(
+                    f,
+                    "[line {}] Warning: Unreachable Pattern.\n {}",
+                    line, message
+                )
+            }
+            TypeCheckerError::InvalidIsUsage { line, message } => {
+                write!(
+                    f,
+                    "[line {}] Error: Invalid usage of 'is' operator.\n {}",
+                    line, message
                 )
             }
         }

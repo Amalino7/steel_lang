@@ -1,6 +1,6 @@
 use crate::token::Token;
 use std::fmt;
-use std::fmt::{Display, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Literal {
@@ -19,6 +19,7 @@ pub enum TypeAst<'src> {
         param_types: Box<[TypeAst<'src>]>,
         return_type: Box<TypeAst<'src>>,
     },
+    Tuple(Vec<TypeAst<'src>>),
     Infer,
 }
 
@@ -27,10 +28,6 @@ pub enum Expr<'src> {
     Unary {
         operator: Token<'src>,
         expression: Box<Expr<'src>>,
-    },
-    StructInitializer {
-        name: Token<'src>,
-        fields: Vec<(Token<'src>, Expr<'src>)>,
     },
     Binary {
         operator: Token<'src>,
@@ -47,6 +44,10 @@ pub enum Expr<'src> {
         literal: Literal,
         line: u32,
     },
+    Is {
+        expression: Box<Expr<'src>>,
+        type_name: Token<'src>,
+    },
     Assignment {
         identifier: Token<'src>,
         value: Box<Expr<'src>>,
@@ -58,7 +59,7 @@ pub enum Expr<'src> {
     },
     Call {
         callee: Box<Expr<'src>>,
-        arguments: Vec<Expr<'src>>,
+        arguments: Vec<CallArg<'src>>,
         safe: bool,
     },
     Get {
@@ -72,17 +73,86 @@ pub enum Expr<'src> {
         field: Token<'src>,
         value: Box<Expr<'src>>,
     },
+    Tuple {
+        elements: Vec<Expr<'src>>,
+    },
     ForceUnwrap {
         expression: Box<Expr<'src>>,
         line: u32,
     },
+}
+#[derive(Clone, Debug, PartialEq)]
+pub struct CallArg<'src> {
+    pub label: Option<Token<'src>>,
+    pub expr: Expr<'src>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct MatchArm<'src> {
+    pub pattern: Pattern<'src>,
+    pub body: Stmt<'src>,
+}
+#[derive(Clone, Debug, PartialEq)]
+pub enum Pattern<'src> {
+    Variable(Token<'src>),
+    Named {
+        enum_name: Option<Token<'src>>,
+        variant_name: Token<'src>,
+        bind: Option<Binding<'src>>,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Binding<'src> {
+    Struct {
+        name: Token<'src>,
+        fields: Vec<(Token<'src>, Binding<'src>)>,
+    },
+    Tuple {
+        fields: Vec<Binding<'src>>,
+    },
+    Variable(Token<'src>),
+}
+
+impl<'src> Binding<'src> {
+    pub(crate) fn get_line(&self) -> u32 {
+        match self {
+            Binding::Struct { name, .. } => name.line,
+            Binding::Tuple { fields } => fields[0].get_line(),
+            Binding::Variable(name) => name.line,
+        }
+    }
+}
+impl Display for Binding<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Binding::Struct { name, fields } => {
+                write!(f, "{}", name.lexeme)?;
+                write!(f, "(")?;
+                for field in fields {
+                    write!(f, " {}: {} ,", field.0.lexeme, field.1)?;
+                }
+                write!(f, ")")
+            }
+            Binding::Tuple { fields } => {
+                write!(f, "(")?;
+                for field in fields {
+                    write!(f, " {} ,", field)?;
+                }
+                write!(f, ")")
+            }
+            Binding::Variable(name) => {
+                write!(f, "{}", name.lexeme)
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Stmt<'src> {
     Expression(Expr<'src>),
     Let {
-        identifier: Token<'src>,
+        binding: Binding<'src>,
         value: Expr<'src>,
         type_info: TypeAst<'src>,
     },
@@ -119,6 +189,21 @@ pub enum Stmt<'src> {
         name: Token<'src>,
         methods: Vec<InterfaceSig<'src>>,
     },
+    Enum {
+        name: Token<'src>,
+        variants: Vec<(Token<'src>, VariantType<'src>)>,
+    },
+    Match {
+        value: Box<Expr<'src>>,
+        arms: Vec<MatchArm<'src>>,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum VariantType<'src> {
+    Tuple(Vec<TypeAst<'src>>),
+    Struct(Vec<(Token<'src>, TypeAst<'src>)>),
+    Unit,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -129,7 +214,7 @@ pub struct InterfaceSig<'src> {
 }
 
 impl Display for Literal {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Literal::Number(n) => write!(f, "{}", n),
             Literal::String(s) => write!(f, "{}", s),
@@ -143,6 +228,16 @@ impl Display for Literal {
 impl Display for Expr<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
+            Expr::Tuple { elements } => {
+                write!(f, "(")?;
+                for (i, element) in elements.iter().enumerate() {
+                    write!(f, "{}", element)?;
+                    if i != elements.len() - 1 {
+                        write!(f, ", ")?;
+                    }
+                }
+                write!(f, ")")
+            }
             Expr::Unary {
                 operator,
                 expression,
@@ -213,17 +308,22 @@ impl Display for Expr<'_> {
                     write!(f, "{}.{} = {}", object, name.lexeme, value)
                 }
             }
-            Expr::StructInitializer { name, fields } => {
-                write!(f, "{} {{", name.lexeme)?;
-                for (name, value) in fields {
-                    write!(f, "{} : {},", name.lexeme, value)?;
-                }
-                write!(f, "}}")
-            }
+            Expr::Is {
+                expression,
+                type_name,
+            } => write!(f, "{} is {}", expression, type_name.lexeme),
 
             Expr::ForceUnwrap { expression, .. } => {
                 write!(f, "!!({})", expression)
             }
+        }
+    }
+}
+impl Display for CallArg<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match &self.label {
+            None => write!(f, "{}", self.expr),
+            Some(label) => write!(f, "{} : {} ", label.lexeme, self.expr),
         }
     }
 }
@@ -248,6 +348,17 @@ impl Display for TypeAst<'_> {
             }
             TypeAst::Infer => write!(f, "_"),
             TypeAst::Optional(inner) => write!(f, "{}?", inner),
+            TypeAst::Tuple(types) => {
+                write!(
+                    f,
+                    "({})",
+                    types
+                        .iter()
+                        .map(|t| format!("{}", t))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }
         }
     }
 }
@@ -257,11 +368,11 @@ impl Display for Stmt<'_> {
         match self {
             Stmt::Expression(expr) => write!(f, "{}", expr),
             Stmt::Let {
-                identifier,
+                binding,
                 value,
                 type_info,
                 ..
-            } => write!(f, "let {}: {} = {}", identifier.lexeme, type_info, value),
+            } => write!(f, "let {}: {} = {}", binding, type_info, value),
             Stmt::Block { body, .. } => {
                 write!(f, "do\n")?;
                 for statement in body {
@@ -339,6 +450,39 @@ impl Display for Stmt<'_> {
                 }
                 write!(f, "}}")
             }
+            Stmt::Enum { name, variants } => {
+                write!(f, "Enum {} {{", name.lexeme)?;
+                for case in variants {
+                    write!(f, "case {} ", case.0.lexeme,)?;
+                    match &case.1 {
+                        VariantType::Tuple(els) => {
+                            write!(f, "(")?;
+                            for e in els {
+                                write!(f, "{}, ", e)?;
+                            }
+                            write!(f, ")")?;
+                        }
+                        VariantType::Struct(str) => {
+                            write!(f, "{{")?;
+                            for (name, ty) in str {
+                                write!(f, "{} : {},", name.lexeme, ty)?;
+                            }
+                            write!(f, "}}")?;
+                        }
+                        VariantType::Unit => {}
+                    }
+                    write!(f, ")")?;
+                }
+                write!(f, "}}")
+            }
+            Stmt::Match { value, arms } => {
+                write!(f, "match {} {{", value)?;
+                for arm in arms {
+                    arm.pattern.fmt(f)?;
+                    write!(f, " => {}", arm.body)?;
+                }
+                write!(f, "}}")
+            }
         }
     }
 }
@@ -356,8 +500,9 @@ impl Expr<'_> {
             Expr::Call { callee, .. } => callee.get_line(),
             Expr::Get { field, .. } => field.line,
             Expr::Set { value, .. } => value.get_line(),
-            Expr::StructInitializer { name, .. } => name.line,
             Expr::ForceUnwrap { line, .. } => *line,
+            Expr::Tuple { elements } => elements[0].get_line(),
+            Expr::Is { type_name, .. } => type_name.line,
         }
     }
 }
@@ -366,14 +511,11 @@ impl Stmt<'_> {
     pub fn get_line(&self) -> u32 {
         match self {
             Stmt::Expression(expr) => expr.get_line(),
-            Stmt::Let { identifier, .. } => identifier.line,
-            Stmt::Block { body, .. } => {
-                if let Some(first_stmt) = body.first() {
-                    first_stmt.get_line()
-                } else {
-                    0 //might need to add an alternative for empty blocks.
-                }
-            }
+            Stmt::Let {
+                binding: identifier,
+                ..
+            } => identifier.get_line(),
+            Stmt::Block { brace_token, .. } => brace_token.line,
             Stmt::If { condition, .. } => condition.get_line(),
             Stmt::While { condition, .. } => condition.get_line(),
             Stmt::Function { name, .. } => name.line,
@@ -381,6 +523,8 @@ impl Stmt<'_> {
             Stmt::Struct { name, .. } => name.line,
             Stmt::Impl { name, .. } => name.line,
             Stmt::Interface { name, .. } => name.line,
+            Stmt::Enum { name, .. } => name.line,
+            Stmt::Match { value, .. } => value.get_line(),
         }
     }
 }

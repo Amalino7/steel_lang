@@ -1,5 +1,7 @@
-use crate::typechecker::type_ast::{BinaryOp, ExprKind, LogicalOp, Type, TypedExpr, UnaryOp};
+use crate::typechecker::type_ast::{BinaryOp, ExprKind, LogicalOp, TypedExpr, UnaryOp};
+use crate::typechecker::types::Type;
 use crate::typechecker::{Symbol, TypeChecker};
+
 type Refinement = (Symbol, Type);
 
 pub(crate) struct BranchRefinements {
@@ -40,7 +42,36 @@ impl<'src> TypeChecker<'src> {
                     false_path: vec![],
                 }
             }
+            ExprKind::Is {
+                target,
+                variant_idx,
+            } => {
+                if let ExprKind::GetVar(_, name) = &target.kind
+                    && let Type::Enum(enum_name) = &target.ty
+                {
+                    let enum_def = self.sys.get_enum(enum_name).unwrap();
+                    let false_path = if enum_def.variants.len() == 2 {
+                        let (_, other_ty) = enum_def
+                            .ordered_variants
+                            .get((1 - *variant_idx) as usize)
+                            .unwrap();
+                        vec![(name.clone(), other_ty.clone())]
+                    } else {
+                        vec![]
+                    };
 
+                    let (_, narrowed_type) = &enum_def.ordered_variants[*variant_idx as usize];
+
+                    return BranchRefinements {
+                        true_path: vec![(name.clone(), narrowed_type.clone())],
+                        false_path,
+                    };
+                }
+                BranchRefinements {
+                    true_path: vec![],
+                    false_path: vec![],
+                }
+            }
             // Case: !Condition
             ExprKind::Unary { operator, operand } if operator == &UnaryOp::Not => {
                 let inner = self.analyze_condition(operand);
@@ -54,6 +85,7 @@ impl<'src> TypeChecker<'src> {
                 left,
                 operator,
                 right,
+                ..
             } if operator == &LogicalOp::And => {
                 let refine_left = self.analyze_condition(left);
                 let refine_right = self.analyze_condition(right);

@@ -89,10 +89,10 @@ mod tests {
                 assert!(
                     errors
                         .iter()
-                        .any(|e| matches!(e, TypeCheckerError::CalleeIsNotAFunction { .. }))
+                        .any(|e| matches!(e, TypeCheckerError::CalleeIsNotCallable { .. }))
                 );
             }
-            _ => panic!("Expected CalleeIsNotAFunction error"),
+            _ => panic!("Expected CalleeIsNotCallable error"),
         }
     }
 
@@ -112,7 +112,7 @@ mod tests {
                 assert!(
                     errors
                         .iter()
-                        .any(|e| matches!(e, TypeCheckerError::IncorrectArity { .. }))
+                        .any(|e| matches!(e, TypeCheckerError::MissingArgument { .. }))
                 );
             }
             _ => panic!("Expected IncorrectArity error"),
@@ -174,10 +174,9 @@ mod tests {
         match res {
             Err(errors) => {
                 assert!(
-                    errors.iter().any(|e| matches!(
-                        e,
-                        TypeCheckerError::FunctionParameterTypeMismatch { .. }
-                    ))
+                    errors
+                        .iter()
+                        .any(|e| matches!(e, TypeCheckerError::TypeMismatch { .. }))
                 );
             }
             _ => panic!("Expected FunctionParameterTypeMismatch error"),
@@ -219,7 +218,7 @@ mod tests {
                 TypeCheckerError::InvalidReturnOutsideFunction { .. } => {
                     found_invalid_return = true
                 }
-                TypeCheckerError::CalleeIsNotAFunction { .. } => {
+                TypeCheckerError::CalleeIsNotCallable { .. } => {
                     found_callee_is_not_function = true;
                 }
                 _ => {}

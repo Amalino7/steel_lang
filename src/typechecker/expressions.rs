@@ -4,12 +4,9 @@ use crate::token::{Token, TokenType};
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::error::TypeCheckerError::AssignmentToCapturedVariable;
 use crate::typechecker::scope_manager::ScopeType;
-use crate::typechecker::type_ast::{
-    BinaryOp, ExprKind, LogicalOp, StructType, Type, TypedExpr, UnaryOp,
-};
+use crate::typechecker::type_ast::{BinaryOp, ExprKind, LogicalOp, TypedExpr, UnaryOp};
+use crate::typechecker::types::{StructType, TupleType, Type};
 use crate::typechecker::TypeChecker;
-use std::cmp::min;
-use std::collections::HashSet;
 use std::rc::Rc;
 
 impl<'src> TypeChecker<'src> {
@@ -18,6 +15,57 @@ impl<'src> TypeChecker<'src> {
         expr: &Expr<'src>,
     ) -> Result<TypedExpr, TypeCheckerError> {
         match expr {
+            Expr::Is {
+                expression,
+                type_name,
+            } => {
+                let target = self.infer_expression(expression)?;
+                let Type::Enum(enum_name) = &target.ty else {
+                    return Err(TypeCheckerError::InvalidIsUsage {
+                        line: type_name.line,
+                        message: "Is can only be used on enum types.",
+                    });
+                };
+                let enum_def = self
+                    .sys
+                    .get_enum(enum_name.as_ref())
+                    .expect("Invalid enum Type return!");
+
+                if !enum_def.variants.contains_key(type_name.lexeme) {
+                    return Err(TypeCheckerError::InvalidIsUsage {
+                        line: type_name.line,
+                        message: "Enum variant does not exist.",
+                    });
+                }
+                let variant_idx = enum_def.variants.get(type_name.lexeme).unwrap();
+
+                Ok(TypedExpr {
+                    ty: Type::Boolean,
+                    kind: ExprKind::Is {
+                        target: Box::new(target),
+                        variant_idx: *variant_idx as u16,
+                    },
+                    line: type_name.line,
+                })
+            }
+            Expr::Tuple { elements } => {
+                let mut typed_elements = Vec::with_capacity(elements.len());
+                let mut type_vec = vec![];
+                for element in elements {
+                    let el = self.infer_expression(element)?;
+                    type_vec.push(el.ty.clone());
+                    typed_elements.push(el);
+                }
+
+                let ty = Type::Tuple(Rc::new(TupleType { types: type_vec }));
+                Ok(TypedExpr {
+                    ty,
+                    kind: ExprKind::Tuple {
+                        elements: typed_elements,
+                    },
+                    line: elements[0].get_line(),
+                })
+            }
             Expr::Unary {
                 operator,
                 expression,
@@ -158,6 +206,7 @@ impl<'src> TypeChecker<'src> {
                             left: Box::new(left_typed),
                             operator: LogicalOp::Coalesce,
                             right: Box::new(right_typed),
+                            typed_refinements: vec![],
                         },
                         line: operator.line,
                     })
@@ -187,9 +236,11 @@ impl<'src> TypeChecker<'src> {
                 } else {
                     unreachable!("Invalid logical operator");
                 };
-
+                let mut typed_refinements = vec![];
                 for (name, ty) in refinements {
-                    self.scopes.refine(&name, ty);
+                    if let Some(case) = self.scopes.refine(&name, ty) {
+                        typed_refinements.push(case);
+                    }
                 }
                 let right_typed = self.infer_expression(right)?;
                 self.scopes.end_scope();
@@ -227,6 +278,7 @@ impl<'src> TypeChecker<'src> {
                         left: Box::new(left_typed),
                         operator: op,
                         right: Box::new(right_typed),
+                        typed_refinements,
                     },
                     line: operator.line,
                 })
@@ -236,6 +288,63 @@ impl<'src> TypeChecker<'src> {
                 arguments,
                 safe,
             } => {
+                // Handle args
+                let mut inferred_args = Vec::with_capacity(arguments.len());
+
+                for arg in arguments {
+                    let typed_val = self.infer_expression(&arg.expr)?;
+
+                    let label = arg.label.as_ref().map(|t| t.lexeme);
+                    let line = arg
+                        .label
+                        .as_ref()
+                        .map(|t| t.line)
+                        .unwrap_or(callee.get_line());
+
+                    inferred_args.push((label, typed_val, line));
+                }
+                // Handle Struct constructor
+                if let Expr::Variable { name } = &**callee
+                    && let Some(struct_def) = self.sys.get_struct(&name.lexeme)
+                {
+                    let owned_name = struct_def.name.clone();
+                    let bound_args = self.sys.bind_arguments(
+                        &name.lexeme,
+                        &struct_def.ordered_fields,
+                        inferred_args,
+                        false,
+                        callee.get_line(),
+                    )?;
+
+                    return Ok(TypedExpr {
+                        ty: Type::Struct(owned_name.clone()),
+                        kind: ExprKind::StructInit {
+                            name: Box::from(owned_name.to_string()),
+                            args: bound_args,
+                        },
+                        line: callee.get_line(),
+                    });
+                }
+                // Check for an Enum constructor pattern
+                if let Expr::Get { object, field, .. } = callee.as_ref() {
+                    if let Expr::Variable { name } = object.as_ref() {
+                        if let Some(enum_def) = self.sys.get_enum(name.lexeme) {
+                            if let Some((variant_idx, variant_type)) =
+                                enum_def.get_variant(field.lexeme)
+                            {
+                                return self.handle_enum_call(
+                                    &variant_type,
+                                    variant_idx,
+                                    inferred_args,
+                                    field,
+                                    enum_def,
+                                    callee.get_line(),
+                                );
+                            }
+                        }
+                    }
+                }
+
                 let callee_typed = self.infer_expression(callee)?;
 
                 let safe = if let ExprKind::MethodGet { safe, .. } = callee_typed.kind {
@@ -262,142 +371,65 @@ impl<'src> TypeChecker<'src> {
                     callee_typed.ty.clone()
                 };
 
-                if let Type::Function(func) = lookup_type {
-                    // Check arity
-                    if (func.param_types.len() != arguments.len() && !func.is_vararg)
-                        || (func.is_vararg && arguments.len() < func.param_types.len())
-                    {
-                        return Err(TypeCheckerError::IncorrectArity {
-                            callee_name: callee.to_string(),
-                            expected: func.param_types.len(),
-                            found: arguments.len(),
-                            line: callee_typed.line,
-                        });
-                    }
+                // Check for Normal Function Call
+                match lookup_type {
+                    Type::Function(func) => {
+                        let bound_args = self.sys.bind_arguments(
+                            "function",
+                            &func.params,
+                            inferred_args,
+                            func.is_vararg,
+                            callee_typed.line,
+                        )?;
 
-                    let mut typed_args = Vec::with_capacity(arguments.len());
-
-                    for (mut i, arg) in arguments.iter().enumerate() {
-                        let arg_typed = self.infer_expression(arg)?;
-                        i = min(i, func.param_types.len() - 1);
-
-                        let expected_param_type = &func.param_types[i];
-                        let found = arg_typed.ty.clone();
-
-                        if *expected_param_type != Type::Any {
-                            let coerced_arg = self
-                                .sys
-                                .verify_assignment(
-                                    expected_param_type,
-                                    arg_typed,
-                                    callee_typed.line,
-                                )
-                                .map_err(|_| TypeCheckerError::FunctionParameterTypeMismatch {
-                                    expected: expected_param_type.clone(),
-                                    found,
-                                    param_index: i,
-                                    line: callee_typed.line,
-                                })?;
-                            typed_args.push(coerced_arg);
+                        let ret_type = if safe {
+                            func.return_type.clone().wrap_in_optional()
                         } else {
-                            typed_args.push(arg_typed);
-                        }
-                    }
-                    let return_type = if safe {
-                        func.return_type.clone().wrap_in_optional()
-                    } else {
-                        func.return_type.clone()
-                    };
+                            func.return_type.clone()
+                        };
 
-                    Ok(TypedExpr {
-                        ty: return_type,
-                        line: callee_typed.line,
-                        kind: ExprKind::Call {
-                            callee: Box::new(callee_typed),
-                            arguments: typed_args,
-                            safe,
-                        },
-                    })
-                } else {
-                    Err(TypeCheckerError::CalleeIsNotAFunction {
+                        Ok(TypedExpr {
+                            ty: ret_type,
+                            line: callee_typed.line,
+                            kind: ExprKind::Call {
+                                callee: Box::new(callee_typed),
+                                arguments: bound_args,
+                                safe,
+                            },
+                        })
+                    }
+                    _ => Err(TypeCheckerError::CalleeIsNotCallable {
                         found: callee_typed.ty,
                         line: callee_typed.line,
-                    })
+                    }),
                 }
-            }
-            Expr::StructInitializer { name, fields } => {
-                let struct_type = self
-                    .sys
-                    .get_struct(name.lexeme)
-                    .ok_or(TypeCheckerError::UndefinedType {
-                        name: name.lexeme.to_string(),
-                        line: name.line,
-                        message: "Expected a struct type here.",
-                    })?
-                    .clone();
-
-                let mut args = vec![];
-                let mut defined_fields = HashSet::new();
-
-                for (field_tok, expr) in fields {
-                    let arg_expr = self.infer_expression(expr)?;
-
-                    let (idx, expected_type) = match struct_type.fields.get(field_tok.lexeme) {
-                        Some(f) => f.clone(),
-                        None => {
-                            return Err(TypeCheckerError::UndefinedField {
-                                struct_name: struct_type.name.to_string(),
-                                field_name: field_tok.lexeme.to_string(),
-                                line: field_tok.line,
-                            });
-                        }
-                    };
-
-                    let coerced_arg =
-                        self.sys
-                            .verify_assignment(&expected_type, arg_expr, field_tok.line)?;
-
-                    args.push((idx, coerced_arg));
-                    defined_fields.insert(field_tok.lexeme);
-                }
-
-                // Sorting and Missing Field checks...
-                args.sort_by(|a, b| a.0.cmp(&b.0));
-                for field in struct_type.fields.keys() {
-                    if !defined_fields.contains(field.as_str()) {
-                        return Err(TypeCheckerError::MissingField {
-                            struct_name: struct_type.name.to_string(),
-                            field_name: field.to_string(),
-                            line: name.line,
-                        });
-                    }
-                }
-
-                Ok(TypedExpr {
-                    ty: Type::Struct(struct_type.name),
-                    kind: ExprKind::StructInit {
-                        name: Box::from(name.lexeme),
-                        args: args.into_iter().map(|(_, arg)| arg).collect(),
-                    },
-                    line: name.line,
-                })
             }
             Expr::Get {
                 object,
                 field,
                 safe,
             } => {
-                // Static method check
-                if let Expr::Variable { name } = object.as_ref() {
-                    if self.sys.does_type_exist(name.lexeme) {
-                        return self.handle_static_method_access(name, field);
-                    }
+                //TODO Ignores safe static access probably should be a warning
+                if let Expr::Variable { name } = object.as_ref()
+                    && self.sys.does_type_exist(name.lexeme)
+                {
+                    return self.resolve_static_access(name, field);
                 }
 
                 let object_typed = self.infer_expression(object)?;
 
-                // Optional handling
-                let lookup_type = if *safe {
+                self.resolve_instance_access(object_typed, field, *safe)
+            }
+            Expr::Set {
+                object,
+                field,
+                value,
+                safe,
+            } => {
+                let object_typed = self.infer_expression(object)?;
+                let value = self.infer_expression(value)?;
+
+                let type_ = if *safe {
                     match &object_typed.ty {
                         Type::Optional(inner) => inner.as_ref().clone(),
                         _ => {
@@ -413,110 +445,40 @@ impl<'src> TypeChecker<'src> {
                     object_typed.ty.clone()
                 };
 
-                // 3. Perform Lookup & Create Inner Expression
-                let mut result_expr = match &lookup_type {
-                    Type::Struct(struct_name) => {
-                        let struct_def = self
-                            .sys
-                            .get_struct(struct_name)
-                            .expect("Should have errored earlier");
-
-                        match struct_def.fields.get(field.lexeme) {
-                            Some((idx, field_type)) => Ok(TypedExpr {
-                                ty: field_type.clone(),
-                                kind: ExprKind::GetField {
-                                    object: Box::new(object_typed),
-                                    index: *idx as u8,
-                                    safe: *safe,
-                                },
+                if let Type::Tuple(tuple_type) = &type_ {
+                    let idx = match field.lexeme.parse::<u8>() {
+                        Ok(idx) => idx,
+                        Err(err) => {
+                            return Err(TypeCheckerError::InvalidTupleIndex {
+                                tuple_type: type_,
+                                index: err.to_string(),
                                 line: field.line,
-                            }),
-                            None => self.handle_instance_method(
-                                field,
-                                &lookup_type,
-                                object_typed,
-                                *safe,
-                            ),
-                        }
-                    }
-
-                    Type::Interface(iface_name) => {
-                        let iface = self.sys.get_interface(iface_name).ok_or(
-                            TypeCheckerError::UndefinedType {
-                                name: iface_name.to_string(),
-                                line: field.line,
-                                message: "Expected an interface type here.",
-                            },
-                        )?;
-
-                        let (idx, method_ty) = iface.methods.get(field.lexeme).ok_or(
-                            TypeCheckerError::UndefinedMethod {
-                                line: field.line,
-                                found: Type::Interface(iface.name.clone()),
-                                method_name: field.lexeme.to_string(),
-                            },
-                        )?;
-
-                        let ty = match method_ty {
-                            Type::Function(func) => {
-                                if func.param_types.is_empty() {
-                                    return Err(TypeCheckerError::UndefinedMethod {
-                                        line: field.line,
-                                        found: Type::Interface(iface.name.clone()),
-                                        method_name: field.lexeme.to_string(),
-                                    });
-                                }
-                                let params = func.param_types.iter().skip(1).cloned().collect();
-                                Type::new_function(params, func.return_type.clone())
-                            }
-                            other => other.clone(),
-                        };
-
-                        Ok(TypedExpr {
-                            ty,
-                            kind: ExprKind::InterfaceMethodGet {
-                                object: Box::new(object_typed),
-                                method_index: *idx as u8,
-                                safe: *safe,
-                            },
-                            line: field.line,
-                        })
-                    }
-                    // Fallback for primitives
-                    _ => self.handle_instance_method(field, &lookup_type, object_typed, *safe),
-                }?;
-
-                // 4. Wrap in Optional if necessary
-                if *safe {
-                    result_expr.ty = result_expr.ty.wrap_in_optional();
-                }
-
-                Ok(result_expr)
-            }
-            Expr::Set {
-                object,
-                field,
-                value,
-                safe,
-            } => {
-                let object = self.infer_expression(object)?;
-                let value = self.infer_expression(value)?;
-
-                let type_ = if *safe {
-                    match &object.ty {
-                        Type::Optional(inner) => inner.as_ref().clone(),
-                        _ => {
-                            return Err(TypeCheckerError::TypeMismatch {
-                                expected: Type::Optional(Box::new(Type::Any)),
-                                found: object.ty.clone(),
-                                line: field.line,
-                                message: "Cannot access safe property of non-optional type. Use simply '.'",
                             });
                         }
+                    };
+                    if idx >= tuple_type.types.len() as u8 {
+                        return Err(TypeCheckerError::InvalidTupleIndex {
+                            tuple_type: type_,
+                            index: idx.to_string(),
+                            line: field.line,
+                        });
                     }
-                } else {
-                    object.ty.clone()
-                };
+
+                    return Ok(TypedExpr {
+                        ty: tuple_type.types[idx as usize].clone(),
+                        kind: ExprKind::SetField {
+                            object: Box::from(object_typed),
+                            index: idx,
+                            safe: *safe,
+                            value: Box::new(self.sys.verify_assignment(
+                                &tuple_type.types[idx as usize],
+                                value,
+                                field.line,
+                            )?),
+                        },
+                        line: field.line,
+                    });
+                }
 
                 if let Type::Struct(struct_def) = type_ {
                     let struct_def = self
@@ -531,7 +493,7 @@ impl<'src> TypeChecker<'src> {
                         ty: field_type,
                         kind: ExprKind::SetField {
                             safe: *safe,
-                            object: Box::new(object),
+                            object: Box::new(object_typed),
                             index: field_idx as u8,
                             value: Box::new(value),
                         },
@@ -540,7 +502,7 @@ impl<'src> TypeChecker<'src> {
                 } else {
                     Err(TypeCheckerError::TypeHasNoFields {
                         found: type_,
-                        line: object.line,
+                        line: object_typed.line,
                     })
                 }
             }
@@ -573,7 +535,11 @@ impl<'src> TypeChecker<'src> {
         field: &Token,
         field_value: &TypedExpr,
     ) -> Result<(usize, Type), TypeCheckerError> {
-        let field_type = struct_def.fields.get(field.lexeme);
+        let field_type = struct_def
+            .fields
+            .get(field.lexeme)
+            .map(|id| (*id, struct_def.ordered_fields[*id].1.clone()));
+
         match field_type {
             None => Err(TypeCheckerError::UndefinedField {
                 struct_name: struct_def.name.to_string(),
@@ -582,8 +548,8 @@ impl<'src> TypeChecker<'src> {
             }),
             Some((id, field_type)) => {
                 self.sys
-                    .verify_assignment(field_type, field_value.clone(), field.line)?;
-                Ok((*id, field_type.clone()))
+                    .verify_assignment(&field_type, field_value.clone(), field.line)?;
+                Ok((id, field_type))
             }
         }
     }
@@ -742,90 +708,5 @@ impl<'src> TypeChecker<'src> {
                 unreachable!("Ast should be checked for invalid operators before this point.")
             }
         }
-    }
-
-    fn handle_static_method_access(
-        &mut self,
-        type_name: &Token,
-        method_name: &Token,
-    ) -> Result<TypedExpr, TypeCheckerError> {
-        let mangled_name = format!("{}.{}", type_name.lexeme, method_name.lexeme);
-
-        let method =
-            self.scopes
-                .lookup(mangled_name.as_str())
-                .ok_or(TypeCheckerError::UndefinedMethod {
-                    line: method_name.line,
-                    found: Type::Struct(Rc::from(String::from(type_name.lexeme))),
-                    method_name: method_name.lexeme.to_string(),
-                })?;
-
-        let (ctx, resolved_var) = method;
-
-        Ok(TypedExpr {
-            ty: ctx.type_info.clone(),
-            kind: ExprKind::GetVar(resolved_var, ctx.name.clone()),
-            line: method_name.line,
-        })
-    }
-
-    fn handle_instance_method(
-        &mut self,
-        field: &Token,
-        lookup_type: &Type,
-        object_expr: TypedExpr,
-        safe: bool,
-    ) -> Result<TypedExpr, TypeCheckerError> {
-        let type_name = lookup_type
-            .get_name()
-            .ok_or(TypeCheckerError::TypeHasNoFields {
-                found: lookup_type.clone(),
-                line: object_expr.line,
-            })?;
-
-        let mangled_name = format!("{}.{}", type_name, field.lexeme);
-
-        let method =
-            self.scopes
-                .lookup(mangled_name.as_str())
-                .ok_or(TypeCheckerError::UndefinedMethod {
-                    line: field.line,
-                    found: lookup_type.clone(),
-                    method_name: field.lexeme.to_string(),
-                })?;
-
-        let ty = match &method.0.type_info {
-            Type::Function(func) => {
-                let return_type = func.return_type.clone();
-
-                if func.param_types.is_empty() || &func.param_types[0] != lookup_type {
-                    return Err(TypeCheckerError::StaticMethodOnInstance {
-                        method_name: field.lexeme.to_string(),
-                        line: field.line,
-                    });
-                }
-
-                if func.is_static {
-                    return Err(TypeCheckerError::StaticMethodOnInstance {
-                        method_name: field.lexeme.to_string(),
-                        line: field.line,
-                    });
-                }
-
-                let params = func.param_types.iter().skip(1).cloned().collect();
-                Type::new_function(params, return_type)
-            }
-            ty => ty.clone(),
-        };
-
-        Ok(TypedExpr {
-            ty,
-            kind: ExprKind::MethodGet {
-                object: Box::new(object_expr),
-                method: method.1,
-                safe,
-            },
-            line: field.line,
-        })
     }
 }

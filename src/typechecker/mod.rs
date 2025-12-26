@@ -2,13 +2,15 @@ use crate::parser::ast::Stmt;
 use crate::stdlib::NativeDef;
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::scope_manager::{ScopeManager, ScopeType};
-use crate::typechecker::type_ast::{StmtKind, Type, TypedStmt};
+use crate::typechecker::type_ast::{StmtKind, TypedStmt};
 use crate::typechecker::type_system::TypeSystem;
+use crate::typechecker::types::Type;
 use std::mem::replace;
 use std::rc::Rc;
 
 pub mod error;
 mod expressions;
+mod get_handles;
 mod globals;
 mod refinements;
 mod return_analysis;
@@ -17,6 +19,7 @@ mod statements;
 mod tests;
 pub mod type_ast;
 mod type_system;
+pub mod types;
 
 #[derive(Debug, PartialEq, Clone)]
 enum FunctionContext {
@@ -24,7 +27,6 @@ enum FunctionContext {
     Function(Type),
 }
 pub type Symbol = Rc<str>;
-
 pub struct TypeChecker<'src> {
     current_function: FunctionContext,
     sys: TypeSystem,
@@ -66,8 +68,9 @@ impl<'src> TypeChecker<'src> {
         self.declare_global_types(ast);
         // then global functions are declared and interfaces defined
         self.declare_global_functions(ast);
-        // finally, fields of structs are defined
-        self.define_struct_fields(ast);
+        // finally, fields of structs and enums are defined
+        self.define_global_structs(ast);
+        self.define_enum_variants(ast);
 
         for stmt in ast.iter() {
             match self.check_stmt(stmt) {
@@ -81,6 +84,7 @@ impl<'src> TypeChecker<'src> {
         }
 
         let global_count = self.scopes.global_size();
+        let reserved = self.scopes.end_scope() as u16;
 
         self.check_returns(&typed_ast);
         if !self.errors.is_empty() {
@@ -90,6 +94,7 @@ impl<'src> TypeChecker<'src> {
                 kind: StmtKind::Global {
                     global_count,
                     stmts: typed_ast,
+                    reserved,
                 },
                 line: 1,
                 type_info: Type::Void,

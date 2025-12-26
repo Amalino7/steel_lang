@@ -1,5 +1,6 @@
 use crate::typechecker::error::TypeCheckerError;
-use crate::typechecker::type_ast::{StmtKind, Type, TypedStmt};
+use crate::typechecker::type_ast::{MatchCase, StmtKind, TypedStmt};
+use crate::typechecker::types::Type;
 use crate::typechecker::TypeChecker;
 
 impl<'src> TypeChecker<'src> {
@@ -13,6 +14,15 @@ impl<'src> TypeChecker<'src> {
     }
     fn check_stmt_returns(&mut self, stmt: &TypedStmt) -> Result<(), TypeCheckerError> {
         match &stmt.kind {
+            StmtKind::Match { cases, .. } => {
+                for case in cases {
+                    match case {
+                        MatchCase::Variable { body, .. } => self.check_stmt_returns(body)?,
+                        MatchCase::Named { body, .. } => self.check_stmt_returns(body)?,
+                    };
+                }
+                Ok(())
+            }
             StmtKind::Expression(_) => Ok(()),
             StmtKind::Let { .. } => Ok(()),
             StmtKind::Block { body, .. } => body
@@ -53,6 +63,7 @@ impl<'src> TypeChecker<'src> {
             StmtKind::Impl { methods, .. } => methods
                 .iter()
                 .try_for_each(|method| self.check_stmt_returns(method)),
+            StmtKind::EnumDecl { .. } => Ok(()),
         }
     }
     pub fn stmt_returns(&mut self, stmt: &TypedStmt) -> Result<bool, TypeCheckerError> {
@@ -80,12 +91,24 @@ impl<'src> TypeChecker<'src> {
                     false
                 }
             }
+            StmtKind::Match { cases, .. } => {
+                let mut returns = true;
+                for case in cases {
+                    let body = match case {
+                        MatchCase::Variable { body, .. } => body,
+                        MatchCase::Named { body, .. } => body,
+                    };
+                    returns &= self.stmt_returns(body)?;
+                }
+                returns
+            }
             StmtKind::While { .. } => false,
             StmtKind::Function { .. } => false,
             StmtKind::Return(_) => true,
             StmtKind::Global { .. } => false,
             StmtKind::StructDecl { .. } => false,
             StmtKind::Impl { .. } => false,
+            &StmtKind::EnumDecl {} => false,
         })
     }
 }
