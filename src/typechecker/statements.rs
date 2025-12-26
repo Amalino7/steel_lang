@@ -1,11 +1,11 @@
 use crate::compiler::analysis::ResolvedVar;
-use crate::parser::ast::{Binding, Pattern, Stmt};
+use crate::parser::ast::{Binding, MatchArm, Pattern, Stmt};
 use crate::token::Token;
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::scope_manager::ScopeType;
-use crate::typechecker::type_ast::{MatchCase, StmtKind, TypedBinding, TypedStmt};
+use crate::typechecker::type_ast::{MatchCase, StmtKind, TypedBinding, TypedExpr, TypedStmt};
 use crate::typechecker::type_system::TypeSystem;
-use crate::typechecker::types::{TupleType, Type};
+use crate::typechecker::types::{EnumType, TupleType, Type};
 use crate::typechecker::{FunctionContext, Symbol, TypeChecker};
 use std::collections::HashSet;
 use std::rc::Rc;
@@ -321,64 +321,30 @@ impl<'src> TypeChecker<'src> {
                 let mut matched_variants = HashSet::new();
                 let mut typed_cases = vec![];
 
+                let mut has_fallthrough = false;
                 for arm in arms {
-                    let Pattern::Named {
-                        enum_name,
-                        variant_name,
-                        bind,
-                    } = &arm.pattern
-                    else {
-                        todo!()
-                    };
-
-                    let (variant_idx, field_types) = enum_def
-                        .variants
-                        .get(variant_name.lexeme)
-                        .ok_or_else(|| TypeCheckerError::UndefinedField {
-                            struct_name: enum_def.name.to_string(),
-                            field_name: variant_name.lexeme.to_string(),
-                            line: variant_name.line,
-                        })?;
-
-                    if matched_variants.contains(variant_name.lexeme) {
-                        // TODO Optional: Error for unreachable pattern
-                        // return Err(TypeCheckerError::Generic {
-                        //     message: format!("Duplicate match arm for '{}'", variant_name),
-                        //     line: variant_name_token.line
-                        // });
+                    let res = self.handle_match_arm(
+                        &value_typed,
+                        &enum_def,
+                        &mut matched_variants,
+                        &mut typed_cases,
+                        &mut has_fallthrough,
+                        arm,
+                    );
+                    if let Err(err) = res {
+                        self.errors.push(err);
                     }
-                    matched_variants.insert(variant_name.lexeme);
-
-                    let payload_type = field_types;
-
-                    self.scopes.begin_scope(ScopeType::Block);
-                    let typed_binding = if let Some(binding) = &bind {
-                        self.check_binding(binding, &payload_type)?
-                    } else {
-                        if !matches!(payload_type, Type::Void) {}
-                        TypedBinding::Ignored
-                    };
-
-                    // E. Check the Body
-                    let typed_body = self.check_stmt(&arm.body)?;
-
-                    self.scopes.end_scope();
-
-                    typed_cases.push(MatchCase {
-                        variant_name: variant_name.lexeme.to_string(),
-                        variant_idx: *variant_idx,
-                        binding: typed_binding,
-                        body: typed_body,
-                    });
                 }
 
                 // Exhaustiveness check
-                for variant in enum_def.variants.keys() {
-                    if !matched_variants.contains(variant.as_str()) {
-                        return Err(TypeCheckerError::UncoveredPattern {
-                            variant: variant.clone(),
-                            line: value_typed.line,
-                        });
+                if !has_fallthrough {
+                    for variant in enum_def.variants.keys() {
+                        if !matched_variants.contains(variant.as_str()) {
+                            return Err(TypeCheckerError::UncoveredPattern {
+                                variant: variant.clone(),
+                                line: value_typed.line,
+                            });
+                        }
                     }
                 }
 
@@ -393,6 +359,95 @@ impl<'src> TypeChecker<'src> {
             }
         }
     }
+
+    fn handle_match_arm(
+        &mut self,
+        value_typed: &TypedExpr,
+        enum_def: &EnumType,
+        matched_variants: &mut HashSet<&'src str>,
+        typed_cases: &mut Vec<MatchCase>,
+        has_fallthrough: &mut bool,
+        arm: &MatchArm<'src>,
+    ) -> Result<(), TypeCheckerError> {
+        if *has_fallthrough {
+            return Err(TypeCheckerError::UnreachablePattern {
+                line: arm.body.get_line(),
+                message: "Default case must be the last arm.".to_string(),
+            });
+        }
+
+        match &arm.pattern {
+            Pattern::Named {
+                enum_name,
+                variant_name,
+                bind,
+            } => {
+                if let Some(explicit_name) = enum_name
+                    && explicit_name.lexeme != enum_def.name.as_ref()
+                {
+                    return Err(TypeCheckerError::TypeMismatch {
+                        expected: Type::Enum(enum_def.name.clone()),
+                        found: value_typed.ty.clone(),
+                        line: value_typed.line,
+                        message: "Match value must be an enum of the same type as the enum being matched against.",
+                    });
+                }
+
+                let (variant_idx, field_types) = enum_def
+                    .variants
+                    .get(variant_name.lexeme)
+                    .ok_or_else(|| TypeCheckerError::UndefinedField {
+                        struct_name: enum_def.name.to_string(),
+                        field_name: variant_name.lexeme.to_string(),
+                        line: variant_name.line,
+                    })?;
+
+                if matched_variants.contains(variant_name.lexeme) {
+                    return Err(TypeCheckerError::UnreachablePattern {
+                        line: arm.body.get_line(),
+                        message: format!("Repeated pattern {}", variant_name.lexeme),
+                    });
+                }
+                matched_variants.insert(variant_name.lexeme);
+
+                let payload_type = field_types;
+
+                self.scopes.begin_scope(ScopeType::Block);
+                let typed_binding = if let Some(binding) = &bind {
+                    self.check_binding(binding, &payload_type)?
+                } else {
+                    if !matches!(payload_type, Type::Void) {}
+                    TypedBinding::Ignored
+                };
+
+                let typed_body = self.check_stmt(&arm.body)?;
+
+                self.scopes.end_scope();
+
+                typed_cases.push(MatchCase::Named {
+                    variant_name: variant_name.lexeme.to_string(),
+                    variant_idx: *variant_idx,
+                    binding: typed_binding,
+                    body: typed_body,
+                });
+                Ok(())
+            }
+            Pattern::Variable(name) => {
+                self.scopes.begin_scope(ScopeType::Block);
+                let typed_binding =
+                    self.check_binding(&Binding::Variable(name.clone()), &value_typed.ty)?;
+                let typed_body = self.check_stmt(&arm.body)?;
+                self.scopes.end_scope();
+                *has_fallthrough = true;
+                typed_cases.push(MatchCase::Variable {
+                    binding: typed_binding,
+                    body: typed_body,
+                });
+                Ok(())
+            }
+        }
+    }
+
     fn check_binding(
         &mut self,
         binding: &Binding,

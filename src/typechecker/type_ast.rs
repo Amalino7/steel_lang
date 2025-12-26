@@ -64,10 +64,6 @@ pub enum ExprKind {
         name: Box<str>,
         args: Vec<TypedExpr>,
     },
-    EnumConstructor {
-        enum_name: Symbol,
-        variant_idx: usize,
-    },
     EnumInit {
         enum_name: Symbol,
         variant_idx: usize,
@@ -173,9 +169,15 @@ pub enum TypedBinding {
 }
 
 #[derive(Debug)]
-pub struct MatchCase {
-    pub variant_name: String,
-    pub variant_idx: usize,
-    pub binding: TypedBinding,
-    pub body: TypedStmt,
+pub enum MatchCase {
+    Variable {
+        binding: TypedBinding,
+        body: TypedStmt,
+    },
+    Named {
+        variant_name: String,
+        variant_idx: usize,
+        binding: TypedBinding,
+        body: TypedStmt,
+    },
 }

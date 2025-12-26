@@ -99,6 +99,10 @@ pub enum TypeCheckerError {
         index: String,
         line: u32,
     },
+    UnreachablePattern {
+        line: u32,
+        message: String,
+    },
 }
 
 impl TypeCheckerError {
@@ -126,6 +130,7 @@ impl TypeCheckerError {
             TypeCheckerError::MissingArgument { line, .. } => *line,
             TypeCheckerError::PositionalArgumentAfterNamed { line, .. } => *line,
             TypeCheckerError::InvalidTupleIndex { line, .. } => *line,
+            TypeCheckerError::UnreachablePattern { line, .. } => *line,
         }
     }
 }
@@ -314,6 +319,13 @@ impl std::fmt::Display for TypeCheckerError {
                     f,
                     "[line {}] Error: Invalid tuple index '{}' of {}.",
                     line, index, tuple_type
+                )
+            }
+            TypeCheckerError::UnreachablePattern { line, message } => {
+                write!(
+                    f,
+                    "[line {}] Warning: Unreachable Pattern.\n {}",
+                    line, message
                 )
             }
         }

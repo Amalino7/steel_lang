@@ -1397,21 +1397,27 @@ mod tests {
              }
             }
             let msg = Message.Move(x: 10, y: 20);
-            msg = Message.Quit;
+            // msg = Message.Quit;
             // msg = Message.ChangeColor(r: 10, g: 20, b: 30);
             match msg {
-                Quit => {println("Quit");}
-                Move{x: x, y: y} => {println(x, y);}
-                ChangeColor(a) => {println(a.r, a.g, a.b);}
+                .Quit => {println("Quit");}
+                .Move(:x, :y) => {println(x, y);}
+                .ChangeColor(a) => {println(a.r, a.g, a.b);}
             }
+            msg = Message.ChangeColor(r: 10, g: 20, b: 30);
+            msg = Message.Quit;
 
+            match msg {
+                .ChangeColor(a) => {println(a.r, a.g, a.b);}
+                _ => {println("Not a change color");}
+            }
            "#;
         execute_source(src, false, "run", true);
     }
     #[test]
     fn test_val_enums() {
         let src = r#"
-            enum Shape { Circle(number), Rectangle(number, number) }
+            enum Shape { Circle(number), Rectangгle(number, number) }
             func area(s: Shape): number {
                 match s {
                     Shape.Circle(radius) => {return 3.14 * radius * radius;}
@@ -1420,8 +1426,8 @@ mod tests {
             }
             func area2(s: Shape): number {
                 match s {
-                    Circle(radius) => {return 3.14 * radius * radius;}
-                    Rectangle(rect) => {return rect.0 * rect.1;}
+                    .Circle(radius) => {return 3.14 * radius * radius;}
+                    .Rectangle(rect) => {return rect.0 * rect.1;}
                 }
             }
             let rect = Shape.Rectangle(6, 10);

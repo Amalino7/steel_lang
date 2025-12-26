@@ -2,7 +2,7 @@ use crate::parser::ast::{
     Binding, Expr, InterfaceSig, Literal, MatchArm, Pattern, Stmt, TypeAst, VariantType,
 };
 use crate::parser::error::ParserError;
-use crate::parser::TokT;
+use crate::parser::{check_next_token_type, TokT};
 use crate::parser::{check_token_type, match_token_type, Parser};
 use crate::token::{Token, TokenType};
 
@@ -56,22 +56,39 @@ impl<'src> Parser<'src> {
             let name = self.previous_token.clone();
             if match_token_type!(self, TokT::LeftParen) {
                 // structure
-                let mut fields = vec![];
-                while !match_token_type!(self, TokT::RightParen) {
-                    self.consume(TokT::Identifier, "Expected struct field name.")?;
-                    let field_name = self.previous_token.clone();
-                    self.consume(TokT::Colon, "Expected ':' after field name")?;
-                    let binding = self.parse_binding()?;
-                    fields.push((field_name, binding));
-                    match_token_type!(self, TokT::Comma);
-                }
-                Ok(Binding::Struct { name, fields })
+                self.parse_destructure(name)
             } else {
                 Ok(Binding::Variable(name))
             }
         } else {
             Err(self.error_current("Expected variable name."))
         }
+    }
+
+    fn parse_destructure(&mut self, name: Token<'src>) -> Result<Binding<'src>, ParserError<'src>> {
+        let mut fields = vec![];
+        while !match_token_type!(self, TokT::RightParen) {
+            let key = if match_token_type!(self, TokT::Identifier) {
+                Some(self.previous_token.clone())
+            } else {
+                None
+            };
+            self.consume(TokT::Colon, "Expected ':'")?;
+            let val = self.parse_binding()?;
+            match key {
+                None => {
+                    if let Binding::Variable(name) = &val {
+                        fields.push((name.clone(), val));
+                    } else {
+                        self.error_previous("Expected variable name after ':'.\n\
+                                 Either provide explicit key to the left or provide variable binding to the right.");
+                    }
+                }
+                Some(key) => fields.push((key, val)),
+            }
+            match_token_type!(self, TokT::Comma);
+        }
+        Ok(Binding::Struct { name, fields })
     }
 
     fn func_declaration(&mut self, is_method: bool) -> Result<Stmt<'src>, ParserError<'src>> {
@@ -315,73 +332,46 @@ impl<'src> Parser<'src> {
     }
 
     fn pattern(&mut self) -> Result<Pattern<'src>, ParserError<'src>> {
-        // 1. Handle explicit Enum.Variant or just Variant
-        self.consume(TokT::Identifier, "Expected pattern start.")?;
-        let name_part = self.previous_token.clone();
-
-        let mut enum_name = None;
-        let mut variant_name = name_part;
-
-        // Check if it was actually Enum.Variant
-        if match_token_type!(self, TokT::Dot) {
-            enum_name = Some(variant_name); // The first token was actually the enum name
-            self.consume(TokT::Identifier, "Expected variant name after '.'")?;
-            variant_name = self.previous_token.clone();
+        if check_token_type!(self, TokT::Identifier) && !check_next_token_type!(self, TokT::Dot) {
+            self.consume(TokT::Identifier, "Expected variable name.")?;
+            let var_name = self.previous_token.clone();
+            return Ok(Pattern::Variable(var_name));
         }
 
-        // 2. Parse the payload (The "Sugar")
-        let bind = if match_token_type!(self, TokT::LeftParen) {
-            // Tuple-like matching: (a, b) OR (t)
-            let mut bindings = vec![];
-            while !check_token_type!(self, TokT::RightParen) {
-                // Recurse into parse_binding to support Deep Destructuring (Case 5)
-                bindings.push(self.parse_binding()?);
-                match_token_type!(self, TokT::Comma);
-            }
-            self.consume(TokT::RightParen, "Expected ')' pattern.")?;
-
-            // LOGIC MAGIC:
-            if bindings.is_empty() {
-                // Variant() -> Matches Unit payload
-                None
-            } else if bindings.len() == 1 {
-                // Case 1 & 3: Single(x) OR Multiple(t)
-                // We strip the vector and return the single binding.
-                // The TypeChecker will decide if 'x' binds to the whole tuple
-                // or just the single element inside.
-                Some(bindings.remove(0))
-            } else {
-                // Case 2: Multiple(a, b)
-                // The user provided multiple args, so we explicitly construct
-                // a Tuple binding to match the internal structure.
-                Some(Binding::Tuple { fields: bindings })
-            }
-        } else if match_token_type!(self, TokT::LeftBrace) {
-            // Case 4: StructLike { x: val }
-            // We reuse the existing struct parsing logic logic
-            // We backtrack slightly or extract logic from parse_binding to a helper
-            // But assuming parse_binding handles "Identifier { ... }" we can construct it manually:
-
-            let mut fields = vec![];
-            while !check_token_type!(self, TokT::RightBrace) {
-                self.consume(TokT::Identifier, "Expected field name.")?;
-                let key = self.previous_token.clone();
-                self.consume(TokT::Colon, "Expected ':'")?;
-                let val = self.parse_binding()?;
-                fields.push((key, val));
-                match_token_type!(self, TokT::Comma);
-            }
-            self.consume(TokT::RightBrace, "Expected '}'")?;
-
-            // We wrap this in a Binding::Struct
-            // Note: We use a dummy token for the struct name or Optional,
-            // depending on how strict your Binding AST is.
-            Some(Binding::Struct {
-                name: variant_name.clone(), // Reusing variant name as struct name context
-                fields,
-            })
+        let enum_name = if match_token_type!(self, TokT::Identifier) {
+            Some(self.previous_token.clone())
         } else {
-            // Unit Variant or just checking for existence
+            None
+        };
+        self.consume(
+            TokT::Dot,
+            "Expected '.' as pattern start or between enum name and variant ",
+        )?;
+
+        self.consume(TokT::Identifier, "Expected variant name.")?;
+        let variant_name = self.previous_token.clone();
+
+        let bind = if match_token_type!(self, TokT::LeftParen) {
+            // Struct like case, :x or val:val
+            if check_token_type!(self, TokT::Colon) || check_next_token_type!(self, TokT::Colon) {
+                Some(self.parse_destructure(variant_name.clone())?)
+            } else {
+                let mut bindings = vec![];
+                while !check_token_type!(self, TokT::RightParen) {
+                    bindings.push(self.parse_binding()?);
+                    match_token_type!(self, TokT::Comma);
+                }
+                self.consume(TokT::RightParen, "Expected ')' pattern.")?;
+
+                if bindings.is_empty() {
+                    None
+                } else if bindings.len() == 1 {
+                    Some(bindings.remove(0))
+                } else {
+                    Some(Binding::Tuple { fields: bindings })
+                }
+            }
+        } else {
             None
         };
 

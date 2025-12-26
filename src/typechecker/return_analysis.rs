@@ -1,5 +1,5 @@
 use crate::typechecker::error::TypeCheckerError;
-use crate::typechecker::type_ast::{StmtKind, TypedStmt};
+use crate::typechecker::type_ast::{MatchCase, StmtKind, TypedStmt};
 use crate::typechecker::types::Type;
 use crate::typechecker::TypeChecker;
 
@@ -16,7 +16,10 @@ impl<'src> TypeChecker<'src> {
         match &stmt.kind {
             StmtKind::Match { cases, .. } => {
                 for case in cases {
-                    self.check_stmt_returns(&case.body)?;
+                    match case {
+                        MatchCase::Variable { body, .. } => self.check_stmt_returns(body)?,
+                        MatchCase::Named { body, .. } => self.check_stmt_returns(body)?,
+                    };
                 }
                 Ok(())
             }
@@ -91,7 +94,11 @@ impl<'src> TypeChecker<'src> {
             StmtKind::Match { cases, .. } => {
                 let mut returns = true;
                 for case in cases {
-                    returns &= self.stmt_returns(&case.body)?;
+                    let body = match case {
+                        MatchCase::Variable { body, .. } => body,
+                        MatchCase::Named { body, .. } => body,
+                    };
+                    returns &= self.stmt_returns(body)?;
                 }
                 returns
             }

@@ -3,7 +3,7 @@ pub mod analysis;
 use crate::compiler::analysis::ResolvedVar;
 use crate::parser::ast::Literal;
 use crate::typechecker::type_ast::{
-    BinaryOp, ExprKind, LogicalOp, StmtKind, TypedBinding, TypedExpr, TypedStmt, UnaryOp,
+    BinaryOp, ExprKind, LogicalOp, MatchCase, StmtKind, TypedBinding, TypedExpr, TypedStmt, UnaryOp,
 };
 use crate::vm::bytecode::{Chunk, Opcode};
 use crate::vm::gc::GarbageCollector;
@@ -84,22 +84,36 @@ impl<'a> Compiler<'a> {
                 let mut end_jumps = Vec::new();
 
                 for case in cases.iter() {
-                    // Check if the tag matches the case variant
-                    self.emit_op(Opcode::CheckEnumTag, stmt.line);
-                    self.emit_byte(case.variant_idx as u8, stmt.line);
+                    match case {
+                        MatchCase::Variable { binding, body } => {
+                            self.compile_binding(binding, body.line);
+                            self.compile_stmt(body);
+                            end_jumps.push(self.emit_jump(Opcode::Jump, stmt.line));
+                        }
+                        MatchCase::Named {
+                            variant_name,
+                            variant_idx,
+                            binding,
+                            body,
+                        } => {
+                            // Check if the tag matches the case variant
+                            self.emit_op(Opcode::CheckEnumTag, stmt.line);
+                            self.emit_byte(*variant_idx as u8, stmt.line);
 
-                    // Similar to if
-                    let next_case_jump = self.emit_jump(Opcode::JumpIfFalse, stmt.line);
-                    self.emit_op(Opcode::Pop, stmt.line);
+                            // Similar to if
+                            let next_case_jump = self.emit_jump(Opcode::JumpIfFalse, stmt.line);
+                            self.emit_op(Opcode::Pop, stmt.line);
 
-                    self.emit_op(Opcode::DestructureEnum, stmt.line);
-                    self.compile_binding(&case.binding, stmt.line);
+                            self.emit_op(Opcode::DestructureEnum, stmt.line);
+                            self.compile_binding(binding, stmt.line);
 
-                    self.compile_stmt(&case.body);
-                    end_jumps.push(self.emit_jump(Opcode::Jump, stmt.line));
+                            self.compile_stmt(body);
+                            end_jumps.push(self.emit_jump(Opcode::Jump, stmt.line));
 
-                    self.patch_jump(next_case_jump);
-                    self.emit_op(Opcode::Pop, stmt.line);
+                            self.patch_jump(next_case_jump);
+                            self.emit_op(Opcode::Pop, stmt.line);
+                        }
+                    }
                 }
 
                 // Pop original enum
@@ -608,9 +622,6 @@ impl<'a> Compiler<'a> {
                 }
                 self.emit_op(Opcode::StructAlloc, line);
                 self.emit_byte(elements.len() as u8, line);
-            }
-            ExprKind::EnumConstructor { .. } => {
-                unreachable!("Enum constructors shouldn't be called")
             }
         }
     }
