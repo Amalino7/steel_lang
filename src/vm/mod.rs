@@ -435,7 +435,7 @@ impl VM {
                     }
                 }
                 Opcode::CheckEnumTag => {
-                    let enumeration = self.stack.get_top();
+                    let enumeration = self.stack.pop();
                     let tag_id = chunk.instructions[current_frame.ip] as usize;
                     current_frame.ip += 1;
                     match enumeration {

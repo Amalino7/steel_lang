@@ -15,6 +15,34 @@ impl<'src> TypeChecker<'src> {
         expr: &Expr<'src>,
     ) -> Result<TypedExpr, TypeCheckerError> {
         match expr {
+            Expr::Is {
+                expression,
+                type_name,
+            } => {
+                let target = self.infer_expression(expression)?;
+                let Type::Enum(enum_name) = &target.ty else {
+                    todo!("Should error here")
+                };
+                let enum_def = self
+                    .sys
+                    .get_enum(enum_name.as_ref())
+                    .expect("Invalid enum Type return!");
+
+                if !enum_def.variants.contains_key(type_name.lexeme) {
+                    todo!("Should error here")
+                }
+                let (variant_idx, narrowed_type) = enum_def.variants.get(type_name.lexeme).unwrap();
+
+                Ok(TypedExpr {
+                    ty: Type::Boolean,
+                    kind: ExprKind::Is {
+                        target: Box::new(target),
+                        variant_idx: *variant_idx as u16,
+                        narrowed: narrowed_type.clone(),
+                    },
+                    line: type_name.line,
+                })
+            }
             Expr::Tuple { elements } => {
                 let mut typed_elements = Vec::with_capacity(elements.len());
                 let mut type_vec = vec![];
@@ -173,6 +201,7 @@ impl<'src> TypeChecker<'src> {
                             left: Box::new(left_typed),
                             operator: LogicalOp::Coalesce,
                             right: Box::new(right_typed),
+                            typed_refinements: vec![],
                         },
                         line: operator.line,
                     })
@@ -202,9 +231,11 @@ impl<'src> TypeChecker<'src> {
                 } else {
                     unreachable!("Invalid logical operator");
                 };
-
+                let mut typed_refinements = vec![];
                 for (name, ty) in refinements {
-                    self.scopes.refine(&name, ty);
+                    if let Some(case) = self.scopes.refine(&name, ty) {
+                        typed_refinements.push(case);
+                    }
                 }
                 let right_typed = self.infer_expression(right)?;
                 self.scopes.end_scope();
@@ -242,6 +273,7 @@ impl<'src> TypeChecker<'src> {
                         left: Box::new(left_typed),
                         operator: op,
                         right: Box::new(right_typed),
+                        typed_refinements,
                     },
                     line: operator.line,
                 })

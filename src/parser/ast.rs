@@ -44,6 +44,10 @@ pub enum Expr<'src> {
         literal: Literal,
         line: u32,
     },
+    Is {
+        expression: Box<Expr<'src>>,
+        type_name: Token<'src>,
+    },
     Assignment {
         identifier: Token<'src>,
         value: Box<Expr<'src>>,
@@ -304,6 +308,11 @@ impl Display for Expr<'_> {
                     write!(f, "{}.{} = {}", object, name.lexeme, value)
                 }
             }
+            Expr::Is {
+                expression,
+                type_name,
+            } => write!(f, "{} is {}", expression, type_name.lexeme),
+
             Expr::ForceUnwrap { expression, .. } => {
                 write!(f, "!!({})", expression)
             }
@@ -493,6 +502,7 @@ impl Expr<'_> {
             Expr::Set { value, .. } => value.get_line(),
             Expr::ForceUnwrap { line, .. } => *line,
             Expr::Tuple { elements } => elements[0].get_line(),
+            Expr::Is { type_name, .. } => type_name.line,
         }
     }
 }

@@ -3,7 +3,9 @@ use crate::parser::ast::{Binding, MatchArm, Pattern, Stmt};
 use crate::token::Token;
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::scope_manager::ScopeType;
-use crate::typechecker::type_ast::{MatchCase, StmtKind, TypedBinding, TypedExpr, TypedStmt};
+use crate::typechecker::type_ast::{
+    MatchCase, StmtKind, TypedBinding, TypedExpr, TypedRefinements, TypedStmt,
+};
 use crate::typechecker::type_system::TypeSystem;
 use crate::typechecker::types::{EnumType, TupleType, Type};
 use crate::typechecker::{FunctionContext, Symbol, TypeChecker};
@@ -172,9 +174,16 @@ impl<'src> TypeChecker<'src> {
                 }
 
                 let refinements = self.analyze_condition(&cond_typed);
+                let mut typed_refinements = TypedRefinements {
+                    true_path: vec![],
+                    else_path: vec![],
+                    after_path: vec![],
+                };
                 self.scopes.begin_scope(ScopeType::Block);
                 for (name, ty) in refinements.true_path.iter() {
-                    self.scopes.refine(name, ty.clone());
+                    if let Some(case) = self.scopes.refine(name, ty.clone()) {
+                        typed_refinements.true_path.push(case)
+                    }
                 }
                 let then_branch_typed = self.check_stmt(then_branch)?;
                 self.scopes.end_scope();
@@ -182,7 +191,9 @@ impl<'src> TypeChecker<'src> {
                 let else_branch_typed = if let Some(else_branch) = else_branch {
                     self.scopes.begin_scope(ScopeType::Block);
                     for (name, ty) in refinements.false_path.iter() {
-                        self.scopes.refine(name, ty.clone());
+                        if let Some(case) = self.scopes.refine(name, ty.clone()) {
+                            typed_refinements.else_path.push(case)
+                        }
                     }
                     let stmt = self.check_stmt(else_branch)?;
                     self.scopes.end_scope();
@@ -194,13 +205,17 @@ impl<'src> TypeChecker<'src> {
                 // Guard logic
                 if self.stmt_returns(&then_branch_typed)? {
                     for (name, ty) in refinements.false_path {
-                        self.scopes.refine(&name, ty);
+                        if let Some(case) = self.scopes.refine(&name, ty.clone()) {
+                            typed_refinements.after_path.push(case)
+                        }
                     }
                 }
                 if let Some(else_branch_typed) = &else_branch_typed {
                     if self.stmt_returns(&else_branch_typed)? {
                         for (name, ty) in refinements.true_path {
-                            self.scopes.refine(&name, ty);
+                            if let Some(case) = self.scopes.refine(&name, ty.clone()) {
+                                typed_refinements.after_path.push(case)
+                            }
                         }
                     }
                 }
@@ -210,6 +225,7 @@ impl<'src> TypeChecker<'src> {
                         condition: cond_typed,
                         then_branch: Box::new(then_branch_typed),
                         else_branch: else_branch_typed,
+                        typed_refinements: Box::new(typed_refinements),
                     },
                     type_info: Type::Void,
                     line: condition.get_line(),
@@ -426,7 +442,7 @@ impl<'src> TypeChecker<'src> {
 
                 typed_cases.push(MatchCase::Named {
                     variant_name: variant_name.lexeme.to_string(),
-                    variant_idx: *variant_idx,
+                    variant_idx: *variant_idx as u16,
                     binding: typed_binding,
                     body: typed_body,
                 });

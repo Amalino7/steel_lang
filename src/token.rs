@@ -63,6 +63,7 @@ pub enum TokenType {
     // Keywords.
     And,
     Or,
+    Is,
     If,
     Else,
     Func,
@@ -144,6 +145,7 @@ impl Display for TokenType {
             TokenType::Enum => f.write_str("enum"),
             TokenType::Match => f.write_str("match"),
             TokenType::Arrow => f.write_str("=>"),
+            TokenType::Is => f.write_str("is"),
         }
     }
 }

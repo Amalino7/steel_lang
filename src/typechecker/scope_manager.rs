@@ -140,21 +140,32 @@ impl ScopeManager {
         None
     }
 
-    pub fn refine(&mut self, name: &str, new_type: Type) {
+    #[must_use]
+    pub fn refine(&mut self, name: &str, new_type: Type) -> Option<(ResolvedVar, ResolvedVar)> {
         let lookup_res = self.lookup(name);
         if let Some((ctx, resolved)) = lookup_res {
             // Globals cannot be safely refined
 
             if let ResolvedVar::Global(_) = resolved {
-                return;
+                return None;
             }
-            let idx = ctx.index;
-            let name = ctx.name.clone();
-            let scope = self.scopes.last_mut().expect("No scope active");
-            scope
-                .variables
-                .insert(name.clone(), VariableContext::new(name, new_type, idx));
+
+            if let Type::Enum(enum_name) = &ctx.type_info {
+                let name = ctx.name.clone();
+                self.declare(name.clone(), new_type).unwrap(); // TODO ignore.
+                let (_, new_resolved) = self.lookup(name.as_ref()).unwrap();
+                return Some((resolved, new_resolved));
+            } else {
+                let idx = ctx.index;
+                let name = ctx.name.clone();
+                let scope = self.scopes.last_mut().expect("No scope active");
+                scope
+                    .variables
+                    .insert(name.clone(), VariableContext::new(name, new_type, idx));
+                return None;
+            }
         }
+        None
     }
 
     fn add_closure_capture(closures: &mut Vec<Symbol>, name: Symbol) -> ResolvedVar {

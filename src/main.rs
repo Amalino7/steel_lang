@@ -34,7 +34,7 @@ pub fn execute_source(source: &str, debug: bool, mode: &str, force: bool) {
     if mode == "parse" {
         if debug {
             println!("=== AST ===");
-            println!("{:#?}", ast);
+            ast.iter().for_each(|e| println!("{}", e));
             println!("=============");
         }
         return;

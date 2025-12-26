@@ -59,12 +59,14 @@ impl<'a> Compiler<'a> {
                 condition,
                 then_branch,
                 else_branch,
+                typed_refinements,
             } => {
                 let line = stmt.line;
                 self.compile_expr(condition);
                 let then_jump = self.emit_jump(Opcode::JumpIfFalse, line);
                 self.emit_op(Opcode::Pop, line);
 
+                self.emit_refinement(&typed_refinements.true_path, line);
                 self.compile_stmt(then_branch);
 
                 let else_jump = self.emit_jump(Opcode::Jump, line);
@@ -73,10 +75,12 @@ impl<'a> Compiler<'a> {
                 self.emit_op(Opcode::Pop, line);
 
                 if let Some(else_branch) = else_branch {
+                    self.emit_refinement(&typed_refinements.else_path, line);
                     self.compile_stmt(else_branch);
                 }
 
                 self.patch_jump(else_jump);
+                self.emit_refinement(&typed_refinements.after_path, line);
             }
             StmtKind::Match { value, cases } => {
                 self.compile_expr(value);
@@ -97,6 +101,7 @@ impl<'a> Compiler<'a> {
                             body,
                         } => {
                             // Check if the tag matches the case variant
+                            self.emit_op(Opcode::Dup, stmt.line);
                             self.emit_op(Opcode::CheckEnumTag, stmt.line);
                             self.emit_byte(*variant_idx as u8, stmt.line);
 
@@ -226,22 +231,19 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    fn emit_refinement(&mut self, typed_refinements: &[(ResolvedVar, ResolvedVar)], line: u32) {
+        for refinement in typed_refinements {
+            self.emit_var_access(&refinement.0, line);
+            self.emit_op(Opcode::DestructureEnum, line);
+            self.emit_set_var(&refinement.1, line);
+            self.emit_op(Opcode::Pop, line);
+        }
+    }
+
     fn compile_binding(&mut self, binding: &TypedBinding, line: u32) {
         match binding {
             TypedBinding::Variable(var) => {
-                match var {
-                    ResolvedVar::Local(idx) => {
-                        self.emit_op(Opcode::SetLocal, line);
-                        self.emit_byte(*idx, line);
-                    }
-                    ResolvedVar::Global(idx) => {
-                        self.emit_op(Opcode::SetGlobal, line);
-                        self.emit_byte(*idx as u8, line);
-                    }
-                    ResolvedVar::Closure(_) => {
-                        unreachable!("Closures shouldn't be assigned to")
-                    }
-                }
+                self.emit_set_var(var, line);
                 self.emit_op(Opcode::Pop, line);
             }
             TypedBinding::Ignored => {
@@ -264,6 +266,21 @@ impl<'a> Compiler<'a> {
                     self.compile_binding(binding, line);
                 }
                 self.emit_op(Opcode::Pop, line);
+            }
+        }
+    }
+    fn emit_set_var(&mut self, var_ctx: &ResolvedVar, line: u32) {
+        match var_ctx {
+            ResolvedVar::Local(idx) => {
+                self.emit_op(Opcode::SetLocal, line);
+                self.emit_byte(*idx, line);
+            }
+            ResolvedVar::Global(idx) => {
+                self.emit_op(Opcode::SetGlobal, line);
+                self.emit_byte(*idx as u8, line);
+            }
+            ResolvedVar::Closure(_) => {
+                unreachable!("Cannot set capture")
             }
         }
     }
@@ -351,6 +368,16 @@ impl<'a> Compiler<'a> {
                     BinaryOp::EqualEqual => self.emit_op(Opcode::Equal, line),
                 }
             }
+            ExprKind::Is {
+                target,
+                variant_idx,
+                ..
+            } => {
+                self.compile_expr(target);
+                self.emit_op(Opcode::CheckEnumTag, expr.line);
+                self.emit_byte(*variant_idx as u8, expr.line);
+                // target !!
+            }
             ExprKind::Literal(literal) => match literal {
                 Literal::Number(n) => self
                     .chunk()
@@ -400,6 +427,7 @@ impl<'a> Compiler<'a> {
                 left,
                 operator,
                 right,
+                typed_refinements,
             } => {
                 self.compile_expr(left);
                 match operator {
@@ -409,11 +437,13 @@ impl<'a> Compiler<'a> {
                         let end_jump = self.emit_jump(Opcode::Jump, line);
                         self.patch_jump(else_jump);
                         self.emit_op(Opcode::Pop, line);
+                        self.emit_refinement(typed_refinements, line);
                         self.compile_expr(right);
                         self.patch_jump(end_jump);
                     }
                     LogicalOp::And => {
                         let short_circuit = self.emit_jump(Opcode::JumpIfFalse, line);
+                        self.emit_refinement(typed_refinements, line);
                         self.emit_op(Opcode::Pop, line);
                         self.compile_expr(right);
                         self.patch_jump(short_circuit);

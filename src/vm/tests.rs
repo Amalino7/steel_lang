@@ -1417,7 +1417,7 @@ mod tests {
     #[test]
     fn test_val_enums() {
         let src = r#"
-            enum Shape { Circle(number), Rectangгle(number, number) }
+            enum Shape { Circle(number), Rectangle(number, number) }
             func area(s: Shape): number {
                 match s {
                     Shape.Circle(radius) => {return 3.14 * radius * radius;}
@@ -1437,6 +1437,36 @@ mod tests {
             assert(area(Shape.Rectangle(10, 5)), 50);
         "#;
         execute_source(src, false, "run", true);
+    }
+    #[test]
+    fn test_enum_branch_analysis() {
+        let src = r#"
+            enum Res {Ok(number), Err(string)}
+            {
+                let res = Res.Ok(10);
+                let res2 = Res.Ok(20);
+                // res = Res.Err("Hello");
+                if res is Ok and res2 is Ok {
+                    println(res + res2);
+                } else {
+                    // println("Error is "+ res);
+                }
+
+                if res2 is Ok and res2 > 10 {
+                    println("res is bigger than 10: ", res2);
+                }
+            }
+
+            func main() {
+                let res = Res.Ok(15);
+                if res is Err {
+                    return;
+                }
+                println(res * 7);
+            }
+            main();
+        "#;
+        execute_source(src, true, "run", true);
     }
     #[test]
     fn test_number_result() {

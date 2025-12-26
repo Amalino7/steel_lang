@@ -197,8 +197,21 @@ impl<'src> Parser<'src> {
                 expression: Box::new(expr),
             })
         } else {
-            self.call()
+            self.parser_is_type()
         }
+    }
+
+    fn parser_is_type(&mut self) -> Result<Expr<'src>, ParserError<'src>> {
+        let mut expr = self.call()?;
+        if match_token_type!(self, TokT::Is) {
+            self.consume(TokT::Identifier, "Expected typename after is.")?;
+            let type_name = self.previous_token.clone();
+            expr = Expr::Is {
+                expression: Box::new(expr),
+                type_name,
+            }
+        }
+        Ok(expr)
     }
 
     fn call(&mut self) -> Result<Expr<'src>, ParserError<'src>> {

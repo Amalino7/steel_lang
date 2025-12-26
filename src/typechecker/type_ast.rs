@@ -66,14 +66,18 @@ pub enum ExprKind {
     },
     EnumInit {
         enum_name: Symbol,
-        variant_idx: usize,
+        variant_idx: u16,
         value: Box<TypedExpr>,
     },
     InterfaceUpcast {
         expr: Box<TypedExpr>,
         vtable_idx: u32,
     },
-
+    Is {
+        target: Box<TypedExpr>,
+        variant_idx: u16,
+        narrowed: Type,
+    },
     InterfaceMethodGet {
         object: Box<TypedExpr>,
         method_index: u8,
@@ -91,6 +95,7 @@ pub enum ExprKind {
     Logical {
         left: Box<TypedExpr>,
         operator: LogicalOp,
+        typed_refinements: Vec<(ResolvedVar, ResolvedVar)>,
         right: Box<TypedExpr>,
     },
     Assign {
@@ -144,6 +149,7 @@ pub enum StmtKind {
         condition: TypedExpr,
         then_branch: Box<TypedStmt>,
         else_branch: Option<Box<TypedStmt>>,
+        typed_refinements: Box<TypedRefinements>,
     },
     Match {
         value: Box<TypedExpr>,
@@ -176,8 +182,14 @@ pub enum MatchCase {
     },
     Named {
         variant_name: String,
-        variant_idx: usize,
+        variant_idx: u16,
         binding: TypedBinding,
         body: TypedStmt,
     },
+}
+#[derive(Debug)]
+pub struct TypedRefinements {
+    pub true_path: Vec<(ResolvedVar, ResolvedVar)>,
+    pub else_path: Vec<(ResolvedVar, ResolvedVar)>,
+    pub after_path: Vec<(ResolvedVar, ResolvedVar)>,
 }

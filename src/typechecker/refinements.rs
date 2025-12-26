@@ -42,7 +42,36 @@ impl<'src> TypeChecker<'src> {
                     false_path: vec![],
                 }
             }
+            ExprKind::Is {
+                target,
+                variant_idx,
+                narrowed,
+            } => {
+                if let ExprKind::GetVar(_, name) = &target.kind
+                    && let Type::Enum(enum_name) = &target.ty
+                {
+                    let enum_def = self.sys.get_enum(enum_name).unwrap();
+                    let false_path = if enum_def.variants.len() == 2 {
+                        let other = enum_def
+                            .variants
+                            .iter()
+                            .find(|&e| (*e.1).0 != *variant_idx as usize)
+                            .unwrap();
+                        vec![(name.clone(), (*other.1).1.clone())] // TODO fix this mess
+                    } else {
+                        vec![]
+                    };
 
+                    return BranchRefinements {
+                        true_path: vec![(name.clone(), narrowed.clone())],
+                        false_path,
+                    };
+                }
+                BranchRefinements {
+                    true_path: vec![],
+                    false_path: vec![],
+                }
+            }
             // Case: !Condition
             ExprKind::Unary { operator, operand } if operator == &UnaryOp::Not => {
                 let inner = self.analyze_condition(operand);
@@ -56,6 +85,7 @@ impl<'src> TypeChecker<'src> {
                 left,
                 operator,
                 right,
+                ..
             } if operator == &LogicalOp::And => {
                 let refine_left = self.analyze_condition(left);
                 let refine_right = self.analyze_condition(right);

@@ -218,6 +218,7 @@ fn keywords() -> HashMap<&'static str, TokenType> {
     HashMap::from([
         ("and", TokenType::And),
         ("or", TokenType::Or),
+        ("is", TokenType::Is),
         ("if", TokenType::If),
         ("else", TokenType::Else),
         ("true", TokenType::True),

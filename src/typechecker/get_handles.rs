@@ -30,7 +30,7 @@ impl<'src> TypeChecker<'src> {
                 ty: Type::Enum(enum_def.name.clone()),
                 kind: ExprKind::EnumInit {
                     enum_name: enum_def.name.clone(),
-                    variant_idx: *idx,
+                    variant_idx: *idx as u16,
                     value: Box::new(TypedExpr {
                         ty: Type::Nil,
                         kind: ExprKind::Literal(Literal::Nil),
@@ -115,7 +115,7 @@ impl<'src> TypeChecker<'src> {
             line,
             kind: ExprKind::EnumInit {
                 enum_name: enum_def.name.clone(),
-                variant_idx,
+                variant_idx: variant_idx as u16,
                 value: Box::new(val_expr),
             },
         })
