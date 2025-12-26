@@ -150,11 +150,11 @@ impl ScopeManager {
                 return None;
             }
 
-            if let Type::Enum(enum_name) = &ctx.type_info {
+            return if let Type::Enum(_) = &ctx.type_info {
                 let name = ctx.name.clone();
-                self.declare(name.clone(), new_type).unwrap(); // TODO ignore.
+                self.declare(name.clone(), new_type).unwrap(); // Shouldn't fail
                 let (_, new_resolved) = self.lookup(name.as_ref()).unwrap();
-                return Some((resolved, new_resolved));
+                Some((resolved, new_resolved))
             } else {
                 let idx = ctx.index;
                 let name = ctx.name.clone();
@@ -162,8 +162,8 @@ impl ScopeManager {
                 scope
                     .variables
                     .insert(name.clone(), VariableContext::new(name, new_type, idx));
-                return None;
-            }
+                None
+            };
         }
         None
     }

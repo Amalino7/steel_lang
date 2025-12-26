@@ -410,8 +410,7 @@ impl<'src> TypeChecker<'src> {
                 }
 
                 let (variant_idx, field_types) = enum_def
-                    .variants
-                    .get(variant_name.lexeme)
+                    .get_variant(variant_name.lexeme)
                     .ok_or_else(|| TypeCheckerError::UndefinedField {
                         struct_name: enum_def.name.to_string(),
                         field_name: variant_name.lexeme.to_string(),
@@ -441,8 +440,7 @@ impl<'src> TypeChecker<'src> {
                 self.scopes.end_scope();
 
                 typed_cases.push(MatchCase::Named {
-                    variant_name: variant_name.lexeme.to_string(),
-                    variant_idx: *variant_idx as u16,
+                    variant_idx: variant_idx as u16,
                     binding: typed_binding,
                     body: typed_body,
                 });

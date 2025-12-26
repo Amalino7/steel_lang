@@ -76,7 +76,6 @@ pub enum ExprKind {
     Is {
         target: Box<TypedExpr>,
         variant_idx: u16,
-        narrowed: Type,
     },
     InterfaceMethodGet {
         object: Box<TypedExpr>,
@@ -181,7 +180,6 @@ pub enum MatchCase {
         body: TypedStmt,
     },
     Named {
-        variant_name: String,
         variant_idx: u16,
         binding: TypedBinding,
         body: TypedStmt,

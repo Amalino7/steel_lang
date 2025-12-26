@@ -22,15 +22,15 @@ impl<'src> TypeChecker<'src> {
     fn handle_enum_access(&mut self, type_name: &Token, variant_name: &Token) -> Option<TypedExpr> {
         let enum_def = self.sys.get_enum(type_name.lexeme)?;
 
-        let (idx, variant_types) = enum_def.variants.get(variant_name.lexeme)?;
+        let (idx, variant_types) = enum_def.get_variant(variant_name.lexeme)?;
 
         // Handle Type.Variant
-        if *variant_types == Type::Void {
+        if variant_types == Type::Void {
             Some(TypedExpr {
                 ty: Type::Enum(enum_def.name.clone()),
                 kind: ExprKind::EnumInit {
                     enum_name: enum_def.name.clone(),
-                    variant_idx: *idx as u16,
+                    variant_idx: idx as u16,
                     value: Box::new(TypedExpr {
                         ty: Type::Nil,
                         kind: ExprKind::Literal(Literal::Nil),

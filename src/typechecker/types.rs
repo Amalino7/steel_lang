@@ -52,8 +52,18 @@ pub struct InterfaceType {
 #[derive(Debug, PartialEq, Clone)]
 pub struct EnumType {
     pub name: Symbol,
-    pub variants: HashMap<String, (usize, Type)>, // Void, one arg, tuple, struct
+    pub variants: HashMap<String, usize>,
+    pub ordered_variants: Vec<(String, Type)>, // Void, one arg, tuple, struct
 }
+
+impl EnumType {
+    pub fn get_variant(&self, name: &str) -> Option<(usize, Type)> {
+        self.variants
+            .get(name)
+            .map(|idx| (*idx, self.ordered_variants[*idx].1.clone()))
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub struct TupleType {
     pub types: Vec<Type>,

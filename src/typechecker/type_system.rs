@@ -39,12 +39,9 @@ impl TypeSystem {
             EnumType {
                 name,
                 variants: HashMap::new(),
+                ordered_variants: vec![],
             },
         );
-    }
-
-    pub fn define_enum(&mut self, name: &str, variants: HashMap<String, (usize, Type)>) {
-        self.enums.get_mut(name).map(|e| e.variants = variants);
     }
 
     pub fn declare_interface(&mut self, name: Symbol) {
@@ -71,6 +68,21 @@ impl TypeSystem {
                 }
             }
             s.ordered_fields = vec_fields.into_iter().map(|opt| opt.unwrap()).collect();
+        }
+    }
+    pub fn define_enum(&mut self, name: &str, variants: HashMap<String, (usize, Type)>) {
+        if let Some(e) = self.enums.get_mut(name) {
+            e.variants = variants
+                .iter()
+                .map(|(k, (idx, _))| (k.clone(), *idx))
+                .collect();
+            let mut vec_variants = vec![None; variants.len()];
+            for (k, (idx, t)) in variants {
+                if idx < vec_variants.len() {
+                    vec_variants[idx] = Some((k, t));
+                }
+            }
+            e.ordered_variants = vec_variants.into_iter().map(|opt| opt.unwrap()).collect();
         }
     }
 

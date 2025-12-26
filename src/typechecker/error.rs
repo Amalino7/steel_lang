@@ -103,6 +103,10 @@ pub enum TypeCheckerError {
         line: u32,
         message: String,
     },
+    InvalidIsUsage {
+        line: u32,
+        message: &'static str,
+    },
 }
 
 impl TypeCheckerError {
@@ -131,6 +135,7 @@ impl TypeCheckerError {
             TypeCheckerError::PositionalArgumentAfterNamed { line, .. } => *line,
             TypeCheckerError::InvalidTupleIndex { line, .. } => *line,
             TypeCheckerError::UnreachablePattern { line, .. } => *line,
+            TypeCheckerError::InvalidIsUsage { line, .. } => *line,
         }
     }
 }
@@ -325,6 +330,13 @@ impl std::fmt::Display for TypeCheckerError {
                 write!(
                     f,
                     "[line {}] Warning: Unreachable Pattern.\n {}",
+                    line, message
+                )
+            }
+            TypeCheckerError::InvalidIsUsage { line, message } => {
+                write!(
+                    f,
+                    "[line {}] Error: Invalid usage of 'is' operator.\n {}",
                     line, message
                 )
             }

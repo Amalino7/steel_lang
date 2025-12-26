@@ -95,7 +95,6 @@ impl<'a> Compiler<'a> {
                             end_jumps.push(self.emit_jump(Opcode::Jump, stmt.line));
                         }
                         MatchCase::Named {
-                            variant_name,
                             variant_idx,
                             binding,
                             body,

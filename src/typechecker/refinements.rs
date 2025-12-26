@@ -45,25 +45,25 @@ impl<'src> TypeChecker<'src> {
             ExprKind::Is {
                 target,
                 variant_idx,
-                narrowed,
             } => {
                 if let ExprKind::GetVar(_, name) = &target.kind
                     && let Type::Enum(enum_name) = &target.ty
                 {
                     let enum_def = self.sys.get_enum(enum_name).unwrap();
                     let false_path = if enum_def.variants.len() == 2 {
-                        let other = enum_def
-                            .variants
-                            .iter()
-                            .find(|&e| (*e.1).0 != *variant_idx as usize)
+                        let (_, other_ty) = enum_def
+                            .ordered_variants
+                            .get((1 - *variant_idx) as usize)
                             .unwrap();
-                        vec![(name.clone(), (*other.1).1.clone())] // TODO fix this mess
+                        vec![(name.clone(), other_ty.clone())]
                     } else {
                         vec![]
                     };
 
+                    let (_, narrowed_type) = &enum_def.ordered_variants[*variant_idx as usize];
+
                     return BranchRefinements {
-                        true_path: vec![(name.clone(), narrowed.clone())],
+                        true_path: vec![(name.clone(), narrowed_type.clone())],
                         false_path,
                     };
                 }

@@ -21,7 +21,10 @@ impl<'src> TypeChecker<'src> {
             } => {
                 let target = self.infer_expression(expression)?;
                 let Type::Enum(enum_name) = &target.ty else {
-                    todo!("Should error here")
+                    return Err(TypeCheckerError::InvalidIsUsage {
+                        line: type_name.line,
+                        message: "Is can only be used on enum types.",
+                    });
                 };
                 let enum_def = self
                     .sys
@@ -29,16 +32,18 @@ impl<'src> TypeChecker<'src> {
                     .expect("Invalid enum Type return!");
 
                 if !enum_def.variants.contains_key(type_name.lexeme) {
-                    todo!("Should error here")
+                    return Err(TypeCheckerError::InvalidIsUsage {
+                        line: type_name.line,
+                        message: "Enum variant does not exist.",
+                    });
                 }
-                let (variant_idx, narrowed_type) = enum_def.variants.get(type_name.lexeme).unwrap();
+                let variant_idx = enum_def.variants.get(type_name.lexeme).unwrap();
 
                 Ok(TypedExpr {
                     ty: Type::Boolean,
                     kind: ExprKind::Is {
                         target: Box::new(target),
                         variant_idx: *variant_idx as u16,
-                        narrowed: narrowed_type.clone(),
                     },
                     line: type_name.line,
                 })
@@ -320,16 +325,16 @@ impl<'src> TypeChecker<'src> {
                         line: callee.get_line(),
                     });
                 }
-                // Check for Enum constructor pattern
+                // Check for an Enum constructor pattern
                 if let Expr::Get { object, field, .. } = callee.as_ref() {
                     if let Expr::Variable { name } = object.as_ref() {
                         if let Some(enum_def) = self.sys.get_enum(name.lexeme) {
                             if let Some((variant_idx, variant_type)) =
-                                enum_def.variants.get(field.lexeme)
+                                enum_def.get_variant(field.lexeme)
                             {
                                 return self.handle_enum_call(
-                                    variant_type,
-                                    *variant_idx,
+                                    &variant_type,
+                                    variant_idx,
                                     inferred_args,
                                     field,
                                     enum_def,
