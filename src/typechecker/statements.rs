@@ -9,7 +9,7 @@ use crate::typechecker::type_ast::{
 use crate::typechecker::type_system::TypeSystem;
 use crate::typechecker::types::{EnumType, TupleType, Type};
 use crate::typechecker::{FunctionContext, Symbol, TypeChecker};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 impl<'src> TypeChecker<'src> {
@@ -40,6 +40,7 @@ impl<'src> TypeChecker<'src> {
                     })
                 } else {
                     let coerced_value = self.sys.verify_assignment(
+                        &mut HashMap::new(),
                         &declared_type,
                         value_node,
                         binding.get_line(),
@@ -59,8 +60,9 @@ impl<'src> TypeChecker<'src> {
             }
             Stmt::Impl {
                 interfaces,
-                name,
+                name: (name, _),
                 methods,
+                generics,
             } => {
                 let mut typed_methods = vec![];
 
@@ -72,6 +74,7 @@ impl<'src> TypeChecker<'src> {
                             params,
                             body,
                             type_,
+                            generics,
                         } => {
                             let type_info = Type::from_method_ast(type_, name, &self.sys)?;
 
@@ -257,7 +260,9 @@ impl<'src> TypeChecker<'src> {
                 params,
                 body,
                 type_,
+                generics,
             } => {
+                self.sys.push_generics(generics);
                 let raw_type = Type::from_ast(type_, &self.sys)?;
 
                 let final_type = raw_type.patch_param_names(params);
@@ -267,12 +272,15 @@ impl<'src> TypeChecker<'src> {
                         .declare(name.lexeme.into(), final_type.clone())?;
                 }
 
-                self.check_function(name, params, body, final_type, name.lexeme.into())
+                let res = self.check_function(name, params, body, final_type, name.lexeme.into());
+                self.sys.pop_n_generics(generics.len());
+                res
             }
             Stmt::Return(expr) => {
                 let return_expr = self.infer_expression(expr)?;
                 if let FunctionContext::Function(func_return_type) = self.current_function.clone() {
                     let coerced_return = self.sys.verify_assignment(
+                        &mut HashMap::new(),
                         &func_return_type,
                         return_expr,
                         expr.get_line(),
@@ -322,10 +330,10 @@ impl<'src> TypeChecker<'src> {
             Stmt::Match { value, arms } => {
                 let value_typed = self.infer_expression(value)?;
                 let enum_name = match &value_typed.ty {
-                    Type::Enum(name) => name,
+                    Type::Enum(name, generics) => name,
                     _ => {
                         return Err(TypeCheckerError::TypeMismatch {
-                            expected: Type::Enum("Any".into()),
+                            expected: Type::Enum("Any".into(), vec![].into()),
                             found: value_typed.ty,
                             line: value_typed.line,
                             message: "Match value must be an enum type.",
@@ -402,7 +410,7 @@ impl<'src> TypeChecker<'src> {
                     && explicit_name.lexeme != enum_def.name.as_ref()
                 {
                     return Err(TypeCheckerError::TypeMismatch {
-                        expected: Type::Enum(enum_def.name.clone()),
+                        expected: Type::Enum(enum_def.name.clone(), vec![].into()),
                         found: value_typed.ty.clone(),
                         line: value_typed.line,
                         message: "Match value must be an enum of the same type as the enum being matched against.",
@@ -469,13 +477,13 @@ impl<'src> TypeChecker<'src> {
     ) -> Result<TypedBinding, TypeCheckerError> {
         match binding {
             Binding::Struct { name, fields } => {
-                if let Type::Struct(struct_name) = type_to_match {
+                if let Type::Struct(struct_name, generics) = type_to_match {
                     if !(name.lexeme == struct_name.as_ref()
                         || struct_name.contains(".") && struct_name.ends_with(name.lexeme))
                     // Allows match variants
                     {
                         return Err(TypeCheckerError::TypeMismatch {
-                            expected: Type::Struct(name.lexeme.into()),
+                            expected: Type::Struct(name.lexeme.into(), vec![].into()),
                             found: type_to_match.clone(),
                             line: binding.get_line(),
                             message: "Can only use structure destructure syntax on structs",
@@ -510,7 +518,7 @@ impl<'src> TypeChecker<'src> {
                     Ok(TypedBinding::Struct(typed_fields))
                 } else {
                     Err(TypeCheckerError::TypeMismatch {
-                        expected: Type::Struct("Any".into()),
+                        expected: Type::Struct("Any".into(), vec![].into()),
                         found: type_to_match.clone(),
                         line: binding.get_line(),
                         message: "Can only use structure destructure syntax on structs",

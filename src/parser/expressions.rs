@@ -225,6 +225,14 @@ impl<'src> Parser<'src> {
                     arguments: args,
                     safe: prev.token_type == TokT::QuestionParen,
                 };
+            } else if check_token_type!(self, TokT::Dot) && check_next_token_type!(self, TokT::Less)
+            {
+                self.consume(TokT::Dot, "unreachable")?;
+                let generics = self.parse_generic_arguments()?;
+                expr = Expr::TypeSpecialization {
+                    callee: Box::new(expr),
+                    generics,
+                };
             } else if match_token_type!(self, TokT::Dot) {
                 if match_token_type!(self, TokT::Number) {
                     let idx = self.previous_token.clone();

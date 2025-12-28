@@ -13,6 +13,7 @@ pub struct FunctionType {
     pub is_vararg: bool,
     pub params: Vec<(String, Type)>,
     pub return_type: Type,
+    pub type_params: Vec<Symbol>,
 }
 
 impl PartialEq for FunctionType {
@@ -33,6 +34,7 @@ pub struct StructType {
     pub fields: HashMap<String, usize>,
     pub ordered_fields: Vec<(String, Type)>,
     pub name: Symbol,
+    pub generic_params: Vec<Symbol>,
 }
 
 impl StructType {
@@ -68,6 +70,9 @@ impl EnumType {
 pub struct TupleType {
     pub types: Vec<Type>,
 }
+
+type GenericArgs = Rc<Vec<Type>>;
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum Type {
     Nil,
@@ -75,13 +80,14 @@ pub enum Type {
     String,
     Boolean,
     Void,
+    Optional(Box<Type>),
+    Unknown,
     Function(Rc<FunctionType>),
     Tuple(Rc<TupleType>),
-    Unknown,
-    Struct(Symbol),
-    Interface(Symbol),
-    Optional(Box<Type>),
-    Enum(Symbol),
+    GenericParam(Symbol),
+    Struct(Symbol, GenericArgs),
+    Interface(Symbol, GenericArgs),
+    Enum(Symbol, GenericArgs),
     Any, //TODO replace with generic types, this is for native functions.
 }
 
@@ -101,11 +107,15 @@ impl Type {
         } else if name == "void" {
             Ok(Type::Void)
         } else if let Some(struct_type) = type_system.get_struct(name) {
-            Ok(Type::Struct(struct_type.name.clone()))
+            Ok(Type::Struct(struct_type.name.clone(), vec![].into()))
         } else if let Some(iface) = type_system.get_interface(name) {
-            Ok(Type::Interface(iface.name.clone()))
+            Ok(Type::Interface(iface.name.clone(), vec![].into()))
         } else if let Some(enum_type) = type_system.get_enum(name) {
-            Ok(Type::Enum(enum_type.name.clone()))
+            Ok(Type::Enum(enum_type.name.clone(), vec![].into())) // TODO probably shouldn't be like this
+        } else if let type_name = name.into()
+            && type_system.does_generic_exist(&type_name)
+        {
+            Ok(Type::GenericParam(type_name))
         } else {
             Err(TypeCheckerError::UndefinedType {
                 name: name.to_string(),
@@ -136,27 +146,33 @@ impl Type {
 
     pub fn get_name(&self) -> Option<&str> {
         match self {
-            Type::Interface(name) => Some(name),
+            Type::Interface(name, _) => Some(name),
             Type::Number => Some("number"),
             Type::String => Some("string"),
             Type::Boolean => Some("boolean"),
             Type::Void => Some("void"),
             Type::Function(_) => None,
             Type::Unknown => None,
-            Type::Struct(name) => Some(name),
+            Type::Struct(name, _) => Some(name),
             Type::Any => None,
             Type::Optional(_) => None,
             Type::Nil => Some("nil"),
-            Type::Enum(name) => Some(name),
+            Type::GenericParam(_) => None,
+            Type::Enum(name, _) => Some(name),
             Type::Tuple(_) => None,
         }
     }
-    pub fn new_function(params: Vec<(String, Type)>, return_type: Type) -> Type {
+    pub fn new_function(
+        params: Vec<(String, Type)>,
+        return_type: Type,
+        type_params: Vec<Symbol>,
+    ) -> Type {
         Type::Function(Rc::new(FunctionType {
             is_static: true,
             is_vararg: false,
             params,
             return_type,
+            type_params,
         }))
     }
 
@@ -169,6 +185,7 @@ impl Type {
                 .map(|e| ("_".to_string(), e))
                 .collect(),
             return_type,
+            type_params: vec![],
         }))
     }
 
@@ -184,7 +201,7 @@ impl Type {
                 }
                 Ok(Type::Tuple(Rc::new(TupleType { types: types_vec })))
             }
-            TypeAst::Named(name) => Self::from_identifier(name, type_system),
+            TypeAst::Named(name, generics) => Self::from_identifier(name, type_system),
             TypeAst::Function {
                 param_types,
                 return_type,
@@ -201,6 +218,7 @@ impl Type {
                     is_vararg: false,
                     params,
                     return_type: Self::from_ast(return_type, type_system)?,
+                    type_params: vec![],
                 })))
             }
             TypeAst::Optional(inner) => {
@@ -223,11 +241,12 @@ impl Type {
             } => {
                 let mut resolved_params = Vec::new();
 
-                let is_instance_method = if let Some(TypeAst::Named(name)) = param_types.first() {
-                    name.lexeme == "Self"
-                } else {
-                    false
-                };
+                let is_instance_method =
+                    if let Some(TypeAst::Named(name, generics)) = param_types.first() {
+                        name.lexeme == "Self"
+                    } else {
+                        false
+                    };
 
                 if is_instance_method {
                     let self_ty = Type::from_identifier(self_type, type_system)?;
@@ -247,6 +266,7 @@ impl Type {
                     is_vararg: false,
                     return_type: Self::from_ast(return_type.as_ref(), type_system)?,
                     params: resolved_params,
+                    type_params: vec![],
                 })))
             }
             _ => unreachable!(),
@@ -271,6 +291,7 @@ impl Type {
 impl Display for Type {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
+            Type::GenericParam(name) => write!(f, "{}", name),
             Type::Number => write!(f, "Number"),
             Type::Boolean => write!(f, "Bool"),
             Type::String => write!(f, "String"),
@@ -290,11 +311,30 @@ impl Display for Type {
             }
             Type::Unknown => write!(f, "Unknown"),
             Type::Any => write!(f, "any"),
-            Type::Struct(name) => write!(f, "struct {} ", name),
-            Type::Interface(name) => write!(f, "interface {} ", name),
+            Type::Struct(name, generic_args) => {
+                write!(f, "struct {} <", name,)?;
+                for generic_arg in generic_args.iter() {
+                    write!(f, "{}", generic_arg)?;
+                }
+                write!(f, ">")
+            }
+            Type::Interface(name, generic_args) => {
+                write!(f, "interface {} <", name,)?;
+                for generic_arg in generic_args.iter() {
+                    write!(f, "{}", generic_arg)?;
+                }
+                write!(f, ">")
+            }
+
+            Type::Enum(name, generic_args) => {
+                write!(f, "enum {} <", name,)?;
+                for generic_arg in generic_args.iter() {
+                    write!(f, "{}", generic_arg)?;
+                }
+                write!(f, ">")
+            }
             Type::Optional(inner) => write!(f, "Optional<{}>", inner),
             Type::Nil => write!(f, "Nil"),
-            Type::Enum(name) => write!(f, "enum {} ", name),
             Type::Tuple(types) => {
                 write!(
                     f,

@@ -136,7 +136,10 @@ impl<'src> Parser<'src> {
                 TokT::Let,
                 TokT::If,
                 TokT::While,
-                TokT::Return
+                TokT::Return,
+                TokT::Enum,
+                TokT::Struct,
+                TokT::Impl,
             ) {
                 return;
             }
@@ -251,7 +254,7 @@ mod tests {
                 lexeme: "a",
             }),
             value: *number(10.0, 2),
-            type_info: TypeAst::Named(Token::new(TokenType::Identifier, 2, "number")),
+            type_info: TypeAst::Named(Token::new(TokenType::Identifier, 2, "number"), vec![]),
         });
         expected.push(Stmt::While {
             condition: Expr::Logical {

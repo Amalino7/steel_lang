@@ -27,7 +27,7 @@ impl<'src> TypeChecker<'src> {
         // Handle Type.Variant
         if variant_types == Type::Void {
             Some(TypedExpr {
-                ty: Type::Enum(enum_def.name.clone()),
+                ty: Type::Enum(enum_def.name.clone(), vec![].into()),
                 kind: ExprKind::EnumInit {
                     enum_name: enum_def.name.clone(),
                     variant_idx: idx as u16,
@@ -55,7 +55,7 @@ impl<'src> TypeChecker<'src> {
         line: u32,
     ) -> Result<TypedExpr, TypeCheckerError> {
         let val_expr = match variant_type {
-            Type::Struct(struct_name) => {
+            Type::Struct(struct_name, generics) => {
                 let struct_def = self
                     .sys
                     .get_struct(struct_name)
@@ -70,10 +70,10 @@ impl<'src> TypeChecker<'src> {
                 )?;
 
                 TypedExpr {
-                    ty: Type::Struct(struct_name.clone()),
+                    ty: Type::Struct(struct_name.clone(), generics.clone()),
                     kind: ExprKind::StructInit {
                         name: Box::from(struct_name.to_string()),
-                        args: bound_args,
+                        args: bound_args.0,
                     },
                     line,
                 }
@@ -94,7 +94,7 @@ impl<'src> TypeChecker<'src> {
                 TypedExpr {
                     ty: variant_type.clone(),
                     kind: ExprKind::Tuple {
-                        elements: bound_args,
+                        elements: bound_args.0,
                     },
                     line,
                 }
@@ -107,11 +107,11 @@ impl<'src> TypeChecker<'src> {
                     self.sys
                         .bind_arguments(&field.lexeme, &params, inferred_args, false, line)?;
 
-                bound_args.pop().unwrap() // Safe because bind_arguments guarantees match
+                bound_args.0.pop().unwrap() // Safe because bind_arguments guarantees match
             }
         };
         Ok(TypedExpr {
-            ty: Type::Enum(enum_def.name.clone()),
+            ty: Type::Enum(enum_def.name.clone(), vec![].into()),
             line,
             kind: ExprKind::EnumInit {
                 enum_name: enum_def.name.clone(),
@@ -133,7 +133,7 @@ impl<'src> TypeChecker<'src> {
                 .lookup(mangled_name.as_str())
                 .ok_or(TypeCheckerError::UndefinedMethod {
                     line: method_name.line,
-                    found: Type::Struct(Rc::from(String::from(type_name.lexeme))),
+                    found: Type::Struct(Rc::from(String::from(type_name.lexeme)), vec![].into()),
                     method_name: method_name.lexeme.to_string(),
                 })?;
 
@@ -203,7 +203,7 @@ impl<'src> TypeChecker<'src> {
         }
 
         // Try field access
-        if let Type::Struct(name) = &actual_ty {
+        if let Type::Struct(name, generics) = &actual_ty {
             let struct_def = self
                 .sys
                 .get_struct(name)
@@ -228,12 +228,12 @@ impl<'src> TypeChecker<'src> {
         }
 
         // Interface Method Lookup
-        if let Type::Interface(name) = &actual_ty {
+        if let Type::Interface(name, generics) = &actual_ty {
             let iface = self.sys.get_interface(name).unwrap();
             let Some((idx, method_ty)) = iface.methods.get(member_token.lexeme) else {
                 return Err(TypeCheckerError::UndefinedMethod {
                     line: member_token.line,
-                    found: Type::Interface(iface.name.clone()),
+                    found: Type::Interface(iface.name.clone(), generics.clone()),
                     method_name: member_token.lexeme.to_string(),
                 });
             };
@@ -241,7 +241,7 @@ impl<'src> TypeChecker<'src> {
             let ty = match method_ty {
                 Type::Function(func) => {
                     let params = func.params.iter().skip(1).cloned().collect();
-                    Type::new_function(params, func.return_type.clone())
+                    Type::new_function(params, func.return_type.clone(), vec![])
                 }
                 other => other.clone(),
             };
@@ -298,7 +298,7 @@ impl<'src> TypeChecker<'src> {
                 }
 
                 let params = func.params.iter().skip(1).cloned().collect();
-                Type::new_function(params, return_type)
+                Type::new_function(params, return_type, vec![])
             }
             ty => ty.clone(),
         };

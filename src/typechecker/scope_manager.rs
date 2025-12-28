@@ -150,7 +150,7 @@ impl ScopeManager {
                 return None;
             }
 
-            return if let Type::Enum(_) = &ctx.type_info {
+            return if let Type::Enum(_, _) = &ctx.type_info {
                 let name = ctx.name.clone();
                 self.declare(name.clone(), new_type).unwrap(); // Shouldn't fail
                 let (_, new_resolved) = self.lookup(name.as_ref()).unwrap();

@@ -1618,5 +1618,45 @@ mod tests {
             assert(p.x, 1);
             assert(p.y, 2);
             "#;
+        execute_source(src, false, "parse", true);
+    }
+    #[test]
+    fn test_generic_function() {
+        let src = r#"
+        func identity<T>(stg: T): T {
+            return stg;
+        }
+        func first<T,U>(pair: (T,U)): T {
+            return pair.0;
+        }
+        func second<T>(pair: (T,T)): T {
+            return pair.1;
+        }
+
+        let num = identity(3);
+        let pair = (1, "str");
+        println(num + 2);
+
+        let a = first(pair);
+        let str = second((1, 2));
+        // assert(str + "1", "str1");
+        assert(a + 2, 3);
+        "#;
+        execute_source(src, false, "run", true);
+    }
+    #[test]
+    fn test_complex_generic() {
+        let src = r#"
+        struct Box<T> {top: T}
+
+        impl<T> Box<T> {
+            func new(arg: T): Box<T> {
+                return Box(top: T);
+            }
+        }
+        let box = Box.<int>.new(10);
+        assert(box.top + 12, 22);
+        "#;
+        execute_source(src, false, "parse", true);
     }
 }

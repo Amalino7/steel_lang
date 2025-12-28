@@ -22,7 +22,7 @@ pub fn get_natives() -> Vec<NativeDef> {
         },
         NativeDef {
             name: "panic",
-            type_: Type::new_function(vec![("msg".into(), Type::Any)], Type::Void),
+            type_: Type::new_function(vec![("msg".into(), Type::Any)], Type::Void, vec![]),
             func: |args| {
                 // TODO add language level error handling
                 panic!("{}", args[0]);
@@ -43,6 +43,7 @@ pub fn get_natives() -> Vec<NativeDef> {
             type_: Type::new_function(
                 vec![("left".into(), Type::Any), ("right".into(), Type::Any)],
                 Type::Void,
+                vec![],
             ),
             func: |args| {
                 if args[0] != args[1] {
@@ -53,7 +54,7 @@ pub fn get_natives() -> Vec<NativeDef> {
         },
         NativeDef {
             name: "clock",
-            type_: Type::new_function(vec![], Type::Number),
+            type_: Type::new_function(vec![], Type::Number, vec![]),
             func: |_| {
                 use std::time::{SystemTime, UNIX_EPOCH};
                 let start = SystemTime::now();

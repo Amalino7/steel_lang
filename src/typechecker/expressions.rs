@@ -5,8 +5,10 @@ use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::error::TypeCheckerError::AssignmentToCapturedVariable;
 use crate::typechecker::scope_manager::ScopeType;
 use crate::typechecker::type_ast::{BinaryOp, ExprKind, LogicalOp, TypedExpr, UnaryOp};
+use crate::typechecker::type_system::TypeSystem;
 use crate::typechecker::types::{StructType, TupleType, Type};
 use crate::typechecker::TypeChecker;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 impl<'src> TypeChecker<'src> {
@@ -15,12 +17,15 @@ impl<'src> TypeChecker<'src> {
         expr: &Expr<'src>,
     ) -> Result<TypedExpr, TypeCheckerError> {
         match expr {
+            Expr::TypeSpecialization { .. } => {
+                todo!()
+            }
             Expr::Is {
                 expression,
                 type_name,
             } => {
                 let target = self.infer_expression(expression)?;
-                let Type::Enum(enum_name) = &target.ty else {
+                let Type::Enum(enum_name, _) = &target.ty else {
                     return Err(TypeCheckerError::InvalidIsUsage {
                         line: type_name.line,
                         message: "Is can only be used on enum types.",
@@ -162,9 +167,12 @@ impl<'src> TypeChecker<'src> {
                         });
                     }
 
-                    let coerced_value =
-                        self.sys
-                            .verify_assignment(&ctx.type_info, typed_value, identifier.line)?;
+                    let coerced_value = self.sys.verify_assignment(
+                        &mut HashMap::new(),
+                        &ctx.type_info,
+                        typed_value,
+                        identifier.line,
+                    )?;
 
                     Ok(TypedExpr {
                         ty: coerced_value.ty.clone(),
@@ -317,10 +325,10 @@ impl<'src> TypeChecker<'src> {
                     )?;
 
                     return Ok(TypedExpr {
-                        ty: Type::Struct(owned_name.clone()),
+                        ty: Type::Struct(owned_name.clone(), vec![].into()),
                         kind: ExprKind::StructInit {
                             name: Box::from(owned_name.to_string()),
-                            args: bound_args,
+                            args: bound_args.0,
                         },
                         line: callee.get_line(),
                     });
@@ -374,7 +382,7 @@ impl<'src> TypeChecker<'src> {
                 // Check for Normal Function Call
                 match lookup_type {
                     Type::Function(func) => {
-                        let bound_args = self.sys.bind_arguments(
+                        let (bound_args, map) = self.sys.bind_arguments(
                             "function",
                             &func.params,
                             inferred_args,
@@ -387,6 +395,7 @@ impl<'src> TypeChecker<'src> {
                         } else {
                             func.return_type.clone()
                         };
+                        let ret_type = TypeSystem::generic_to_concrete(ret_type, &map);
 
                         Ok(TypedExpr {
                             ty: ret_type,
@@ -471,6 +480,7 @@ impl<'src> TypeChecker<'src> {
                             index: idx,
                             safe: *safe,
                             value: Box::new(self.sys.verify_assignment(
+                                &mut HashMap::new(),
                                 &tuple_type.types[idx as usize],
                                 value,
                                 field.line,
@@ -480,7 +490,7 @@ impl<'src> TypeChecker<'src> {
                     });
                 }
 
-                if let Type::Struct(struct_def) = type_ {
+                if let Type::Struct(struct_def, generics) = type_ {
                     let struct_def = self
                         .sys
                         .get_struct(&struct_def)
@@ -547,8 +557,12 @@ impl<'src> TypeChecker<'src> {
                 line: field.line,
             }),
             Some((id, field_type)) => {
-                self.sys
-                    .verify_assignment(&field_type, field_value.clone(), field.line)?;
+                self.sys.verify_assignment(
+                    &mut HashMap::new(),
+                    &field_type,
+                    field_value.clone(),
+                    field.line,
+                )?;
                 Ok((id, field_type))
             }
         }

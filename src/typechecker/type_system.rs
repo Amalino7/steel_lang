@@ -1,14 +1,17 @@
+use crate::token::Token;
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::type_ast::{ExprKind, TypedExpr};
-use crate::typechecker::types::{EnumType, InterfaceType, StructType, Type};
+use crate::typechecker::types::{EnumType, InterfaceType, StructType, TupleType, Type};
 use crate::typechecker::Symbol;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 pub struct TypeSystem {
     structs: HashMap<Symbol, StructType>,
     interfaces: HashMap<Symbol, InterfaceType>,
     impls: HashMap<(Symbol, Symbol), u32>,
     enums: HashMap<Symbol, EnumType>,
+    active_generics: Vec<Symbol>,
 }
 
 impl TypeSystem {
@@ -18,7 +21,22 @@ impl TypeSystem {
             interfaces: HashMap::new(),
             impls: HashMap::new(),
             enums: HashMap::new(),
+            active_generics: Vec::new(),
         }
+    }
+
+    pub fn push_generics(&mut self, generics: &[Token]) {
+        generics
+            .iter()
+            .for_each(|e| self.active_generics.push(e.lexeme.into()));
+    }
+
+    pub fn pop_n_generics(&mut self, count: usize) {
+        self.active_generics
+            .truncate(self.active_generics.len() - count);
+    }
+    pub fn does_generic_exist(&self, name: &Symbol) -> bool {
+        self.active_generics.contains(name)
     }
 
     // Only the name exists
@@ -29,6 +47,7 @@ impl TypeSystem {
                 name,
                 fields: HashMap::new(),
                 ordered_fields: vec![],
+                generic_params: vec![],
             },
         );
     }
@@ -143,24 +162,130 @@ impl TypeSystem {
             false
         }
     }
+
+    fn resolve_generics(
+        expected_ty: &Type,
+        generics_map: &mut HashMap<Symbol, Type>,
+        provided: &Type,
+    ) -> bool {
+        match expected_ty {
+            Type::Nil | Type::Number | Type::String | Type::Void | Type::Boolean => {
+                if expected_ty == provided { true } else { false }
+            }
+            Type::Unknown | Type::Any => true,
+            Type::Optional(expected) => {
+                if provided == &Type::Nil {
+                    true
+                } else if let Type::Optional(provided) = provided {
+                    Self::resolve_generics(expected, generics_map, provided)
+                } else {
+                    false
+                }
+            }
+            Type::Function(expected_inner) => {
+                if let Type::Function(provided_inner) = provided {
+                    let mut eq = true;
+                    for (expected_param, provided_param) in expected_inner
+                        .params
+                        .iter()
+                        .zip(provided_inner.params.iter())
+                    {
+                        eq &= Self::resolve_generics(
+                            &expected_param.1,
+                            generics_map,
+                            &provided_param.1,
+                        )
+                    }
+                    eq &= Self::resolve_generics(
+                        &expected_inner.return_type,
+                        generics_map,
+                        &provided_inner.return_type,
+                    );
+                    eq
+                } else {
+                    false
+                }
+            }
+            Type::Tuple(expected_inner) => {
+                if let Type::Tuple(provided_inner) = provided {
+                    let mut eq = true;
+                    for (expected_param, provided_param) in
+                        expected_inner.types.iter().zip(provided_inner.types.iter())
+                    {
+                        eq &= Self::resolve_generics(expected_param, generics_map, &provided_param);
+                    }
+                    eq
+                } else {
+                    false
+                }
+            }
+            Type::GenericParam(name) => {
+                if let Some(new_ty) = generics_map.get(name) {
+                    if let Type::GenericParam(mapped_name) = new_ty
+                        && mapped_name == name
+                    {
+                        let resolved_provided =
+                            Self::generic_to_concrete(provided.clone(), generics_map);
+                        return new_ty == &resolved_provided;
+                    }
+                    Self::resolve_generics(&new_ty.clone(), generics_map, provided)
+                } else {
+                    generics_map.insert(name.clone(), provided.clone());
+                    true
+                }
+            }
+            Type::Struct(name, args) => {
+                if let Type::Struct(provided_name, provided_args) = provided {
+                    if name != provided_name {
+                        return false;
+                    }
+                    args.iter()
+                        .zip(provided_args.iter())
+                        .all(|(e, p)| Self::resolve_generics(e, generics_map, p))
+                } else {
+                    false
+                }
+            }
+            Type::Interface(name, args) => {
+                if let Type::Interface(provided_name, provided_args) = provided {
+                    if name != provided_name {
+                        return false;
+                    }
+                    args.iter()
+                        .zip(provided_args.iter())
+                        .all(|(e, p)| Self::resolve_generics(e, generics_map, p))
+                } else {
+                    false
+                }
+            }
+            Type::Enum(name, args) => {
+                if let Type::Enum(provided_name, provided_args) = provided {
+                    if name != provided_name {
+                        return false;
+                    }
+                    args.iter()
+                        .zip(provided_args.iter())
+                        .all(|(e, p)| Self::resolve_generics(e, generics_map, p))
+                } else {
+                    false
+                }
+            }
+        }
+    }
     pub fn verify_assignment(
         &self,
+        generics_map: &mut HashMap<Symbol, Type>,
         expected_type: &Type,
         expr: TypedExpr,
         line: u32,
     ) -> Result<TypedExpr, TypeCheckerError> {
-        if expected_type == &Type::Any {
+        let are_equal = Self::resolve_generics(expected_type, generics_map, &expr.ty);
+
+        if are_equal {
             return Ok(expr);
-        }
-        if let Type::Optional(_) = expected_type {
-            if expr.ty == Type::Nil {
-                return Ok(expr);
-            }
         }
 
-        if *expected_type == expr.ty {
-            return Ok(expr);
-        }
+        // TODO rethink interface cast logic
 
         let expected_type = if let Type::Optional(inner) = expected_type {
             inner
@@ -172,10 +297,12 @@ impl TypeSystem {
             return Ok(expr);
         }
 
-        if let (Type::Interface(iface_name), Some(name)) = (expected_type, expr.ty.get_name()) {
+        if let (Type::Interface(iface_name, generics), Some(name)) =
+            (expected_type, expr.ty.get_name())
+        {
             if let Some(idx) = self.impls.get(&(name.into(), iface_name.clone())) {
                 return Ok(TypedExpr {
-                    ty: Type::Interface(iface_name.clone()),
+                    ty: Type::Interface(iface_name.clone(), generics.clone()),
                     line: expr.line,
                     kind: ExprKind::InterfaceUpcast {
                         expr: Box::new(expr),
@@ -222,13 +349,15 @@ impl TypeSystem {
         args: Vec<(Option<&str>, TypedExpr, u32)>,
         is_vararg: bool,
         call_line: u32,
-    ) -> Result<Vec<TypedExpr>, TypeCheckerError> {
+    ) -> Result<(Vec<TypedExpr>, HashMap<Symbol, Type>), TypeCheckerError> {
         let fixed_len = params.len();
         let mut fixed: Vec<Option<TypedExpr>> = vec![None; fixed_len];
         let mut used = vec![false; fixed_len];
         let mut extras = Vec::new(); // Used for varargs
         let mut pos_cursor = 0;
         let mut seen_named = false;
+
+        let mut generics_map = HashMap::new();
 
         for (label, expr, line) in args {
             match label {
@@ -245,7 +374,8 @@ impl TypeSystem {
                     }
 
                     let expected = &params[idx].1;
-                    let coerced = self.verify_assignment(expected, expr, line)?;
+                    let coerced =
+                        self.verify_assignment(&mut generics_map, expected, expr, line)?;
                     fixed[idx] = Some(coerced);
                     used[idx] = true;
                 }
@@ -265,12 +395,14 @@ impl TypeSystem {
 
                     if pos_cursor < fixed_len {
                         let expected = &params[pos_cursor].1;
-                        let coerced = self.verify_assignment(expected, expr, line)?;
+                        let coerced =
+                            self.verify_assignment(&mut generics_map, expected, expr, line)?;
                         fixed[pos_cursor] = Some(coerced);
                         used[pos_cursor] = true;
                         pos_cursor += 1;
                     } else if is_vararg {
                         extras.push(self.verify_assignment(
+                            &mut generics_map,
                             &params[pos_cursor - 1].1,
                             expr,
                             line,
@@ -298,7 +430,56 @@ impl TypeSystem {
         }
 
         result.extend(extras);
-        Ok(result)
+        Ok((result, generics_map))
+    }
+
+    pub fn generic_to_concrete(generic_ty: Type, generics_map: &HashMap<Symbol, Type>) -> Type {
+        match generic_ty {
+            Type::Nil
+            | Type::Number
+            | Type::String
+            | Type::Boolean
+            | Type::Void
+            | Type::Unknown
+            | Type::Any => generic_ty,
+            Type::Optional(inner) => {
+                Type::Optional(Box::new(Self::generic_to_concrete(*inner, generics_map)))
+            }
+            Type::Function(_) => generic_ty,
+            Type::Tuple(types) => {
+                let new_types = types
+                    .types
+                    .iter()
+                    .map(|t| Self::generic_to_concrete(t.clone(), generics_map))
+                    .collect();
+                Type::Tuple(Rc::new(TupleType { types: new_types }))
+            }
+            Type::GenericParam(generic) => {
+                let actual = generics_map.get(&generic).unwrap(); // TODO ambiguous generic error
+                actual.clone()
+            }
+            Type::Struct(name, args) => {
+                let resolved_args = args
+                    .iter()
+                    .map(|t| Self::generic_to_concrete(t.clone(), generics_map))
+                    .collect();
+                Type::Struct(name, Rc::new(resolved_args))
+            }
+            Type::Interface(name, args) => {
+                let resolved_args = args
+                    .iter()
+                    .map(|t| Self::generic_to_concrete(t.clone(), generics_map))
+                    .collect();
+                Type::Interface(name, Rc::new(resolved_args))
+            }
+            Type::Enum(name, args) => {
+                let resolved_args = args
+                    .iter()
+                    .map(|t| Self::generic_to_concrete(t.clone(), generics_map))
+                    .collect();
+                Type::Enum(name, Rc::new(resolved_args))
+            }
+        }
     }
 
     fn resolve_named_arg(
