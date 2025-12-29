@@ -1649,10 +1649,30 @@ mod tests {
         let src = r#"
         struct Box<T> {top: T}
 
+        func square(a: number): number{
+            return a * a;
+        }
+        func unwrap(a: number?): number {
+            return a!;
+        }
+
+        func map<T,U> (box: Box<T>, transform: func(T): U): Box<U> {
+            let res = transform(box.top);
+            return Box(top: res);
+        }
+
         let box = Box(19);
         let other_box = Box("str");
-        
-        // box = other_box; not legal
+        box = map(box, square);
+
+        let new_box: Box<number?> = Box(nil);
+        new_box.top = 10;
+        let good = map(new_box, unwrap);
+        assert(good.top, 10);
+        println(good);
+        println(box.top);
+        assert(box.top, 361);
+        // box = other_box; //not legal
         box = Box(10);
         assert(box.top + 12, 22);
         "#;

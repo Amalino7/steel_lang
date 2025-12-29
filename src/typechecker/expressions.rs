@@ -6,7 +6,7 @@ use crate::typechecker::error::TypeCheckerError::AssignmentToCapturedVariable;
 use crate::typechecker::scope_manager::ScopeType;
 use crate::typechecker::type_ast::{BinaryOp, ExprKind, LogicalOp, TypedExpr, UnaryOp};
 use crate::typechecker::type_system::TypeSystem;
-use crate::typechecker::types::{generics_to_map, StructType, TupleType, Type};
+use crate::typechecker::types::{generics_to_map, GenericArgs, StructType, TupleType, Type};
 use crate::typechecker::{Symbol, TypeChecker};
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -333,7 +333,6 @@ impl<'src> TypeChecker<'src> {
                         .map(|name| map.get(name).unwrap().clone())
                         .collect();
                     // TODO check for unknown types.
-
                     return Ok(TypedExpr {
                         ty: Type::Struct(owned_name.clone(), Rc::new(type_args)),
                         kind: ExprKind::StructInit {
@@ -510,7 +509,7 @@ impl<'src> TypeChecker<'src> {
                         .expect("Should have errored earlier");
 
                     let (field_idx, field_type) =
-                        self.check_field_type(&struct_def, field, &value)?;
+                        self.check_field_type(&struct_def, field, &value, generics)?;
 
                     Ok(TypedExpr {
                         ty: field_type,
@@ -557,6 +556,7 @@ impl<'src> TypeChecker<'src> {
         struct_def: &StructType,
         field: &Token,
         field_value: &TypedExpr,
+        generic_args: GenericArgs,
     ) -> Result<(usize, Type), TypeCheckerError> {
         let field_type = struct_def
             .fields
@@ -569,7 +569,17 @@ impl<'src> TypeChecker<'src> {
                 field_name: field.lexeme.to_string(),
                 line: field.line,
             }),
-            Some((id, field_type)) => {
+            Some((id, mut field_type)) => {
+                if let Type::GenericParam(gen_name) = field_type {
+                    let mut sol = 0;
+                    for (idx, name) in struct_def.generic_params.iter().enumerate() {
+                        if *name == gen_name {
+                            sol = idx;
+                        }
+                    }
+                    field_type = generic_args[sol].clone();
+                }
+
                 self.sys.verify_assignment(
                     &mut HashMap::new(),
                     &field_type,

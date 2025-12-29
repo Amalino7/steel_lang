@@ -18,7 +18,11 @@ impl<'src> TypeChecker<'src> {
                 } => {
                     self.sys.push_generics(generics);
 
-                    let type_info = Type::from_ast(type_info, &self.sys);
+                    let type_info = Type::from_function_ast(
+                        type_info,
+                        &self.sys,
+                        self.sys.get_active_generics(),
+                    );
                     self.sys.pop_n_generics(generics.len());
                     self.declare_function(name.lexeme.into(), type_info, params);
                 }

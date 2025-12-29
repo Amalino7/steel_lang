@@ -463,8 +463,14 @@ impl TypeSystem {
                 Type::Tuple(Rc::new(TupleType { types: new_types }))
             }
             Type::GenericParam(generic) => {
-                let actual = generics_map.get(&generic).unwrap(); // TODO ambiguous generic error
-                actual.clone()
+                if let Some(new_type) = generics_map.get(&generic) {
+                    if new_type == &Type::Unknown {
+                        panic!("Generic type not found") // TODO error handling
+                    }
+                    new_type.clone()
+                } else {
+                    Type::GenericParam(generic)
+                }
             }
             Type::Struct(name, args) => {
                 let resolved_args = args

@@ -78,7 +78,7 @@ pub struct TupleType {
     pub types: Vec<Type>,
 }
 
-type GenericArgs = Rc<Vec<Type>>;
+pub type GenericArgs = Rc<Vec<Type>>;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Type {
@@ -102,7 +102,14 @@ impl Type {
     pub fn from_identifier(
         name: &Token,
         type_system: &TypeSystem,
+        generics: &[TypeAst],
     ) -> Result<Type, TypeCheckerError> {
+        let generics: Result<Vec<_>, TypeCheckerError> = generics
+            .iter()
+            .map(|e| Self::from_ast(e, type_system))
+            .collect();
+        let generics = generics?;
+
         let line = name.line;
         let name = name.lexeme;
         if name == "number" {
@@ -114,11 +121,11 @@ impl Type {
         } else if name == "void" {
             Ok(Type::Void)
         } else if let Some(struct_type) = type_system.get_struct(name) {
-            Ok(Type::Struct(struct_type.name.clone(), vec![].into()))
+            Ok(Type::Struct(struct_type.name.clone(), Rc::new(generics)))
         } else if let Some(iface) = type_system.get_interface(name) {
-            Ok(Type::Interface(iface.name.clone(), vec![].into()))
+            Ok(Type::Interface(iface.name.clone(), Rc::new(generics)))
         } else if let Some(enum_type) = type_system.get_enum(name) {
-            Ok(Type::Enum(enum_type.name.clone(), vec![].into())) // TODO probably shouldn't be like this
+            Ok(Type::Enum(enum_type.name.clone(), Rc::new(generics))) // TODO probably shouldn't be like this
         } else if let type_name = name.into()
             && type_system.does_generic_exist(&type_name)
         {
@@ -208,7 +215,7 @@ impl Type {
                 }
                 Ok(Type::Tuple(Rc::new(TupleType { types: types_vec })))
             }
-            TypeAst::Named(name, generics) => Self::from_identifier(name, type_system),
+            TypeAst::Named(name, generics) => Self::from_identifier(name, type_system, generics),
             TypeAst::Function {
                 param_types,
                 return_type,
@@ -225,7 +232,7 @@ impl Type {
                     is_vararg: false,
                     params,
                     return_type: Self::from_ast(return_type, type_system)?,
-                    type_params: type_system.get_active_generics(),
+                    type_params: vec![],
                 })))
             }
             TypeAst::Optional(inner) => {
@@ -234,6 +241,19 @@ impl Type {
             }
             TypeAst::Infer => Ok(Type::Unknown),
         }
+    }
+
+    pub fn from_function_ast(
+        type_ast: &TypeAst<'_>,
+        type_system: &TypeSystem,
+        type_params: Vec<Symbol>,
+    ) -> Result<Type, TypeCheckerError> {
+        let mut a = Self::from_ast(type_ast, type_system)?;
+        if let Type::Function(func_type) = &mut a {
+            let inner = Rc::get_mut(func_type).unwrap();
+            inner.type_params = type_params;
+        }
+        Ok(a)
     }
 
     pub fn from_method_ast(
@@ -256,7 +276,7 @@ impl Type {
                     };
 
                 if is_instance_method {
-                    let self_ty = Type::from_identifier(self_type, type_system)?;
+                    let self_ty = Type::from_identifier(self_type, type_system, &vec![])?; // TODO add generics
                     resolved_params.push(("self".to_string(), self_ty));
                 }
 

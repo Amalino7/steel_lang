@@ -263,7 +263,8 @@ impl<'src> TypeChecker<'src> {
                 generics,
             } => {
                 self.sys.push_generics(generics);
-                let raw_type = Type::from_ast(type_, &self.sys)?;
+                let raw_type =
+                    Type::from_function_ast(type_, &self.sys, self.sys.get_active_generics())?;
 
                 let final_type = raw_type.patch_param_names(params);
 
