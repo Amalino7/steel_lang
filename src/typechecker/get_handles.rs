@@ -4,6 +4,7 @@ use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::type_ast::{ExprKind, TypedExpr};
 use crate::typechecker::types::{EnumType, Type};
 use crate::typechecker::TypeChecker;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 impl<'src> TypeChecker<'src> {
@@ -63,6 +64,7 @@ impl<'src> TypeChecker<'src> {
 
                 let bound_args = self.sys.bind_arguments(
                     &struct_name,
+                    &mut HashMap::new(), //TODO use map
                     &struct_def.ordered_fields,
                     inferred_args,
                     false,
@@ -73,7 +75,7 @@ impl<'src> TypeChecker<'src> {
                     ty: Type::Struct(struct_name.clone(), generics.clone()),
                     kind: ExprKind::StructInit {
                         name: Box::from(struct_name.to_string()),
-                        args: bound_args.0,
+                        args: bound_args,
                     },
                     line,
                 }
@@ -87,14 +89,19 @@ impl<'src> TypeChecker<'src> {
                     .map(|(i, t)| (i.to_string(), t.clone()))
                     .collect();
 
-                let bound_args =
-                    self.sys
-                        .bind_arguments(&field.lexeme, &params, inferred_args, false, line)?;
+                let bound_args = self.sys.bind_arguments(
+                    &field.lexeme,
+                    &mut HashMap::new(), // TODO use map
+                    &params,
+                    inferred_args,
+                    false,
+                    line,
+                )?;
 
                 TypedExpr {
                     ty: variant_type.clone(),
                     kind: ExprKind::Tuple {
-                        elements: bound_args.0,
+                        elements: bound_args,
                     },
                     line,
                 }
@@ -103,11 +110,16 @@ impl<'src> TypeChecker<'src> {
                 // One argument
                 let params = vec![("value".to_string(), variant_type.clone())];
 
-                let mut bound_args =
-                    self.sys
-                        .bind_arguments(&field.lexeme, &params, inferred_args, false, line)?;
+                let mut bound_args = self.sys.bind_arguments(
+                    &field.lexeme,
+                    &mut HashMap::new(),
+                    &params,
+                    inferred_args,
+                    false,
+                    line,
+                )?;
 
-                bound_args.0.pop().unwrap() // Safe because bind_arguments guarantees match
+                bound_args.pop().unwrap() // Safe because bind_arguments guarantees match
             }
         };
         Ok(TypedExpr {
@@ -209,7 +221,16 @@ impl<'src> TypeChecker<'src> {
                 .get_struct(name)
                 .expect("Struct type missing definition");
 
-            if let Some((idx, field_type)) = struct_def.get_field(member_token.lexeme) {
+            if let Some((idx, mut field_type)) = struct_def.get_field(member_token.lexeme) {
+                if let Type::GenericParam(gen_name) = field_type {
+                    let mut sol = 0;
+                    for (idx, name) in struct_def.generic_params.iter().enumerate() {
+                        if *name == gen_name {
+                            sol = idx;
+                        }
+                    }
+                    field_type = generics[sol].clone();
+                }
                 let mut expr = TypedExpr {
                     ty: field_type.clone(),
                     kind: ExprKind::GetField {

@@ -1618,7 +1618,7 @@ mod tests {
             assert(p.x, 1);
             assert(p.y, 2);
             "#;
-        execute_source(src, false, "parse", true);
+        execute_source(src, false, "run", true);
     }
     #[test]
     fn test_generic_function() {
@@ -1641,6 +1641,20 @@ mod tests {
         let str = second((1, 2));
         // assert(str + "1", "str1");
         assert(a + 2, 3);
+        "#;
+        execute_source(src, false, "run", true);
+    }
+    #[test]
+    fn test_simple_generic_struct() {
+        let src = r#"
+        struct Box<T> {top: T}
+
+        let box = Box(19);
+        let other_box = Box("str");
+        
+        // box = other_box; not legal
+        box = Box(10);
+        assert(box.top + 12, 22);
         "#;
         execute_source(src, false, "run", true);
     }

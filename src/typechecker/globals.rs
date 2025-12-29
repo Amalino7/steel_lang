@@ -19,8 +19,8 @@ impl<'src> TypeChecker<'src> {
                     self.sys.push_generics(generics);
 
                     let type_info = Type::from_ast(type_info, &self.sys);
-                    self.declare_function(name.lexeme.into(), type_info, params);
                     self.sys.pop_n_generics(generics.len());
+                    self.declare_function(name.lexeme.into(), type_info, params);
                 }
                 Stmt::Impl {
                     interfaces,
@@ -123,8 +123,10 @@ impl<'src> TypeChecker<'src> {
                 generics,
             } = stmt
             {
+                self.sys.push_generics(generics);
                 let field_types = self.define_struct_fields(fields);
-                self.sys.define_struct(name.lexeme, field_types);
+                self.sys.define_struct(name.lexeme, field_types, generics);
+                self.sys.pop_n_generics(generics.len());
             }
         }
     }
@@ -155,7 +157,7 @@ impl<'src> TypeChecker<'src> {
                             let full_name: Symbol =
                                 format!("{}.{}", name.lexeme, v_name.lexeme).into();
                             self.sys.declare_struct(full_name.clone());
-                            self.sys.define_struct(&full_name, field_types);
+                            self.sys.define_struct(&full_name, field_types, generics);
                             Type::Struct(full_name, vec![].into())
                         }
                         VariantType::Unit => Type::Void,

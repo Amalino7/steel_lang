@@ -6,8 +6,8 @@ use crate::typechecker::error::TypeCheckerError::AssignmentToCapturedVariable;
 use crate::typechecker::scope_manager::ScopeType;
 use crate::typechecker::type_ast::{BinaryOp, ExprKind, LogicalOp, TypedExpr, UnaryOp};
 use crate::typechecker::type_system::TypeSystem;
-use crate::typechecker::types::{StructType, TupleType, Type};
-use crate::typechecker::TypeChecker;
+use crate::typechecker::types::{generics_to_map, StructType, TupleType, Type};
+use crate::typechecker::{Symbol, TypeChecker};
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -315,20 +315,30 @@ impl<'src> TypeChecker<'src> {
                 if let Expr::Variable { name } = &**callee
                     && let Some(struct_def) = self.sys.get_struct(&name.lexeme)
                 {
+                    let mut map: HashMap<Symbol, Type> =
+                        generics_to_map(&struct_def.generic_params);
                     let owned_name = struct_def.name.clone();
                     let bound_args = self.sys.bind_arguments(
                         &name.lexeme,
+                        &mut map,
                         &struct_def.ordered_fields,
                         inferred_args,
                         false,
                         callee.get_line(),
                     )?;
 
+                    let type_args = struct_def
+                        .generic_params
+                        .iter()
+                        .map(|name| map.get(name).unwrap().clone())
+                        .collect();
+                    // TODO check for unknown types.
+
                     return Ok(TypedExpr {
-                        ty: Type::Struct(owned_name.clone(), vec![].into()),
+                        ty: Type::Struct(owned_name.clone(), Rc::new(type_args)),
                         kind: ExprKind::StructInit {
                             name: Box::from(owned_name.to_string()),
-                            args: bound_args.0,
+                            args: bound_args,
                         },
                         line: callee.get_line(),
                     });
@@ -382,8 +392,10 @@ impl<'src> TypeChecker<'src> {
                 // Check for Normal Function Call
                 match lookup_type {
                     Type::Function(func) => {
-                        let (bound_args, map) = self.sys.bind_arguments(
+                        let mut map: HashMap<Symbol, Type> = generics_to_map(&func.type_params);
+                        let bound_args = self.sys.bind_arguments(
                             "function",
+                            &mut map,
                             &func.params,
                             inferred_args,
                             func.is_vararg,
@@ -395,6 +407,7 @@ impl<'src> TypeChecker<'src> {
                         } else {
                             func.return_type.clone()
                         };
+                        //TODO check for still unknown types
                         let ret_type = TypeSystem::generic_to_concrete(ret_type, &map);
 
                         Ok(TypedExpr {

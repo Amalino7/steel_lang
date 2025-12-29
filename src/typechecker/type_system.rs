@@ -30,6 +30,9 @@ impl TypeSystem {
             .iter()
             .for_each(|e| self.active_generics.push(e.lexeme.into()));
     }
+    pub fn get_active_generics(&self) -> Vec<Symbol> {
+        self.active_generics.clone()
+    }
 
     pub fn pop_n_generics(&mut self, count: usize) {
         self.active_generics
@@ -73,13 +76,19 @@ impl TypeSystem {
         );
     }
 
-    pub fn define_struct(&mut self, name: &str, fields_map: HashMap<String, (usize, Type)>) {
+    pub fn define_struct(
+        &mut self,
+        name: &str,
+        fields_map: HashMap<String, (usize, Type)>,
+        generics: &[Token],
+    ) {
         if let Some(s) = self.structs.get_mut(name) {
             s.fields = fields_map
                 .iter()
                 .map(|(k, (idx, _))| (k.clone(), *idx))
                 .collect();
 
+            s.generic_params = generics.iter().map(|g| g.lexeme.into()).collect();
             let mut vec_fields = vec![None; fields_map.len()];
             for (k, (idx, t)) in fields_map {
                 if idx < vec_fields.len() {
@@ -220,18 +229,20 @@ impl TypeSystem {
                 }
             }
             Type::GenericParam(name) => {
+                // If it exists in map it must be inferred
                 if let Some(new_ty) = generics_map.get(name) {
-                    if let Type::GenericParam(mapped_name) = new_ty
-                        && mapped_name == name
-                    {
-                        let resolved_provided =
-                            Self::generic_to_concrete(provided.clone(), generics_map);
-                        return new_ty == &resolved_provided;
+                    if new_ty == &Type::Unknown {
+                        generics_map.insert(name.clone(), provided.clone());
+                        true
+                    } else {
+                        Self::resolve_generics(&new_ty.clone(), generics_map, provided)
                     }
-                    Self::resolve_generics(&new_ty.clone(), generics_map, provided)
                 } else {
-                    generics_map.insert(name.clone(), provided.clone());
-                    true
+                    if let Type::GenericParam(provided_name) = provided {
+                        name == provided_name
+                    } else {
+                        false
+                    }
                 }
             }
             Type::Struct(name, args) => {
@@ -345,19 +356,18 @@ impl TypeSystem {
     pub fn bind_arguments(
         &self,
         callee_name: &str,
+        generics_map: &mut HashMap<Symbol, Type>,
         params: &[(String, Type)],
         args: Vec<(Option<&str>, TypedExpr, u32)>,
         is_vararg: bool,
         call_line: u32,
-    ) -> Result<(Vec<TypedExpr>, HashMap<Symbol, Type>), TypeCheckerError> {
+    ) -> Result<Vec<TypedExpr>, TypeCheckerError> {
         let fixed_len = params.len();
         let mut fixed: Vec<Option<TypedExpr>> = vec![None; fixed_len];
         let mut used = vec![false; fixed_len];
         let mut extras = Vec::new(); // Used for varargs
         let mut pos_cursor = 0;
         let mut seen_named = false;
-
-        let mut generics_map = HashMap::new();
 
         for (label, expr, line) in args {
             match label {
@@ -374,8 +384,7 @@ impl TypeSystem {
                     }
 
                     let expected = &params[idx].1;
-                    let coerced =
-                        self.verify_assignment(&mut generics_map, expected, expr, line)?;
+                    let coerced = self.verify_assignment(generics_map, expected, expr, line)?;
                     fixed[idx] = Some(coerced);
                     used[idx] = true;
                 }
@@ -395,14 +404,13 @@ impl TypeSystem {
 
                     if pos_cursor < fixed_len {
                         let expected = &params[pos_cursor].1;
-                        let coerced =
-                            self.verify_assignment(&mut generics_map, expected, expr, line)?;
+                        let coerced = self.verify_assignment(generics_map, expected, expr, line)?;
                         fixed[pos_cursor] = Some(coerced);
                         used[pos_cursor] = true;
                         pos_cursor += 1;
                     } else if is_vararg {
                         extras.push(self.verify_assignment(
-                            &mut generics_map,
+                            generics_map,
                             &params[pos_cursor - 1].1,
                             expr,
                             line,
@@ -430,7 +438,7 @@ impl TypeSystem {
         }
 
         result.extend(extras);
-        Ok((result, generics_map))
+        Ok(result)
     }
 
     pub fn generic_to_concrete(generic_ty: Type, generics_map: &HashMap<Symbol, Type>) -> Type {

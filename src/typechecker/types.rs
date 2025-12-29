@@ -37,6 +37,13 @@ pub struct StructType {
     pub generic_params: Vec<Symbol>,
 }
 
+pub fn generics_to_map(generics: &[Symbol]) -> HashMap<Symbol, Type> {
+    generics
+        .iter()
+        .map(|s| (s.clone(), Type::Unknown))
+        .collect()
+}
+
 impl StructType {
     pub fn get_field(&self, name: &str) -> Option<(usize, Type)> {
         self.fields
@@ -218,7 +225,7 @@ impl Type {
                     is_vararg: false,
                     params,
                     return_type: Self::from_ast(return_type, type_system)?,
-                    type_params: vec![],
+                    type_params: type_system.get_active_generics(),
                 })))
             }
             TypeAst::Optional(inner) => {
@@ -266,7 +273,7 @@ impl Type {
                     is_vararg: false,
                     return_type: Self::from_ast(return_type.as_ref(), type_system)?,
                     params: resolved_params,
-                    type_params: vec![],
+                    type_params: type_system.get_active_generics(),
                 })))
             }
             _ => unreachable!(),
