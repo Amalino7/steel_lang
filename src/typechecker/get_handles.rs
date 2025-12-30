@@ -2,57 +2,61 @@ use crate::parser::ast::Literal;
 use crate::token::Token;
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::type_ast::{ExprKind, TypedExpr};
-use crate::typechecker::types::{EnumType, Type};
-use crate::typechecker::TypeChecker;
+use crate::typechecker::type_system::TypeSystem;
+use crate::typechecker::types::{generics_to_map, GenericArgs, Type};
+use crate::typechecker::{Symbol, TypeChecker};
 use std::collections::HashMap;
 use std::rc::Rc;
 
 impl<'src> TypeChecker<'src> {
     pub(crate) fn resolve_static_access(
         &mut self,
-        type_token: &Token,
+        type_token: &Symbol,
         member_token: &Token,
+        generics: &GenericArgs,
     ) -> Result<TypedExpr, TypeCheckerError> {
-        let enum_access = self.handle_enum_access(type_token, member_token);
+        let enum_access = self.handle_enum_access(type_token, member_token, generics);
         match enum_access {
             Some(expr) => Ok(expr),
             None => self.handle_static_method_access(type_token, member_token),
         }
     }
 
-    fn handle_enum_access(&mut self, type_name: &Token, variant_name: &Token) -> Option<TypedExpr> {
-        let enum_def = self.sys.get_enum(type_name.lexeme)?;
+    fn handle_enum_access(
+        &mut self,
+        type_name: &Symbol,
+        variant_name: &Token,
+        generics: &GenericArgs,
+    ) -> Option<TypedExpr> {
+        let enum_def = self.sys.get_enum(type_name)?;
 
         let (idx, variant_types) = enum_def.get_variant(variant_name.lexeme)?;
 
-        // Handle Type.Variant
-        if variant_types == Type::Void {
-            Some(TypedExpr {
-                ty: Type::Enum(enum_def.name.clone(), vec![].into()),
-                kind: ExprKind::EnumInit {
-                    enum_name: enum_def.name.clone(),
-                    variant_idx: idx as u16,
-                    value: Box::new(TypedExpr {
-                        ty: Type::Nil,
-                        kind: ExprKind::Literal(Literal::Nil),
-                        line: variant_name.line,
-                    }),
-                },
-                line: variant_name.line,
-            })
+        let ty = if variant_types == Type::Void {
+            Type::Enum(enum_def.name.clone(), vec![].into())
         } else {
-            // TODO error on an empty constructor
-            None
-        }
+            Type::Metatype(type_name.clone(), generics.clone())
+        };
+        // Handle Type.Variant
+        Some(TypedExpr {
+            ty,
+            kind: ExprKind::EnumInit {
+                enum_name: enum_def.name.clone(),
+                variant_idx: idx as u16,
+                value: Box::new(TypedExpr {
+                    ty: Type::Nil,
+                    kind: ExprKind::Literal(Literal::Nil),
+                    line: variant_name.line,
+                }),
+            },
+            line: variant_name.line,
+        })
     }
 
     pub(crate) fn handle_enum_call(
         &self,
         variant_type: &Type,
-        variant_idx: usize,
         inferred_args: Vec<(Option<&str>, TypedExpr, u32)>,
-        field: &Token,
-        enum_def: &EnumType,
         line: u32,
     ) -> Result<TypedExpr, TypeCheckerError> {
         let val_expr = match variant_type {
@@ -90,7 +94,7 @@ impl<'src> TypeChecker<'src> {
                     .collect();
 
                 let bound_args = self.sys.bind_arguments(
-                    &field.lexeme,
+                    "enum call",
                     &mut HashMap::new(), // TODO use map
                     &params,
                     inferred_args,
@@ -111,7 +115,7 @@ impl<'src> TypeChecker<'src> {
                 let params = vec![("value".to_string(), variant_type.clone())];
 
                 let mut bound_args = self.sys.bind_arguments(
-                    &field.lexeme,
+                    "enum call",
                     &mut HashMap::new(),
                     &params,
                     inferred_args,
@@ -122,30 +126,22 @@ impl<'src> TypeChecker<'src> {
                 bound_args.pop().unwrap() // Safe because bind_arguments guarantees match
             }
         };
-        Ok(TypedExpr {
-            ty: Type::Enum(enum_def.name.clone(), vec![].into()),
-            line,
-            kind: ExprKind::EnumInit {
-                enum_name: enum_def.name.clone(),
-                variant_idx: variant_idx as u16,
-                value: Box::new(val_expr),
-            },
-        })
+        Ok(val_expr)
     }
 
     fn handle_static_method_access(
         &mut self,
-        type_name: &Token,
+        type_name: &Symbol,
         method_name: &Token,
     ) -> Result<TypedExpr, TypeCheckerError> {
-        let mangled_name = format!("{}.{}", type_name.lexeme, method_name.lexeme);
+        let mangled_name = format!("{}.{}", type_name, method_name.lexeme);
 
         let method =
             self.scopes
                 .lookup(mangled_name.as_str())
                 .ok_or(TypeCheckerError::UndefinedMethod {
                     line: method_name.line,
-                    found: Type::Struct(Rc::from(String::from(type_name.lexeme)), vec![].into()),
+                    found: Type::Struct(Rc::from(type_name.to_string()), vec![].into()),
                     method_name: method_name.lexeme.to_string(),
                 })?;
 
@@ -221,18 +217,14 @@ impl<'src> TypeChecker<'src> {
                 .get_struct(name)
                 .expect("Struct type missing definition");
 
-            if let Some((idx, mut field_type)) = struct_def.get_field(member_token.lexeme) {
-                if let Type::GenericParam(gen_name) = field_type {
-                    let mut sol = 0;
-                    for (idx, name) in struct_def.generic_params.iter().enumerate() {
-                        if *name == gen_name {
-                            sol = idx;
-                        }
-                    }
-                    field_type = generics[sol].clone();
-                }
+            if let Some((idx, field_type)) = struct_def.get_field(member_token.lexeme) {
+                let actual = TypeSystem::generic_to_concrete(
+                    field_type,
+                    &generics_to_map(&struct_def.generic_params, &generics),
+                );
+
                 let mut expr = TypedExpr {
-                    ty: field_type.clone(),
+                    ty: actual,
                     kind: ExprKind::GetField {
                         object: Box::new(object_typed),
                         index: idx as u8,
@@ -308,10 +300,15 @@ impl<'src> TypeChecker<'src> {
                     method_name: field.lexeme.to_string(),
                 })?;
 
+        let pairs = match lookup_type {
+            Type::Struct(name, args) => {
+                generics_to_map(&self.sys.get_struct(name).unwrap().generic_params, args)
+            }
+            _ => HashMap::new(),
+        };
+
         let ty = match &method.0.type_info {
             Type::Function(func) => {
-                let return_type = func.return_type.clone();
-
                 if func.params.is_empty() || func.is_static {
                     return Err(TypeCheckerError::StaticMethodOnInstance {
                         method_name: field.lexeme.to_string(),
@@ -319,8 +316,28 @@ impl<'src> TypeChecker<'src> {
                     });
                 }
 
-                let params = func.params.iter().skip(1).cloned().collect();
-                Type::new_function(params, return_type, func.type_params.clone())
+                let params = func
+                    .params
+                    .iter()
+                    .skip(1)
+                    .map(|(s, t)| {
+                        (
+                            s.to_string(),
+                            TypeSystem::generic_to_concrete(t.clone(), &pairs),
+                        )
+                    })
+                    .collect();
+                let return_type = TypeSystem::generic_to_concrete(func.return_type.clone(), &pairs);
+
+                Type::new_function(
+                    params,
+                    return_type,
+                    func.type_params
+                        .iter()
+                        .filter(|s| !pairs.contains_key(*s))
+                        .cloned()
+                        .collect(),
+                )
             }
             ty => ty.clone(),
         };

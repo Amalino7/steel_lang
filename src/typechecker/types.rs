@@ -37,10 +37,19 @@ pub struct StructType {
     pub generic_params: Vec<Symbol>,
 }
 
-pub fn generics_to_map(generics: &[Symbol]) -> HashMap<Symbol, Type> {
+pub fn generics_to_map(
+    generics: &[Symbol],
+    generics_provided: &GenericArgs,
+) -> HashMap<Symbol, Type> {
     generics
         .iter()
-        .map(|s| (s.clone(), Type::Unknown))
+        .enumerate()
+        .map(|(idx, s)| {
+            (
+                s.clone(),
+                generics_provided.get(idx).unwrap_or(&Type::Unknown).clone(),
+            )
+        })
         .collect()
 }
 
@@ -93,6 +102,7 @@ pub enum Type {
     Function(Rc<FunctionType>),
     Tuple(Rc<TupleType>),
     GenericParam(Symbol),
+    Metatype(Symbol, GenericArgs),
     Struct(Symbol, GenericArgs),
     Interface(Symbol, GenericArgs),
     Enum(Symbol, GenericArgs),
@@ -200,6 +210,7 @@ impl Type {
             Type::GenericParam(_) => None,
             Type::Enum(name, _) => Some(name),
             Type::Tuple(_) => None,
+            Type::Metatype(_, _) => None,
         }
     }
     pub fn new_function(
@@ -354,6 +365,13 @@ impl Type {
 impl Display for Type {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
+            Type::Metatype(name, generic_args) => {
+                write!(f, "Type {}<", name)?;
+                for generic_arg in generic_args.iter() {
+                    write!(f, "{}", generic_arg)?;
+                }
+                write!(f, ">")
+            }
             Type::GenericParam(name) => write!(f, "{}", name),
             Type::Number => write!(f, "Number"),
             Type::Boolean => write!(f, "Bool"),

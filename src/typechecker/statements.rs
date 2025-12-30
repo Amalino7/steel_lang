@@ -28,35 +28,28 @@ impl<'src> TypeChecker<'src> {
                 let value_node = self.infer_expression(value)?;
                 let declared_type = Type::from_ast(type_info, &self.sys)?;
 
-                if declared_type == Type::Unknown {
-                    let typed_binding = self.check_binding(binding, &value_node.ty)?;
-                    Ok(TypedStmt {
-                        kind: StmtKind::Let {
-                            binding: typed_binding,
-                            value: value_node,
-                        },
-                        type_info: Type::Void,
-                        line: binding.get_line(),
-                    })
+                let coerced_value = self.sys.verify_assignment(
+                    &mut HashMap::new(),
+                    &declared_type,
+                    value_node,
+                    binding.get_line(),
+                )?;
+
+                let final_type = if declared_type == Type::Unknown {
+                    coerced_value.ty.clone()
                 } else {
-                    let coerced_value = self.sys.verify_assignment(
-                        &mut HashMap::new(),
-                        &declared_type,
-                        value_node,
-                        binding.get_line(),
-                    )?;
+                    declared_type
+                };
+                let typed_binding = self.check_binding(binding, &final_type)?;
 
-                    let typed_binding = self.check_binding(binding, &declared_type)?;
-
-                    Ok(TypedStmt {
-                        kind: StmtKind::Let {
-                            binding: typed_binding,
-                            value: coerced_value,
-                        },
-                        type_info: Type::Void,
-                        line: binding.get_line(),
-                    })
-                }
+                Ok(TypedStmt {
+                    kind: StmtKind::Let {
+                        binding: typed_binding,
+                        value: coerced_value,
+                    },
+                    type_info: Type::Void,
+                    line: binding.get_line(),
+                })
             }
             Stmt::Impl {
                 interfaces,

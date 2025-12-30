@@ -63,7 +63,7 @@ pub fn get_natives() -> Vec<NativeDef> {
             },
         },
         NativeDef {
-            name: "str",
+            name: "to_str",
             type_: Type::new_function(
                 vec![("_".into(), Type::GenericParam("T".into()))],
                 Type::String,

@@ -1,4 +1,5 @@
 use crate::compiler::analysis::ResolvedVar;
+use crate::compiler::analysis::ResolvedVar::Global;
 use crate::parser::ast::{Expr, Literal};
 use crate::token::{Token, TokenType};
 use crate::typechecker::error::TypeCheckerError;
@@ -17,8 +18,33 @@ impl<'src> TypeChecker<'src> {
         expr: &Expr<'src>,
     ) -> Result<TypedExpr, TypeCheckerError> {
         match expr {
-            Expr::TypeSpecialization { callee, generics } => {
-                todo!()
+            Expr::TypeSpecialization {
+                callee,
+                generics: generics_provided,
+            } => {
+                let mut callee_typed = self.infer_expression(callee)?;
+                let generic_args = generics_provided
+                    .iter()
+                    .map(|t| Type::from_ast(t, &self.sys))
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                match &mut callee_typed.ty {
+                    Type::Function(func) => {
+                        todo!("Type specialization on functions")
+                    }
+                    Type::Metatype(type_name, generics) => {
+                        if generics.len() > 0 {
+                            todo!("generics already provided")
+                        }
+                        if generic_args.len() != self.sys.get_generics_count(type_name) {
+                            todo!("wrong number of generics error")
+                        } else {
+                            Rc::get_mut(generics).unwrap().extend(generic_args); // Shouldn't fail
+                            Ok(callee_typed)
+                        }
+                    }
+                    _ => todo!("error"),
+                }
             }
             Expr::Is {
                 expression,
@@ -130,6 +156,12 @@ impl<'src> TypeChecker<'src> {
                     Ok(TypedExpr {
                         ty: ctx.type_info.clone(),
                         kind: ExprKind::GetVar(resolved, ctx.name.clone()),
+                        line: name.line,
+                    })
+                } else if let Some(type_name) = self.sys.get_owned_type_name(name.lexeme) {
+                    Ok(TypedExpr {
+                        ty: Type::Metatype(type_name.clone(), vec![].into()),
+                        kind: ExprKind::GetVar(Global(0), type_name),
                         line: name.line,
                     })
                 } else {
@@ -296,6 +328,7 @@ impl<'src> TypeChecker<'src> {
                 arguments,
                 safe,
             } => {
+                let mut callee_typed = self.infer_expression(callee)?;
                 // Handle args
                 let mut inferred_args = Vec::with_capacity(arguments.len());
 
@@ -311,15 +344,16 @@ impl<'src> TypeChecker<'src> {
 
                     inferred_args.push((label, typed_val, line));
                 }
+
                 // Handle Struct constructor
-                if let Expr::Variable { name } = &**callee
-                    && let Some(struct_def) = self.sys.get_struct(&name.lexeme)
+                if let Type::Metatype(name, generics) = &callee_typed.ty
+                    && let Some(struct_def) = self.sys.get_struct(&name)
                 {
                     let mut map: HashMap<Symbol, Type> =
-                        generics_to_map(&struct_def.generic_params);
+                        generics_to_map(&struct_def.generic_params, generics);
                     let owned_name = struct_def.name.clone();
                     let bound_args = self.sys.bind_arguments(
-                        &name.lexeme,
+                        &name,
                         &mut map,
                         &struct_def.ordered_fields,
                         inferred_args,
@@ -353,27 +387,22 @@ impl<'src> TypeChecker<'src> {
                         line: callee.get_line(),
                     });
                 }
-                // Check for an Enum constructor pattern
-                if let Expr::Get { object, field, .. } = callee.as_ref() {
-                    if let Expr::Variable { name } = object.as_ref() {
-                        if let Some(enum_def) = self.sys.get_enum(name.lexeme) {
-                            if let Some((variant_idx, variant_type)) =
-                                enum_def.get_variant(field.lexeme)
-                            {
-                                return self.handle_enum_call(
-                                    &variant_type,
-                                    variant_idx,
-                                    inferred_args,
-                                    field,
-                                    enum_def,
-                                    callee.get_line(),
-                                );
-                            }
-                        }
+
+                if let Type::Metatype(name, generics) = &callee_typed.ty
+                    && let Some(enum_def) = self.sys.get_enum(&name)
+                {
+                    if let ExprKind::EnumInit {
+                        variant_idx, value, ..
+                    } = &mut callee_typed.kind
+                    {
+                        let (_, ty) = &enum_def.ordered_variants[*variant_idx as usize];
+                        let expr = self.handle_enum_call(ty, inferred_args, callee.get_line());
+                        *value = Box::from(expr?);
+                        // TODO handle generics
+                        callee_typed.ty = Type::Enum(name.clone(), generics.clone());
+                        return Ok(callee_typed);
                     }
                 }
-
-                let callee_typed = self.infer_expression(callee)?;
 
                 let safe = if let ExprKind::MethodGet { safe, .. } = callee_typed.kind {
                     safe
@@ -402,7 +431,8 @@ impl<'src> TypeChecker<'src> {
                 // Check for Normal Function Call
                 match lookup_type {
                     Type::Function(func) => {
-                        let mut map: HashMap<Symbol, Type> = generics_to_map(&func.type_params);
+                        let mut map: HashMap<Symbol, Type> =
+                            generics_to_map(&func.type_params, &vec![].into());
                         let bound_args = self.sys.bind_arguments(
                             "function",
                             &mut map,
@@ -452,13 +482,10 @@ impl<'src> TypeChecker<'src> {
                 safe,
             } => {
                 //TODO Ignores safe static access probably should be a warning
-                if let Expr::Variable { name } = object.as_ref()
-                    && self.sys.does_type_exist(name.lexeme)
-                {
-                    return self.resolve_static_access(name, field);
-                }
-
                 let object_typed = self.infer_expression(object)?;
+                if let Type::Metatype(name, generics) = &object_typed.ty {
+                    return self.resolve_static_access(name, field, generics);
+                }
 
                 self.resolve_instance_access(object_typed, field, *safe)
             }
@@ -590,24 +617,19 @@ impl<'src> TypeChecker<'src> {
                 field_name: field.lexeme.to_string(),
                 line: field.line,
             }),
-            Some((id, mut field_type)) => {
-                if let Type::GenericParam(gen_name) = field_type {
-                    let mut sol = 0;
-                    for (idx, name) in struct_def.generic_params.iter().enumerate() {
-                        if *name == gen_name {
-                            sol = idx;
-                        }
-                    }
-                    field_type = generic_args[sol].clone();
-                }
+            Some((id, field_type)) => {
+                let actual = TypeSystem::generic_to_concrete(
+                    field_type,
+                    &generics_to_map(&struct_def.generic_params, &generic_args),
+                );
 
                 self.sys.verify_assignment(
                     &mut HashMap::new(),
-                    &field_type,
+                    &actual,
                     field_value.clone(),
                     field.line,
                 )?;
-                Ok((id, field_type))
+                Ok((id, actual))
             }
         }
     }

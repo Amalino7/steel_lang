@@ -147,6 +147,32 @@ impl TypeSystem {
             false
         }
     }
+    pub fn get_owned_type_name(&self, name: &str) -> Option<Symbol> {
+        if let Some(s) = self.structs.get(name) {
+            Some(s.name.clone())
+        } else if let Some(i) = self.interfaces.get(name) {
+            Some(i.name.clone())
+        } else if let Some(e) = self.enums.get(name) {
+            Some(e.name.clone())
+        } else if name == "string" || name == "number" || name == "boolean" || name == "void" {
+            Some(name.into())
+        } else {
+            None
+        }
+    }
+
+    pub fn get_generics_count(&self, name: &str) -> usize {
+        if let Some(s) = self.structs.get(name) {
+            s.generic_params.len()
+        } else if let Some(i) = self.interfaces.get(name) {
+            0
+        } else if let Some(e) = self.enums.get(name) {
+            e.generic_params.len()
+        } else {
+            0
+        }
+    }
+
     pub fn can_compare(&self, left: &Type, right: &Type) -> bool {
         if let Type::Optional(inner) = left {
             if *right == Type::Nil {
@@ -173,6 +199,7 @@ impl TypeSystem {
         provided: &Type,
     ) -> bool {
         match expected_ty {
+            Type::Metatype(_, _) => false,
             Type::Nil | Type::Number | Type::String | Type::Void | Type::Boolean => {
                 if expected_ty == provided { true } else { false }
             }
@@ -285,12 +312,15 @@ impl TypeSystem {
         expr: TypedExpr,
         line: u32,
     ) -> Result<TypedExpr, TypeCheckerError> {
-        let are_equal = Self::resolve_generics(expected_type, generics_map, &expr.ty);
+        if let Type::Metatype(_, _) = expr.ty {
+            // TODO cannot use metatypes in assignments
+            todo!()
+        }
 
+        let are_equal = Self::resolve_generics(expected_type, generics_map, &expr.ty);
         if are_equal {
             return Ok(expr);
         }
-
         // TODO rethink interface cast logic
 
         let expected_type = if let Type::Optional(inner) = expected_type {
@@ -438,6 +468,7 @@ impl TypeSystem {
 
     pub fn generic_to_concrete(generic_ty: Type, generics_map: &HashMap<Symbol, Type>) -> Type {
         match generic_ty {
+            Type::Metatype(_, _) => generic_ty,
             Type::Nil
             | Type::Number
             | Type::String
@@ -448,7 +479,31 @@ impl TypeSystem {
             Type::Optional(inner) => {
                 Type::Optional(Box::new(Self::generic_to_concrete(*inner, generics_map)))
             }
-            Type::Function(_) => generic_ty,
+            Type::Function(func_type) => {
+                let params = func_type
+                    .params
+                    .iter()
+                    .map(|(s, t)| {
+                        (
+                            s.to_string(),
+                            TypeSystem::generic_to_concrete(t.clone(), &generics_map),
+                        )
+                    })
+                    .collect();
+                let return_type =
+                    TypeSystem::generic_to_concrete(func_type.return_type.clone(), &generics_map);
+
+                Type::new_function(
+                    params,
+                    return_type,
+                    func_type
+                        .type_params
+                        .iter()
+                        .filter(|s| !generics_map.contains_key(*s))
+                        .cloned()
+                        .collect(),
+                )
+            }
             Type::Tuple(types) => {
                 let new_types = types
                     .types

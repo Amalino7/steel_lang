@@ -1668,6 +1668,9 @@ mod tests {
         let new_box: Box<number?> = Box(nil);
         new_box.top = 10;
         let good = map(new_box, unwrap);
+
+        // let a = Box;
+        Box.<number>(top: 10);
         assert(good.top, 10);
         println(good);
         println(box.top);
@@ -1692,11 +1695,12 @@ mod tests {
                 return Box(top: transform(self.top));
             }
         }
+        func wrap(a: number): string { return to_str(a);}
 
         let box = Box.new(10);
-        let str_box = box.map(str);
+        let str_box = box.map(wrap);
         assert(str_box.top + "1", "101");
-        // assert(box.unwrap() , 10);
+        assert(box.unwrap() , 10);
         "#;
         execute_source(src, false, "run", true);
     }
@@ -1713,6 +1717,6 @@ mod tests {
         let box = Box.<int>.new(10);
         assert(box.top + 12, 22);
         "#;
-        execute_source(src, false, "parse", true);
+        execute_source(src, false, "run", true);
     }
 }
