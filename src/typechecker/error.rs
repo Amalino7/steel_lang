@@ -107,6 +107,15 @@ pub enum TypeCheckerError {
         line: u32,
         message: &'static str,
     },
+    MissingGeneric {
+        ty_name: String,
+        generic_name: String,
+        line: u32,
+    },
+    CannotInferType {
+        line: u32,
+        uninferred_generics: Vec<String>,
+    },
 }
 
 impl TypeCheckerError {
@@ -136,6 +145,8 @@ impl TypeCheckerError {
             TypeCheckerError::InvalidTupleIndex { line, .. } => *line,
             TypeCheckerError::UnreachablePattern { line, .. } => *line,
             TypeCheckerError::InvalidIsUsage { line, .. } => *line,
+            TypeCheckerError::MissingGeneric { line, .. } => *line,
+            TypeCheckerError::CannotInferType { line, .. } => *line,
         }
     }
 }
@@ -338,6 +349,28 @@ impl std::fmt::Display for TypeCheckerError {
                     f,
                     "[line {}] Error: Invalid usage of 'is' operator.\n {}",
                     line, message
+                )
+            }
+            TypeCheckerError::MissingGeneric {
+                ty_name,
+                generic_name,
+                line,
+            } => {
+                write!(
+                    f,
+                    "[line {}] Error: Missing generic on type '{}' name: {}",
+                    line, ty_name, generic_name
+                )
+            }
+            TypeCheckerError::CannotInferType {
+                line,
+                uninferred_generics,
+            } => {
+                write!(
+                    f,
+                    "[line {}] Error: Cannot infer generic type. {} Use explicit annotations.",
+                    line,
+                    uninferred_generics.join(", ")
                 )
             }
         }

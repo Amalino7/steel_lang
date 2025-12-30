@@ -1,5 +1,5 @@
 use crate::vm::bytecode::Chunk;
-use crate::vm::gc::Gc;
+use crate::vm::gc::{GarbageCollector, Gc};
 use std::cmp::Ordering;
 use std::fmt::{Display, Formatter};
 use std::ops::{Add, Div, Mul, Neg, Not, Sub};
@@ -66,7 +66,7 @@ pub enum Value {
     InterfaceObj(Gc<InterfaceObj>),
 }
 
-pub type NativeFn = fn(&[Value]) -> Value;
+pub type NativeFn = fn(&[Value], &mut GarbageCollector) -> Value;
 
 impl PartialOrd for Value {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {

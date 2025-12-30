@@ -62,6 +62,7 @@ pub struct InterfaceType {
 pub struct EnumType {
     pub name: Symbol,
     pub variants: HashMap<String, usize>,
+    pub generic_params: Vec<Symbol>,
     pub ordered_variants: Vec<(String, Type)>, // Void, one arg, tuple, struct
 }
 
@@ -98,6 +99,25 @@ pub enum Type {
     Any, //TODO replace with generic types, this is for native functions.
 }
 
+fn missing_generics(
+    type_name: &Symbol,
+    generics_expected: &[Symbol],
+    generics_provided: &[Type],
+    line: u32,
+) -> Result<(), TypeCheckerError> {
+    if generics_expected.len() > generics_provided.len() {
+        Err(TypeCheckerError::MissingGeneric {
+            ty_name: type_name.to_string(),
+            generic_name: generics_expected[generics_provided.len()].to_string(),
+            line,
+        })
+    } else if generics_provided.len() > generics_expected.len() {
+        todo!()
+    } else {
+        Ok(())
+    }
+}
+
 impl Type {
     pub fn from_identifier(
         name: &Token,
@@ -121,6 +141,12 @@ impl Type {
         } else if name == "void" {
             Ok(Type::Void)
         } else if let Some(struct_type) = type_system.get_struct(name) {
+            missing_generics(
+                &struct_type.name,
+                &struct_type.generic_params,
+                &generics,
+                line,
+            )?;
             Ok(Type::Struct(struct_type.name.clone(), Rc::new(generics)))
         } else if let Some(iface) = type_system.get_interface(name) {
             Ok(Type::Interface(iface.name.clone(), Rc::new(generics)))
@@ -259,6 +285,7 @@ impl Type {
     pub fn from_method_ast(
         type_ast: &TypeAst<'_>,
         self_type: &Token,
+        self_generics: &[Token],
         type_system: &TypeSystem,
     ) -> Result<Type, TypeCheckerError> {
         match type_ast {
@@ -268,17 +295,26 @@ impl Type {
             } => {
                 let mut resolved_params = Vec::new();
 
-                let is_instance_method =
-                    if let Some(TypeAst::Named(name, generics)) = param_types.first() {
-                        name.lexeme == "Self"
+                let is_instance_method = if let Some(TypeAst::Named(name, _)) = param_types.first()
+                {
+                    if name.lexeme == "Self" {
+                        let self_ty = Type::from_identifier(
+                            &self_type,
+                            type_system,
+                            self_generics
+                                .iter()
+                                .map(|t| TypeAst::Named(t.clone(), vec![]))
+                                .collect::<Vec<_>>()
+                                .as_slice(),
+                        )?;
+                        resolved_params.push(("self".to_string(), self_ty));
+                        true
                     } else {
                         false
-                    };
-
-                if is_instance_method {
-                    let self_ty = Type::from_identifier(self_type, type_system, &vec![])?; // TODO add generics
-                    resolved_params.push(("self".to_string(), self_ty));
-                }
+                    }
+                } else {
+                    false
+                };
 
                 for param_ast in param_types
                     .iter()

@@ -333,7 +333,7 @@ impl VM {
                             for i in 0..arg_count {
                                 args.push(self.stack.get_at(args_start + i));
                             }
-                            let result = native_fn(&args);
+                            let result = native_fn(&args, &mut self.gc);
 
                             self.stack.truncate(top - arg_count - 1);
 

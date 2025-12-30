@@ -12,7 +12,7 @@ pub fn get_natives() -> Vec<NativeDef> {
         NativeDef {
             name: "println",
             type_: Type::new_vararg(vec![Type::Any], Type::Void),
-            func: |args| {
+            func: |args, _| {
                 for arg in args {
                     print!("{}", arg);
                 }
@@ -23,7 +23,7 @@ pub fn get_natives() -> Vec<NativeDef> {
         NativeDef {
             name: "panic",
             type_: Type::new_function(vec![("msg".into(), Type::Any)], Type::Void, vec![]),
-            func: |args| {
+            func: |args, _| {
                 // TODO add language level error handling
                 panic!("{}", args[0]);
             },
@@ -31,7 +31,7 @@ pub fn get_natives() -> Vec<NativeDef> {
         NativeDef {
             name: "print",
             type_: Type::new_vararg(vec![Type::Any], Type::Void),
-            func: |args| {
+            func: |args, _| {
                 for arg in args {
                     print!("{}", arg);
                 }
@@ -45,7 +45,7 @@ pub fn get_natives() -> Vec<NativeDef> {
                 Type::Void,
                 vec![],
             ),
-            func: |args| {
+            func: |args, _| {
                 if args[0] != args[1] {
                     panic!("Assertion failed: {} != {}", args[0], args[1]);
                 }
@@ -55,11 +55,23 @@ pub fn get_natives() -> Vec<NativeDef> {
         NativeDef {
             name: "clock",
             type_: Type::new_function(vec![], Type::Number, vec![]),
-            func: |_| {
+            func: |_, _| {
                 use std::time::{SystemTime, UNIX_EPOCH};
                 let start = SystemTime::now();
                 let since_the_epoch = start.duration_since(UNIX_EPOCH).unwrap();
                 Value::Number(since_the_epoch.as_secs_f64())
+            },
+        },
+        NativeDef {
+            name: "str",
+            type_: Type::new_function(
+                vec![("_".into(), Type::GenericParam("T".into()))],
+                Type::String,
+                vec!["T".into()],
+            ),
+            func: |args, gc| {
+                let str = args[0].to_string();
+                Value::String(gc.alloc(str))
             },
         },
     ]

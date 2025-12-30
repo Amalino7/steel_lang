@@ -43,25 +43,26 @@ impl TypeSystem {
     }
 
     // Only the name exists
-    pub fn declare_struct(&mut self, name: Symbol) {
+    pub fn declare_struct(&mut self, name: Symbol, generic_params: &[Token]) {
         self.structs.insert(
             name.clone(),
             StructType {
                 name,
                 fields: HashMap::new(),
                 ordered_fields: vec![],
-                generic_params: vec![],
+                generic_params: generic_params.iter().map(|t| t.lexeme.into()).collect(),
             },
         );
     }
 
-    pub fn declare_enum(&mut self, name: Symbol) {
+    pub fn declare_enum(&mut self, name: Symbol, generic_params: &[Token]) {
         self.enums.insert(
             name.clone(),
             EnumType {
                 name,
                 variants: HashMap::new(),
                 ordered_variants: vec![],
+                generic_params: generic_params.iter().map(|t| t.lexeme.into()).collect(),
             },
         );
     }
@@ -76,19 +77,13 @@ impl TypeSystem {
         );
     }
 
-    pub fn define_struct(
-        &mut self,
-        name: &str,
-        fields_map: HashMap<String, (usize, Type)>,
-        generics: &[Token],
-    ) {
+    pub fn define_struct(&mut self, name: &str, fields_map: HashMap<String, (usize, Type)>) {
         if let Some(s) = self.structs.get_mut(name) {
             s.fields = fields_map
                 .iter()
                 .map(|(k, (idx, _))| (k.clone(), *idx))
                 .collect();
 
-            s.generic_params = generics.iter().map(|g| g.lexeme.into()).collect();
             let mut vec_fields = vec![None; fields_map.len()];
             for (k, (idx, t)) in fields_map {
                 if idx < vec_fields.len() {
@@ -188,7 +183,7 @@ impl TypeSystem {
                 } else if let Type::Optional(provided) = provided {
                     Self::resolve_generics(expected, generics_map, provided)
                 } else {
-                    false
+                    Self::resolve_generics(expected, generics_map, provided)
                 }
             }
             Type::Function(expected_inner) => {
@@ -203,7 +198,7 @@ impl TypeSystem {
                             &expected_param.1,
                             generics_map,
                             &provided_param.1,
-                        )
+                        );
                     }
                     eq &= Self::resolve_generics(
                         &expected_inner.return_type,

@@ -262,7 +262,8 @@ impl<'src> TypeChecker<'src> {
             let ty = match method_ty {
                 Type::Function(func) => {
                     let params = func.params.iter().skip(1).cloned().collect();
-                    Type::new_function(params, func.return_type.clone(), vec![])
+                    // TODO infer generic from Struct
+                    Type::new_function(params, func.return_type.clone(), func.type_params.clone())
                 }
                 other => other.clone(),
             };
@@ -311,7 +312,7 @@ impl<'src> TypeChecker<'src> {
             Type::Function(func) => {
                 let return_type = func.return_type.clone();
 
-                if func.params.is_empty() || &func.params[0].1 != lookup_type || func.is_static {
+                if func.params.is_empty() || func.is_static {
                     return Err(TypeCheckerError::StaticMethodOnInstance {
                         method_name: field.lexeme.to_string(),
                         line: field.line,
@@ -319,7 +320,7 @@ impl<'src> TypeChecker<'src> {
                 }
 
                 let params = func.params.iter().skip(1).cloned().collect();
-                Type::new_function(params, return_type, vec![])
+                Type::new_function(params, return_type, func.type_params.clone())
             }
             ty => ty.clone(),
         };

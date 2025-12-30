@@ -32,6 +32,7 @@ impl<'src> TypeChecker<'src> {
                     methods,
                     generics,
                 } => {
+                    self.sys.push_generics(generics);
                     for interface in interfaces {
                         let interface_type = self.sys.get_interface(interface.lexeme);
                         if interface_type.is_none() {
@@ -53,16 +54,16 @@ impl<'src> TypeChecker<'src> {
                             } => {
                                 self.sys.push_generics(generics);
                                 let func_type =
-                                    Type::from_method_ast(type_info, &name.0, &self.sys);
+                                    Type::from_method_ast(type_info, &name.0, &name.1, &self.sys);
                                 let mangled_name: Symbol =
                                     format!("{}.{}", name.0.lexeme, func_name.lexeme).into();
                                 self.declare_function(mangled_name, func_type, params);
-
                                 self.sys.pop_n_generics(generics.len());
                             }
                             _ => unreachable!(),
                         }
                     }
+                    self.sys.pop_n_generics(generics.len());
                 }
                 Stmt::Interface {
                     name,
@@ -71,7 +72,8 @@ impl<'src> TypeChecker<'src> {
                 } => {
                     let mut method_map: HashMap<String, (usize, Type)> = HashMap::new();
                     for (i, sig) in methods.iter().enumerate() {
-                        let ty = match Type::from_method_ast(&sig.type_, name, &self.sys) {
+                        let ty = match Type::from_method_ast(&sig.type_, name, generics, &self.sys)
+                        {
                             Ok(t) => t,
                             Err(e) => {
                                 self.errors.push(e);
@@ -109,12 +111,12 @@ impl<'src> TypeChecker<'src> {
     pub(crate) fn declare_global_types(&mut self, ast: &[Stmt<'src>]) {
         // declare global types by name
         for stmt in ast.iter() {
-            if let Stmt::Struct { name, .. } = stmt {
-                self.sys.declare_struct(name.lexeme.into());
+            if let Stmt::Struct { name, generics, .. } = stmt {
+                self.sys.declare_struct(name.lexeme.into(), generics);
             } else if let Stmt::Interface { name, .. } = stmt {
                 self.sys.declare_interface(name.lexeme.into());
-            } else if let Stmt::Enum { name, .. } = stmt {
-                self.sys.declare_enum(name.lexeme.into());
+            } else if let Stmt::Enum { name, generics, .. } = stmt {
+                self.sys.declare_enum(name.lexeme.into(), generics);
             }
         }
     }
@@ -129,7 +131,7 @@ impl<'src> TypeChecker<'src> {
             {
                 self.sys.push_generics(generics);
                 let field_types = self.define_struct_fields(fields);
-                self.sys.define_struct(name.lexeme, field_types, generics);
+                self.sys.define_struct(name.lexeme, field_types);
                 self.sys.pop_n_generics(generics.len());
             }
         }
@@ -160,8 +162,9 @@ impl<'src> TypeChecker<'src> {
                             let field_types = self.define_struct_fields(struct_def);
                             let full_name: Symbol =
                                 format!("{}.{}", name.lexeme, v_name.lexeme).into();
-                            self.sys.declare_struct(full_name.clone());
-                            self.sys.define_struct(&full_name, field_types, generics);
+                            // TODO generics here???
+                            self.sys.declare_struct(full_name.clone(), generics);
+                            self.sys.define_struct(&full_name, field_types);
                             Type::Struct(full_name, vec![].into())
                         }
                         VariantType::Unit => Type::Void,

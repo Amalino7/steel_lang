@@ -17,7 +17,7 @@ impl<'src> TypeChecker<'src> {
         expr: &Expr<'src>,
     ) -> Result<TypedExpr, TypeCheckerError> {
         match expr {
-            Expr::TypeSpecialization { .. } => {
+            Expr::TypeSpecialization { callee, generics } => {
                 todo!()
             }
             Expr::Is {
@@ -332,7 +332,18 @@ impl<'src> TypeChecker<'src> {
                         .iter()
                         .map(|name| map.get(name).unwrap().clone())
                         .collect();
-                    // TODO check for unknown types.
+
+                    let uninferred: Vec<_> = map
+                        .iter()
+                        .filter(|(_, v)| **v == Type::Unknown)
+                        .map(|(name, t)| name.to_string())
+                        .collect();
+                    if uninferred.len() > 0 {
+                        return Err(TypeCheckerError::CannotInferType {
+                            line: callee.get_line(),
+                            uninferred_generics: uninferred,
+                        });
+                    }
                     return Ok(TypedExpr {
                         ty: Type::Struct(owned_name.clone(), Rc::new(type_args)),
                         kind: ExprKind::StructInit {
@@ -400,13 +411,23 @@ impl<'src> TypeChecker<'src> {
                             func.is_vararg,
                             callee_typed.line,
                         )?;
-
                         let ret_type = if safe {
                             func.return_type.clone().wrap_in_optional()
                         } else {
                             func.return_type.clone()
                         };
-                        //TODO check for still unknown types
+
+                        let uninferred: Vec<_> = map
+                            .iter()
+                            .filter(|(_, v)| **v == Type::Unknown)
+                            .map(|(name, t)| name.to_string())
+                            .collect();
+                        if uninferred.len() > 0 {
+                            return Err(TypeCheckerError::CannotInferType {
+                                line: callee.get_line(),
+                                uninferred_generics: uninferred,
+                            });
+                        }
                         let ret_type = TypeSystem::generic_to_concrete(ret_type, &map);
 
                         Ok(TypedExpr {

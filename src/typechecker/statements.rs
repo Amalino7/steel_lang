@@ -60,12 +60,13 @@ impl<'src> TypeChecker<'src> {
             }
             Stmt::Impl {
                 interfaces,
-                name: (name, _),
+                name: (name, target_generics),
                 methods,
                 generics,
             } => {
                 let mut typed_methods = vec![];
 
+                self.sys.push_generics(generics);
                 // define methods
                 for method in methods {
                     match method {
@@ -76,7 +77,21 @@ impl<'src> TypeChecker<'src> {
                             type_,
                             generics,
                         } => {
-                            let type_info = Type::from_method_ast(type_, name, &self.sys)?;
+                            self.sys.push_generics(generics);
+                            let type_info = match Type::from_method_ast(
+                                type_,
+                                name,
+                                target_generics,
+                                &self.sys,
+                            ) {
+                                Ok(t) => t,
+                                Err(err) => {
+                                    self.errors.push(err);
+                                    self.sys.pop_n_generics(generics.len());
+                                    continue;
+                                }
+                            };
+                            self.sys.pop_n_generics(generics.len());
 
                             let primary_mangled = format!("{}.{}", name.lexeme, func_name.lexeme);
                             let typed_method = self.check_function(
@@ -91,6 +106,7 @@ impl<'src> TypeChecker<'src> {
                         _ => unreachable!(),
                     }
                 }
+                self.sys.pop_n_generics(generics.len());
                 // generate vtables
                 let mut vtables = vec![];
                 for interface in interfaces {

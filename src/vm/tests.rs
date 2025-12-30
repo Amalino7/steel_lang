@@ -1679,6 +1679,28 @@ mod tests {
         execute_source(src, false, "run", true);
     }
     #[test]
+    fn test_generic_impl() {
+        let src = r#"
+        struct Box<T> {top: T}
+        impl<T> Box<T> {
+            func new(top: T): Box<T> {
+                return Box(top: top);
+            }
+            func unwrap(self): T { return self.top; }
+            
+            func map<U>(self, transform: func(T): U): Box<U> {
+                return Box(top: transform(self.top));
+            }
+        }
+
+        let box = Box.new(10);
+        let str_box = box.map(str);
+        assert(str_box.top + "1", "101");
+        // assert(box.unwrap() , 10);
+        "#;
+        execute_source(src, false, "run", true);
+    }
+    #[test]
     fn test_complex_generic() {
         let src = r#"
         struct Box<T> {top: T}
