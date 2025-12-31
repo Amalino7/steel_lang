@@ -55,6 +55,7 @@ impl<'src> TypeChecker<'src> {
 
     pub(crate) fn handle_enum_call(
         &self,
+        variant_name: &str,
         variant_type: &Type,
         type_params: &[Symbol],
         generic_args: &GenericArgs,
@@ -63,6 +64,11 @@ impl<'src> TypeChecker<'src> {
     ) -> Result<(TypedExpr, HashMap<Symbol, Type>), TypeCheckerError> {
         let mut map = generics_to_map(type_params, generic_args);
 
+        let bind_args = |args: &[(String, Type)]| {
+            self.sys
+                .bind_arguments(&variant_name, &mut map, args, inferred_args, false, line)
+        };
+
         let val_expr = match variant_type {
             Type::Struct(struct_name, empty) => {
                 let struct_def = self
@@ -70,14 +76,7 @@ impl<'src> TypeChecker<'src> {
                     .get_struct(struct_name)
                     .expect("Enum variant points to non-existent struct");
 
-                let bound_args = self.sys.bind_arguments(
-                    &struct_name,
-                    &mut map, //TODO use map
-                    &struct_def.ordered_fields,
-                    inferred_args,
-                    false,
-                    line,
-                )?;
+                let bound_args = bind_args(&struct_def.ordered_fields)?;
 
                 TypedExpr {
                     ty: Type::Struct(struct_name.clone(), empty.clone()),
@@ -97,14 +96,7 @@ impl<'src> TypeChecker<'src> {
                     .map(|(i, t)| (i.to_string(), t.clone()))
                     .collect();
 
-                let bound_args = self.sys.bind_arguments(
-                    "enum call",
-                    &mut map, // TODO use map
-                    &params,
-                    inferred_args,
-                    false,
-                    line,
-                )?;
+                let bound_args = bind_args(&params)?;
 
                 TypedExpr {
                     ty: variant_type.clone(),
@@ -117,16 +109,7 @@ impl<'src> TypeChecker<'src> {
             _ => {
                 // One argument
                 let params = vec![("value".to_string(), variant_type.clone())];
-
-                let mut bound_args = self.sys.bind_arguments(
-                    "enum call",
-                    &mut map,
-                    &params,
-                    inferred_args,
-                    false,
-                    line,
-                )?;
-
+                let mut bound_args = bind_args(&params)?;
                 bound_args.pop().unwrap() // Safe because bind_arguments guarantees match
             }
         };

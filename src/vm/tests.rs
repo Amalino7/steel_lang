@@ -1698,11 +1698,11 @@ mod tests {
         func wrap(a: number): string { return to_str(a);}
 
         let box = Box.new(10);
-        let str_box = box.map(to_str);
+        let str_box = box.map(wrap);
         assert(str_box.top + "1", "101");
         assert(box.unwrap() , 10);
         "#;
-        execute_source(src, false, "run", false);
+        execute_source(src, false, "run", true);
     }
     #[test]
     fn test_generic_enums() {
@@ -1728,7 +1728,7 @@ mod tests {
         let list = List.Cons(1, List.Nil);
         {
             let res = Result.<number, number>.Err(21);
-            let res = Result.map_error(res, wrap);
+            let res = Result.map_error(res, to_str.<number>);
             if res is Ok {
                 println(res + 10);
             }

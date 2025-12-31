@@ -29,20 +29,54 @@ impl<'src> TypeChecker<'src> {
 
                 match &mut callee_typed.ty {
                     Type::Function(func) => {
-                        todo!("Type specialization on functions")
+                        if func.type_params.len() != generic_args.len() {
+                            return Err(TypeCheckerError::InvalidGenericSpecification {
+                                line: callee_typed.line,
+                                message: format!(
+                                    "Expected {} generic arguments but got {}!",
+                                    func.type_params.len(),
+                                    generic_args.len(),
+                                ),
+                            });
+                        }
+                        if func.type_params.len() == 0 {
+                            return Err(TypeCheckerError::InvalidGenericSpecification {
+                                line: callee_typed.line,
+                                message: "Cannot specialize generic on function without generics!"
+                                    .to_string(),
+                            });
+                        }
+                        let map = generics_to_map(&func.type_params, &generic_args);
+                        let new_ty = TypeSystem::generic_to_concrete(callee_typed.ty, &map);
+                        callee_typed.ty = new_ty;
+                        Ok(callee_typed)
                     }
                     Type::Metatype(type_name, generics) => {
                         if generics.len() > 0 {
-                            todo!("generics already provided")
+                            return Err(TypeCheckerError::InvalidGenericSpecification {
+                                line: callee_typed.line,
+                                message: "Cannot specialize generic more than once!".to_string(),
+                            });
                         }
-                        if generic_args.len() != self.sys.get_generics_count(type_name) {
-                            todo!("wrong number of generics error")
+                        let actual_generic_count = self.sys.get_generics_count(type_name);
+                        if generic_args.len() != actual_generic_count {
+                            Err(TypeCheckerError::InvalidGenericSpecification {
+                                line: callee_typed.line,
+                                message: format!(
+                                    "Expected {} but got {} generic arguments!",
+                                    actual_generic_count,
+                                    generic_args.len(),
+                                ),
+                            })
                         } else {
                             Rc::get_mut(generics).unwrap().extend(generic_args); // Shouldn't fail
                             Ok(callee_typed)
                         }
                     }
-                    _ => todo!("error"),
+                    _ => Err(TypeCheckerError::InvalidGenericSpecification {
+                        line: callee_typed.line,
+                        message: "Cannot specialize non-generic type!".to_string(),
+                    }),
                 }
             }
             Expr::Is {
@@ -292,8 +326,9 @@ impl<'src> TypeChecker<'src> {
                         variant_idx, value, ..
                     } = &mut callee_typed.kind
                     {
-                        let (_, ty) = &enum_def.ordered_variants[*variant_idx as usize];
+                        let (variant_name, ty) = &enum_def.ordered_variants[*variant_idx as usize];
                         let (expr, map) = self.handle_enum_call(
+                            variant_name,
                             ty,
                             &enum_def.generic_params,
                             generics,
@@ -354,9 +389,9 @@ impl<'src> TypeChecker<'src> {
                 match lookup_type {
                     Type::Function(func) => {
                         let mut map: HashMap<Symbol, Type> =
-                            generics_to_map(&func.type_params, &vec![].into());
+                            generics_to_map(&func.type_params, &[]);
                         let bound_args = self.sys.bind_arguments(
-                            "function",
+                            callee.to_string().as_ref(),
                             &mut map,
                             &func.params,
                             inferred_args,

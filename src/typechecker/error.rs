@@ -21,6 +21,10 @@ pub enum TypeCheckerError {
         line: u32,
         message: &'static str,
     },
+    ComplexTypeMismatch {
+        message: String,
+        line: u32,
+    },
     InvalidReturnOutsideFunction {
         line: u32,
     },
@@ -116,6 +120,10 @@ pub enum TypeCheckerError {
         line: u32,
         uninferred_generics: Vec<String>,
     },
+    InvalidGenericSpecification {
+        line: u32,
+        message: String,
+    },
 }
 
 impl TypeCheckerError {
@@ -147,6 +155,8 @@ impl TypeCheckerError {
             TypeCheckerError::InvalidIsUsage { line, .. } => *line,
             TypeCheckerError::MissingGeneric { line, .. } => *line,
             TypeCheckerError::CannotInferType { line, .. } => *line,
+            TypeCheckerError::InvalidGenericSpecification { line, .. } => *line,
+            TypeCheckerError::ComplexTypeMismatch { line, .. } => *line,
         }
     }
 }
@@ -372,6 +382,16 @@ impl std::fmt::Display for TypeCheckerError {
                     line,
                     uninferred_generics.join(", ")
                 )
+            }
+            TypeCheckerError::InvalidGenericSpecification { line, message } => {
+                write!(
+                    f,
+                    "[line {}] Error: Invalid generic specification.\n {}",
+                    line, message
+                )
+            }
+            TypeCheckerError::ComplexTypeMismatch { line, message } => {
+                write!(f, "[line {}] Error: {}\n", line, message)
             }
         }
     }

@@ -37,10 +37,7 @@ pub struct StructType {
     pub generic_params: Vec<Symbol>,
 }
 
-pub fn generics_to_map(
-    generics: &[Symbol],
-    generics_provided: &GenericArgs,
-) -> HashMap<Symbol, Type> {
+pub fn generics_to_map(generics: &[Symbol], generics_provided: &[Type]) -> HashMap<Symbol, Type> {
     generics
         .iter()
         .enumerate()

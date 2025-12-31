@@ -193,61 +193,86 @@ impl TypeSystem {
         }
     }
 
-    fn resolve_generics(
+    fn unify_types(
         expected_ty: &Type,
         generics_map: &mut HashMap<Symbol, Type>,
         provided: &Type,
-    ) -> bool {
-        match expected_ty {
-            Type::Metatype(_, _) => false,
-            Type::Nil | Type::Number | Type::String | Type::Void | Type::Boolean => {
-                if expected_ty == provided { true } else { false }
+    ) -> Result<(), String> {
+        fn mismatch(expected: &Type, found: &Type) -> Result<(), String> {
+            Err(format!(
+                "Type mismatch: expected {}, found {}",
+                expected, found
+            ))
+        }
+
+        fn unify_complex(
+            expected_name: &Symbol,
+            expected_generics: &[Type],
+            provided_name: &Symbol,
+            provided_generics: &[Type],
+            generics_map: &mut HashMap<Symbol, Type>,
+        ) -> Result<(), String> {
+            if expected_name != provided_name {
+                return Err(format!(
+                    "Type mismatch: expected {}, found {}",
+                    expected_name, provided_name
+                ));
             }
-            Type::Unknown | Type::Any => true,
+            expected_generics
+                .iter()
+                .zip(provided_generics.iter())
+                .map(|(e, p)| TypeSystem::unify_types(e, generics_map, p))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(())
+        }
+
+        match expected_ty {
+            Type::Metatype(_, _) => Err("Cannot unify metatypes".into()),
+            Type::Nil | Type::Number | Type::String | Type::Void | Type::Boolean => {
+                if expected_ty == provided {
+                    Ok(())
+                } else {
+                    mismatch(expected_ty, provided)
+                }
+            }
+            Type::Unknown | Type::Any => Ok(()),
             Type::Optional(expected) => {
                 if provided == &Type::Nil {
-                    true
+                    Ok(())
                 } else if let Type::Optional(provided) = provided {
-                    Self::resolve_generics(expected, generics_map, provided)
+                    Self::unify_types(expected, generics_map, provided)
                 } else {
-                    Self::resolve_generics(expected, generics_map, provided)
+                    Self::unify_types(expected, generics_map, provided)
                 }
             }
             Type::Function(expected_inner) => {
                 if let Type::Function(provided_inner) = provided {
-                    let mut eq = true;
                     for (expected_param, provided_param) in expected_inner
                         .params
                         .iter()
                         .zip(provided_inner.params.iter())
                     {
-                        eq &= Self::resolve_generics(
-                            &expected_param.1,
-                            generics_map,
-                            &provided_param.1,
-                        );
+                        Self::unify_types(&expected_param.1, generics_map, &provided_param.1)?;
                     }
-                    eq &= Self::resolve_generics(
+                    Self::unify_types(
                         &expected_inner.return_type,
                         generics_map,
                         &provided_inner.return_type,
-                    );
-                    eq
+                    )
                 } else {
-                    false
+                    mismatch(expected_ty, provided)
                 }
             }
             Type::Tuple(expected_inner) => {
                 if let Type::Tuple(provided_inner) = provided {
-                    let mut eq = true;
                     for (expected_param, provided_param) in
                         expected_inner.types.iter().zip(provided_inner.types.iter())
                     {
-                        eq &= Self::resolve_generics(expected_param, generics_map, &provided_param);
+                        Self::unify_types(expected_param, generics_map, &provided_param)?;
                     }
-                    eq
+                    Ok(())
                 } else {
-                    false
+                    mismatch(expected_ty, provided)
                 }
             }
             Type::GenericParam(name) => {
@@ -255,56 +280,43 @@ impl TypeSystem {
                 if let Some(new_ty) = generics_map.get(name) {
                     if new_ty == &Type::Unknown {
                         generics_map.insert(name.clone(), provided.clone());
-                        true
+                        Ok(())
                     } else if let Type::GenericParam(new_name) = new_ty
                         && new_name == name
                     {
-                        true
+                        Ok(())
                     } else {
-                        Self::resolve_generics(&new_ty.clone(), generics_map, provided)
+                        Self::unify_types(&new_ty.clone(), generics_map, provided)
                     }
                 } else {
-                    if let Type::GenericParam(provided_name) = provided {
-                        name == provided_name
+                    if let Type::GenericParam(provided_name) = provided
+                        && name == provided_name
+                    {
+                        Ok(())
                     } else {
-                        false
+                        mismatch(expected_ty, provided)
                     }
                 }
             }
             Type::Struct(name, args) => {
                 if let Type::Struct(provided_name, provided_args) = provided {
-                    if name != provided_name {
-                        return false;
-                    }
-                    args.iter()
-                        .zip(provided_args.iter())
-                        .all(|(e, p)| Self::resolve_generics(e, generics_map, p))
+                    unify_complex(name, args, provided_name, provided_args, generics_map)
                 } else {
-                    false
+                    mismatch(expected_ty, provided)
                 }
             }
             Type::Interface(name, args) => {
                 if let Type::Interface(provided_name, provided_args) = provided {
-                    if name != provided_name {
-                        return false;
-                    }
-                    args.iter()
-                        .zip(provided_args.iter())
-                        .all(|(e, p)| Self::resolve_generics(e, generics_map, p))
+                    unify_complex(name, args, provided_name, provided_args, generics_map)
                 } else {
-                    false
+                    mismatch(expected_ty, provided)
                 }
             }
             Type::Enum(name, args) => {
                 if let Type::Enum(provided_name, provided_args) = provided {
-                    if name != provided_name {
-                        return false;
-                    }
-                    args.iter()
-                        .zip(provided_args.iter())
-                        .all(|(e, p)| Self::resolve_generics(e, generics_map, p))
+                    unify_complex(name, args, provided_name, provided_args, generics_map)
                 } else {
-                    false
+                    mismatch(expected_ty, provided)
                 }
             }
         }
@@ -316,15 +328,7 @@ impl TypeSystem {
         expr: TypedExpr,
         line: u32,
     ) -> Result<TypedExpr, TypeCheckerError> {
-        if let Type::Metatype(_, _) = expr.ty {
-            // TODO cannot use metatypes in assignments
-            todo!()
-        }
-
-        let are_equal = Self::resolve_generics(expected_type, generics_map, &expr.ty);
-        if are_equal {
-            return Ok(expr);
-        }
+        let are_equal = Self::unify_types(expected_type, generics_map, &expr.ty);
         // TODO rethink interface cast logic
 
         let expected_type = if let Type::Optional(inner) = expected_type {
@@ -332,10 +336,6 @@ impl TypeSystem {
         } else {
             expected_type
         };
-
-        if *expected_type == expr.ty {
-            return Ok(expr);
-        }
 
         if let (Type::Interface(iface_name, generics), Some(name)) =
             (expected_type, expr.ty.get_name())
@@ -351,12 +351,10 @@ impl TypeSystem {
                 });
             }
         }
-        Err(TypeCheckerError::TypeMismatch {
-            expected: expected_type.clone(),
-            found: expr.ty,
-            line,
-            message: "Type mismatch in assignment or argument passing.",
-        })
+        match are_equal {
+            Ok(_) => Ok(expr),
+            Err(msg) => Err(TypeCheckerError::ComplexTypeMismatch { line, message: msg }),
+        }
     }
 
     pub fn implement_method(implementation: &Type, expected: &Type) -> bool {
