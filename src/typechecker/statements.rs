@@ -84,7 +84,6 @@ impl<'src> TypeChecker<'src> {
                                     continue;
                                 }
                             };
-                            self.sys.pop_n_generics(generics.len());
 
                             let primary_mangled = format!("{}.{}", name.lexeme, func_name.lexeme);
                             let typed_method = self.check_function(
@@ -93,8 +92,9 @@ impl<'src> TypeChecker<'src> {
                                 body,
                                 type_info,
                                 primary_mangled.into(),
-                            )?;
-                            typed_methods.push(typed_method);
+                            );
+                            self.sys.pop_n_generics(generics.len());
+                            typed_methods.push(typed_method?);
                         }
                         _ => unreachable!(),
                     }

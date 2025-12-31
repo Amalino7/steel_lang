@@ -18,7 +18,7 @@ impl<'src> TypeChecker<'src> {
         let enum_access = self.handle_enum_access(type_token, member_token, generics);
         match enum_access {
             Some(expr) => Ok(expr),
-            None => self.handle_static_method_access(type_token, member_token),
+            None => self.handle_static_method_access(type_token, member_token, generics),
         }
     }
 
@@ -56,11 +56,15 @@ impl<'src> TypeChecker<'src> {
     pub(crate) fn handle_enum_call(
         &self,
         variant_type: &Type,
+        type_params: &[Symbol],
+        generic_args: &GenericArgs,
         inferred_args: Vec<(Option<&str>, TypedExpr, u32)>,
         line: u32,
-    ) -> Result<TypedExpr, TypeCheckerError> {
+    ) -> Result<(TypedExpr, HashMap<Symbol, Type>), TypeCheckerError> {
+        let mut map = generics_to_map(type_params, generic_args);
+
         let val_expr = match variant_type {
-            Type::Struct(struct_name, generics) => {
+            Type::Struct(struct_name, empty) => {
                 let struct_def = self
                     .sys
                     .get_struct(struct_name)
@@ -68,7 +72,7 @@ impl<'src> TypeChecker<'src> {
 
                 let bound_args = self.sys.bind_arguments(
                     &struct_name,
-                    &mut HashMap::new(), //TODO use map
+                    &mut map, //TODO use map
                     &struct_def.ordered_fields,
                     inferred_args,
                     false,
@@ -76,7 +80,7 @@ impl<'src> TypeChecker<'src> {
                 )?;
 
                 TypedExpr {
-                    ty: Type::Struct(struct_name.clone(), generics.clone()),
+                    ty: Type::Struct(struct_name.clone(), empty.clone()),
                     kind: ExprKind::StructInit {
                         name: Box::from(struct_name.to_string()),
                         args: bound_args,
@@ -95,7 +99,7 @@ impl<'src> TypeChecker<'src> {
 
                 let bound_args = self.sys.bind_arguments(
                     "enum call",
-                    &mut HashMap::new(), // TODO use map
+                    &mut map, // TODO use map
                     &params,
                     inferred_args,
                     false,
@@ -116,7 +120,7 @@ impl<'src> TypeChecker<'src> {
 
                 let mut bound_args = self.sys.bind_arguments(
                     "enum call",
-                    &mut HashMap::new(),
+                    &mut map,
                     &params,
                     inferred_args,
                     false,
@@ -126,13 +130,14 @@ impl<'src> TypeChecker<'src> {
                 bound_args.pop().unwrap() // Safe because bind_arguments guarantees match
             }
         };
-        Ok(val_expr)
+        Ok((val_expr, map))
     }
 
     fn handle_static_method_access(
         &mut self,
         type_name: &Symbol,
         method_name: &Token,
+        generics: &GenericArgs,
     ) -> Result<TypedExpr, TypeCheckerError> {
         let mangled_name = format!("{}.{}", type_name, method_name.lexeme);
 
@@ -146,9 +151,18 @@ impl<'src> TypeChecker<'src> {
                 })?;
 
         let (ctx, resolved_var) = method;
-
+        let pairs = if let Some(def) = self.sys.get_struct(type_name) {
+            if generics.len() != def.generic_params.len() {
+                HashMap::new()
+            } else {
+                generics_to_map(&def.generic_params, generics)
+            }
+        } else {
+            HashMap::new()
+        };
+        let ty = TypeSystem::generic_to_concrete(ctx.type_info.clone(), &pairs);
         Ok(TypedExpr {
-            ty: ctx.type_info.clone(),
+            ty,
             kind: ExprKind::GetVar(resolved_var, ctx.name.clone()),
             line: method_name.line,
         })

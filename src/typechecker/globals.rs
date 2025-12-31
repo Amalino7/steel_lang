@@ -145,6 +145,7 @@ impl<'src> TypeChecker<'src> {
                 generics,
             } = stmt
             {
+                self.sys.push_generics(generics);
                 let mut typed_variants = HashMap::new();
                 for (idx, (v_name, fields)) in variants.iter().enumerate() {
                     let ty = match fields {
@@ -163,7 +164,7 @@ impl<'src> TypeChecker<'src> {
                             let full_name: Symbol =
                                 format!("{}.{}", name.lexeme, v_name.lexeme).into();
                             // TODO generics here???
-                            self.sys.declare_struct(full_name.clone(), generics);
+                            self.sys.declare_struct(full_name.clone(), &vec![]);
                             self.sys.define_struct(&full_name, field_types);
                             Type::Struct(full_name, vec![].into())
                         }
@@ -172,7 +173,7 @@ impl<'src> TypeChecker<'src> {
 
                     typed_variants.insert(v_name.lexeme.to_string(), (idx, ty));
                 }
-
+                self.sys.pop_n_generics(generics.len());
                 self.sys.define_enum(name.lexeme.into(), typed_variants);
             }
         }

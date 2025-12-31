@@ -256,6 +256,10 @@ impl TypeSystem {
                     if new_ty == &Type::Unknown {
                         generics_map.insert(name.clone(), provided.clone());
                         true
+                    } else if let Type::GenericParam(new_name) = new_ty
+                        && new_name == name
+                    {
+                        true
                     } else {
                         Self::resolve_generics(&new_ty.clone(), generics_map, provided)
                     }

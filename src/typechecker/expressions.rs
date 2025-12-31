@@ -396,10 +396,35 @@ impl<'src> TypeChecker<'src> {
                     } = &mut callee_typed.kind
                     {
                         let (_, ty) = &enum_def.ordered_variants[*variant_idx as usize];
-                        let expr = self.handle_enum_call(ty, inferred_args, callee.get_line());
-                        *value = Box::from(expr?);
+                        let (expr, map) = self.handle_enum_call(
+                            ty,
+                            &enum_def.generic_params,
+                            generics,
+                            inferred_args,
+                            callee.get_line(),
+                        )?;
+                        *value = Box::from(expr);
+                        let issue = map.iter().any(|(_, v)| *v == Type::Unknown);
+                        if issue {
+                            return Err(TypeCheckerError::CannotInferType {
+                                line: callee.get_line(),
+                                uninferred_generics: map
+                                    .iter()
+                                    .filter(|(_, v)| **v == Type::Unknown)
+                                    .map(|(name, t)| name.to_string())
+                                    .collect(),
+                            });
+                        }
                         // TODO handle generics
-                        callee_typed.ty = Type::Enum(name.clone(), generics.clone());
+                        callee_typed.ty = Type::Enum(
+                            name.clone(),
+                            enum_def
+                                .generic_params
+                                .iter()
+                                .map(|s| map.get(s).unwrap().clone())
+                                .collect::<Vec<_>>()
+                                .into(),
+                        );
                         return Ok(callee_typed);
                     }
                 }

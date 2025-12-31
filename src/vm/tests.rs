@@ -1698,23 +1698,62 @@ mod tests {
         func wrap(a: number): string { return to_str(a);}
 
         let box = Box.new(10);
-        let str_box = box.map(wrap);
+        let str_box = box.map(to_str);
         assert(str_box.top + "1", "101");
         assert(box.unwrap() , 10);
+        "#;
+        execute_source(src, false, "run", false);
+    }
+    #[test]
+    fn test_generic_enums() {
+        let src = r#"
+        enum List<T> {
+            Nil, Cons(T, List<T>)
+        }
+
+        enum Result<T,E> { Ok(T), Err(E) }
+        impl<T,E> Result<T,E> {
+            func map_error<U>(self, transform: func(E): U): Result<T,U> {
+                match self {
+                    .Err(err) => {
+                        let new_err = transform(err);
+                        return Result.<T,U>.Err(new_err);
+                    }
+                    .Ok(ok) => {return Result.<T,U>.Ok(ok);}
+                }
+            }
+        }
+        func wrap(a: number): string { return to_str(a);}
+
+        let list = List.Cons(1, List.Nil);
+        {
+            let res = Result.<number, number>.Err(21);
+            let res = Result.map_error(res, wrap);
+            if res is Ok {
+                println(res + 10);
+            }
+            else {
+                println(res + "10");
+            }
+        }
+
+        assert(list is Cons, true);
         "#;
         execute_source(src, false, "run", true);
     }
     #[test]
     fn test_complex_generic() {
         let src = r#"
-        struct Box<T> {top: T}
+        struct Box<T,U> {top: T}
 
-        impl<T> Box<T> {
-            func new(arg: T): Box<T> {
-                return Box(top: T);
+        impl<T,U> Box<T,U> {
+            func new(arg: T): Box<T,U> {
+                return Box.<T,U>(top: arg);
             }
         }
-        let box = Box.<int>.new(10);
+
+
+        let box = Box.<number,string>.new(10);
         assert(box.top + 12, 22);
         "#;
         execute_source(src, false, "run", true);

@@ -395,7 +395,7 @@ impl Display for Type {
             Type::Struct(name, generic_args) => {
                 write!(f, "struct {} <", name,)?;
                 for generic_arg in generic_args.iter() {
-                    write!(f, "{}", generic_arg)?;
+                    write!(f, "{},", generic_arg)?;
                 }
                 write!(f, ">")
             }
@@ -410,7 +410,7 @@ impl Display for Type {
             Type::Enum(name, generic_args) => {
                 write!(f, "enum {} <", name,)?;
                 for generic_arg in generic_args.iter() {
-                    write!(f, "{}", generic_arg)?;
+                    write!(f, "{},", generic_arg)?;
                 }
                 write!(f, ">")
             }

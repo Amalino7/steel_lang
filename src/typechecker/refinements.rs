@@ -1,5 +1,6 @@
 use crate::typechecker::type_ast::{BinaryOp, ExprKind, LogicalOp, TypedExpr, UnaryOp};
-use crate::typechecker::types::Type;
+use crate::typechecker::type_system::TypeSystem;
+use crate::typechecker::types::{generics_to_map, Type};
 use crate::typechecker::{Symbol, TypeChecker};
 
 type Refinement = (Symbol, Type);
@@ -50,20 +51,24 @@ impl<'src> TypeChecker<'src> {
                     && let Type::Enum(enum_name, generic_args) = &target.ty
                 {
                     let enum_def = self.sys.get_enum(enum_name).unwrap();
+                    let generics_map = generics_to_map(&enum_def.generic_params, generic_args);
                     let false_path = if enum_def.variants.len() == 2 {
                         let (_, other_ty) = enum_def
                             .ordered_variants
                             .get((1 - *variant_idx) as usize)
                             .unwrap();
-                        vec![(name.clone(), other_ty.clone())]
+                        let final_type =
+                            TypeSystem::generic_to_concrete(other_ty.clone(), &generics_map);
+                        vec![(name.clone(), final_type)]
                     } else {
                         vec![]
                     };
 
                     let (_, narrowed_type) = &enum_def.ordered_variants[*variant_idx as usize];
-
+                    let final_type =
+                        TypeSystem::generic_to_concrete(narrowed_type.clone(), &generics_map);
                     return BranchRefinements {
-                        true_path: vec![(name.clone(), narrowed_type.clone())],
+                        true_path: vec![(name.clone(), final_type.clone())],
                         false_path,
                     };
                 }
