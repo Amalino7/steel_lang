@@ -1,8 +1,12 @@
+use crate::compiler::analysis::ResolvedVar;
 use crate::parser::ast::{Stmt, TypeAst, VariantType};
 use crate::token::Token;
 use crate::typechecker::error::TypeCheckerError;
+use crate::typechecker::scope_manager::ScopeType;
+use crate::typechecker::type_ast::{StmtKind, TypedStmt};
+use crate::typechecker::type_system::TypeSystem;
 use crate::typechecker::types::Type;
-use crate::typechecker::{Symbol, TypeChecker};
+use crate::typechecker::{FunctionContext, Symbol, TypeChecker};
 use std::collections::HashMap;
 
 impl<'src> TypeChecker<'src> {
@@ -197,5 +201,170 @@ impl<'src> TypeChecker<'src> {
             }
         }
         field_types
+    }
+
+    pub(crate) fn define_impl(
+        &mut self,
+        interfaces: &[Token],
+        (name, target_generics): &(Token, Vec<Token>),
+        methods: &[Stmt<'src>],
+        generics: &[Token],
+    ) -> Result<TypedStmt, TypeCheckerError> {
+        let mut typed_methods = vec![];
+
+        self.sys.push_generics(generics);
+        // define methods
+        for method in methods {
+            match method {
+                Stmt::Function {
+                    name: func_name,
+                    params,
+                    body,
+                    type_,
+                    generics,
+                } => {
+                    self.sys.push_generics(generics);
+                    let type_info =
+                        match Type::from_method_ast(type_, name, target_generics, &self.sys) {
+                            Ok(t) => t,
+                            Err(err) => {
+                                self.errors.push(err);
+                                self.sys.pop_n_generics(generics.len());
+                                continue;
+                            }
+                        };
+
+                    let primary_mangled = format!("{}.{}", name.lexeme, func_name.lexeme);
+                    let typed_method = self.check_function(
+                        func_name,
+                        params,
+                        body,
+                        type_info,
+                        primary_mangled.into(),
+                    );
+                    self.sys.pop_n_generics(generics.len());
+                    typed_methods.push(typed_method?);
+                }
+                _ => unreachable!(),
+            }
+        }
+        self.sys.pop_n_generics(generics.len());
+        // generate vtables
+        let mut vtables = vec![];
+        for interface in interfaces {
+            // check if interface exists
+            let Some(interface_type) = self.sys.get_interface(interface.lexeme) else {
+                continue;
+            };
+
+            let mut vtable = std::iter::repeat(ResolvedVar::Local(0))
+                .take(interface_type.methods.len())
+                .collect::<Vec<_>>();
+            let mut missing_methods = vec![];
+
+            for (method_name, (location, method_type)) in interface_type.methods.iter() {
+                let impl_method_name = format!("{}.{}", name.lexeme, method_name);
+
+                if let Some((resolved_type, method_location)) =
+                    self.scopes.lookup(&impl_method_name)
+                {
+                    if TypeSystem::implement_method(&resolved_type.type_info, method_type) {
+                        vtable[*location] = method_location;
+                    } else {
+                        missing_methods.push(format!("{} (type mismatch)", method_name));
+                    }
+                } else {
+                    missing_methods.push(method_name.clone());
+                }
+            }
+
+            if !missing_methods.is_empty() {
+                return Err(TypeCheckerError::DoesNotImplementInterface {
+                    missing_methods,
+                    interface: interface.lexeme.to_string(),
+                    line: interface.line,
+                });
+            }
+            self.sys
+                .define_impl(name.lexeme, interface_type.name.clone());
+
+            vtables.push(vtable);
+        }
+
+        Ok(TypedStmt {
+            kind: StmtKind::Impl {
+                methods: typed_methods.into(),
+                vtables: vtables.into(),
+            },
+            line: name.line,
+            type_info: Type::Void,
+        })
+    }
+
+    pub(crate) fn check_function(
+        &mut self,
+        name: &Token<'src>,
+        params: &Vec<Token<'src>>,
+        body: &Vec<Stmt<'src>>,
+        type_: Type,
+        full_name: Symbol,
+    ) -> Result<TypedStmt, TypeCheckerError> {
+        let enclosing_function_context = self.current_function.clone();
+        if let Type::Function(func) = &type_ {
+            self.current_function = FunctionContext::Function(func.return_type.clone());
+
+            let prev_closures = self.scopes.clear_closures();
+            self.scopes.begin_scope(ScopeType::Function);
+
+            self.scopes.declare(name.lexeme.into(), type_.clone())?;
+            // Declare parameters.
+            for (i, param) in params.iter().enumerate() {
+                self.scopes
+                    .declare(param.lexeme.into(), func.params[i].1.clone())?;
+            }
+
+            let func_body = body
+                .iter()
+                .map(|stmt| self.check_stmt(stmt))
+                .collect::<Result<Vec<TypedStmt>, TypeCheckerError>>()?;
+
+            let reserved = self.scopes.end_scope();
+            self.current_function = enclosing_function_context;
+
+            let (_, func_location) = self
+                .scopes
+                .lookup(full_name.as_ref())
+                .expect("Variable was just added to the scope.");
+
+            let old_closures = self.scopes.return_closures(prev_closures);
+
+            let mut captures = vec![];
+            for clos_var in old_closures {
+                let (_, var_ctx) = self
+                    .scopes
+                    .lookup(clos_var.as_ref())
+                    .expect("Variable should exist in upper scope.");
+                captures.push(var_ctx);
+            }
+            Ok(TypedStmt {
+                kind: StmtKind::Function {
+                    target: func_location,
+                    name: Box::from(String::from(name.lexeme)),
+                    body: Box::from(TypedStmt {
+                        kind: StmtKind::Block {
+                            body: func_body,
+                            reserved: reserved as u16,
+                        },
+                        line: name.line,
+                        type_info: Type::Void,
+                    }),
+                    captures: Box::from(captures),
+                },
+                type_info: type_,
+                line: name.line,
+            })
+        } else {
+            unreachable!()
+        }
     }
 }

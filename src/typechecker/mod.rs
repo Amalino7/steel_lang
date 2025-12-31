@@ -8,10 +8,12 @@ use crate::typechecker::types::Type;
 use std::mem::replace;
 use std::rc::Rc;
 
+mod declarations;
 pub mod error;
 mod expressions;
 mod get_handles;
-mod globals;
+mod operators;
+mod pattern_matching;
 mod refinements;
 mod return_analysis;
 mod scope_manager;
