@@ -1615,8 +1615,150 @@ mod tests {
         let src = r#"
             struct Point<T> {x: T, y: T}
             let p = Point(x: 1, y: 2);
+            let Point(:x, :y) = p;
+            assert(x + 0, 1);
+            assert(y + 0, 2);
             assert(p.x, 1);
             assert(p.y, 2);
             "#;
+        execute_source(src, false, "run", false);
+    }
+    #[test]
+    fn test_generic_function() {
+        let src = r#"
+        func identity<T>(stg: T): T {
+            return stg;
+        }
+        func first<T,U>(pair: (T,U)): T {
+            return pair.0;
+        }
+        func second<T>(pair: (T,T)): T {
+            return pair.1;
+        }
+
+        let num = identity(3);
+        let pair = (1, "str");
+        println(num + 2);
+
+        let a = first(pair);
+        let str = second((1, 2));
+        // assert(str + "1", "str1");
+        assert(a + 2, 3);
+        "#;
+        execute_source(src, false, "run", true);
+    }
+    #[test]
+    fn test_simple_generic_struct() {
+        let src = r#"
+        struct Box<T> {top: T}
+
+        func square(a: number): number{
+            return a * a;
+        }
+        func unwrap(a: number?): number {
+            return a!;
+        }
+
+        func map<T,U> (box: Box<T>, transform: func(T): U): Box<U> {
+            let res = transform(box.top);
+            return Box(top: res);
+        }
+
+        let box = Box(19);
+        let other_box = Box("str");
+        box = map(box, square);
+
+        let new_box: Box<number?> = Box(nil);
+        new_box.top = 10;
+        let good = map(new_box, unwrap);
+
+        // let a = Box;
+        Box.<number>(top: 10);
+        assert(good.top, 10);
+        println(good);
+        println(box.top);
+        assert(box.top, 361);
+        // box = other_box; //not legal
+        box = Box(10);
+        assert(box.top + 12, 22);
+        "#;
+        execute_source(src, false, "run", true);
+    }
+    #[test]
+    fn test_generic_impl() {
+        let src = r#"
+        struct Box<T> {top: T}
+        impl<T> Box<T> {
+            func new(top: T): Box<T> {
+                return Box(top: top);
+            }
+            func unwrap(self): T { return self.top; }
+            
+            func map<U>(self, transform: func(T): U): Box<U> {
+                return Box(top: transform(self.top));
+            }
+        }
+        func wrap(a: number): string { return to_str(a);}
+
+        let box = Box.new(10);
+        let str_box = box.map(wrap);
+        assert(str_box.top + "1", "101");
+        assert(box.unwrap() , 10);
+        "#;
+        execute_source(src, false, "run", true);
+    }
+    #[test]
+    fn test_generic_enums() {
+        let src = r#"
+        enum List<T> {
+            Nil, Cons(T, List<T>)
+        }
+
+        enum Result<T,E> { Ok(T), Err(E) }
+        impl<T,E> Result<T,E> {
+            func map_error<U>(self, transform: func(E): U): Result<T,U> {
+                match self {
+                    .Err(err) => {
+                        let new_err = transform(err);
+                        return Result.<T,U>.Err(new_err);
+                    }
+                    .Ok(ok) => {return Result.<T,U>.Ok(ok);}
+                }
+            }
+        }
+        func wrap(a: number): string { return to_str(a);}
+
+        let list = List.Cons(1, List.Nil);
+        {
+            let res = Result.<number, number>.Err(21);
+            let res = Result.map_error(res, to_str.<number>);
+            if res is Ok {
+                println(res + 10);
+            }
+            else {
+                println(res + "10");
+            }
+        }
+
+        assert(list is Cons, true);
+        "#;
+        execute_source(src, false, "run", true);
+    }
+    #[test]
+    fn test_complex_generic() {
+        let src = r#"
+        struct Box<T,U> {top: T}
+
+        impl<T,U> Box<T,U> {
+            func new(arg: T): Box<T,U> {
+                return Box.<T,U>(top: arg);
+            }
+        }
+
+
+        let box = Box.<number,string>.new(10);
+        assert(box.top + 12, 22);
+        "#;
+        execute_source(src, false, "run", true);
     }
 }

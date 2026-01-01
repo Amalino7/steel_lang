@@ -1,12 +1,14 @@
 use crate::compiler::analysis::ResolvedVar;
+use crate::compiler::analysis::ResolvedVar::Global;
 use crate::parser::ast::{Expr, Literal};
 use crate::token::{Token, TokenType};
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::error::TypeCheckerError::AssignmentToCapturedVariable;
-use crate::typechecker::scope_manager::ScopeType;
-use crate::typechecker::type_ast::{BinaryOp, ExprKind, LogicalOp, TypedExpr, UnaryOp};
-use crate::typechecker::types::{StructType, TupleType, Type};
-use crate::typechecker::TypeChecker;
+use crate::typechecker::type_ast::{ExprKind, LogicalOp, TypedExpr, UnaryOp};
+use crate::typechecker::type_system::TypeSystem;
+use crate::typechecker::types::{generics_to_map, GenericArgs, StructType, TupleType, Type};
+use crate::typechecker::{Symbol, TypeChecker};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 impl<'src> TypeChecker<'src> {
@@ -15,12 +17,74 @@ impl<'src> TypeChecker<'src> {
         expr: &Expr<'src>,
     ) -> Result<TypedExpr, TypeCheckerError> {
         match expr {
+            Expr::TypeSpecialization {
+                callee,
+                generics: generics_provided,
+            } => {
+                let mut callee_typed = self.infer_expression(callee)?;
+                let generic_args = generics_provided
+                    .iter()
+                    .map(|t| Type::from_ast(t, &self.sys))
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                match &mut callee_typed.ty {
+                    Type::Function(func) => {
+                        if func.type_params.len() != generic_args.len() {
+                            return Err(TypeCheckerError::InvalidGenericSpecification {
+                                line: callee_typed.line,
+                                message: format!(
+                                    "Expected {} generic arguments but got {}!",
+                                    func.type_params.len(),
+                                    generic_args.len(),
+                                ),
+                            });
+                        }
+                        if func.type_params.len() == 0 {
+                            return Err(TypeCheckerError::InvalidGenericSpecification {
+                                line: callee_typed.line,
+                                message: "Cannot specialize generic on function without generics!"
+                                    .to_string(),
+                            });
+                        }
+                        let map = generics_to_map(&func.type_params, &generic_args);
+                        let new_ty = TypeSystem::generic_to_concrete(callee_typed.ty, &map);
+                        callee_typed.ty = new_ty;
+                        Ok(callee_typed)
+                    }
+                    Type::Metatype(type_name, generics) => {
+                        if generics.len() > 0 {
+                            return Err(TypeCheckerError::InvalidGenericSpecification {
+                                line: callee_typed.line,
+                                message: "Cannot specialize generic more than once!".to_string(),
+                            });
+                        }
+                        let actual_generic_count = self.sys.get_generics_count(type_name);
+                        if generic_args.len() != actual_generic_count {
+                            Err(TypeCheckerError::InvalidGenericSpecification {
+                                line: callee_typed.line,
+                                message: format!(
+                                    "Expected {} but got {} generic arguments!",
+                                    actual_generic_count,
+                                    generic_args.len(),
+                                ),
+                            })
+                        } else {
+                            Rc::get_mut(generics).unwrap().extend(generic_args); // Shouldn't fail
+                            Ok(callee_typed)
+                        }
+                    }
+                    _ => Err(TypeCheckerError::InvalidGenericSpecification {
+                        line: callee_typed.line,
+                        message: "Cannot specialize non-generic type!".to_string(),
+                    }),
+                }
+            }
             Expr::Is {
                 expression,
                 type_name,
             } => {
                 let target = self.infer_expression(expression)?;
-                let Type::Enum(enum_name) = &target.ty else {
+                let Type::Enum(enum_name, _) = &target.ty else {
                     return Err(TypeCheckerError::InvalidIsUsage {
                         line: type_name.line,
                         message: "Is can only be used on enum types.",
@@ -69,50 +133,7 @@ impl<'src> TypeChecker<'src> {
             Expr::Unary {
                 operator,
                 expression,
-            } => {
-                let typed_operand = self.infer_expression(expression)?;
-                let operand_type = typed_operand.ty.clone();
-
-                if operator.token_type == TokenType::Bang {
-                    if operand_type == Type::Boolean {
-                        Ok(TypedExpr {
-                            ty: operand_type,
-                            kind: ExprKind::Unary {
-                                operator: UnaryOp::Not,
-                                operand: Box::new(typed_operand),
-                            },
-                            line: operator.line,
-                        })
-                    } else {
-                        Err(TypeCheckerError::TypeMismatch {
-                            expected: Type::Boolean,
-                            found: operand_type,
-                            line: operator.line,
-                            message: "Expected boolean but found something else.",
-                        })
-                    }
-                } else if operator.token_type == TokenType::Minus {
-                    if operand_type == Type::Number {
-                        Ok(TypedExpr {
-                            ty: operand_type,
-                            kind: ExprKind::Unary {
-                                operator: UnaryOp::Negate,
-                                operand: Box::new(typed_operand),
-                            },
-                            line: operator.line,
-                        })
-                    } else {
-                        Err(TypeCheckerError::TypeMismatch {
-                            expected: Type::Number,
-                            found: operand_type,
-                            line: operator.line,
-                            message: "Expected number but found something else.",
-                        })
-                    }
-                } else {
-                    unreachable!("Ast should be checked for invalid operators before this point.")
-                }
-            }
+            } => self.check_unary_expression(operator, expression),
             Expr::Binary {
                 operator,
                 left,
@@ -125,6 +146,12 @@ impl<'src> TypeChecker<'src> {
                     Ok(TypedExpr {
                         ty: ctx.type_info.clone(),
                         kind: ExprKind::GetVar(resolved, ctx.name.clone()),
+                        line: name.line,
+                    })
+                } else if let Some(type_name) = self.sys.get_owned_type_name(name.lexeme) {
+                    Ok(TypedExpr {
+                        ty: Type::Metatype(type_name.clone(), vec![].into()),
+                        kind: ExprKind::GetVar(Global(0), type_name),
                         line: name.line,
                     })
                 } else {
@@ -162,9 +189,12 @@ impl<'src> TypeChecker<'src> {
                         });
                     }
 
-                    let coerced_value =
-                        self.sys
-                            .verify_assignment(&ctx.type_info, typed_value, identifier.line)?;
+                    let coerced_value = self.sys.verify_assignment(
+                        &mut HashMap::new(),
+                        &ctx.type_info,
+                        typed_value,
+                        identifier.line,
+                    )?;
 
                     Ok(TypedExpr {
                         ty: coerced_value.ty.clone(),
@@ -223,71 +253,13 @@ impl<'src> TypeChecker<'src> {
                 left,
                 operator,
                 right,
-            } => {
-                let left_typed = self.infer_expression(left)?;
-                let refinements = self.analyze_condition(&left_typed);
-
-                self.scopes.begin_scope(ScopeType::Block);
-
-                let refinements = if TokenType::And == operator.token_type {
-                    refinements.true_path
-                } else if TokenType::Or == operator.token_type {
-                    refinements.false_path
-                } else {
-                    unreachable!("Invalid logical operator");
-                };
-                let mut typed_refinements = vec![];
-                for (name, ty) in refinements {
-                    if let Some(case) = self.scopes.refine(&name, ty) {
-                        typed_refinements.push(case);
-                    }
-                }
-                let right_typed = self.infer_expression(right)?;
-                self.scopes.end_scope();
-
-                let left_type = left_typed.ty.clone();
-                let right_type = right_typed.ty.clone();
-
-                if left_type != Type::Boolean {
-                    return Err(TypeCheckerError::TypeMismatch {
-                        expected: Type::Boolean,
-                        found: left_type.clone(),
-                        line: operator.line,
-                        message: "Expected boolean but found something else.",
-                    });
-                }
-
-                if right_type != Type::Boolean {
-                    return Err(TypeCheckerError::TypeMismatch {
-                        expected: Type::Boolean,
-                        found: right_type.clone(),
-                        line: operator.line,
-                        message: "Expected boolean but found something else.",
-                    });
-                }
-
-                let op = match operator.token_type {
-                    TokenType::And => LogicalOp::And,
-                    TokenType::Or => LogicalOp::Or,
-                    _ => unreachable!("Invalid logical operator"),
-                };
-
-                Ok(TypedExpr {
-                    ty: Type::Boolean,
-                    kind: ExprKind::Logical {
-                        left: Box::new(left_typed),
-                        operator: op,
-                        right: Box::new(right_typed),
-                        typed_refinements,
-                    },
-                    line: operator.line,
-                })
-            }
+            } => self.check_logical_expression(operator, left, right),
             Expr::Call {
                 callee,
                 arguments,
                 safe,
             } => {
+                let mut callee_typed = self.infer_expression(callee)?;
                 // Handle args
                 let mut inferred_args = Vec::with_capacity(arguments.len());
 
@@ -303,21 +275,42 @@ impl<'src> TypeChecker<'src> {
 
                     inferred_args.push((label, typed_val, line));
                 }
+
                 // Handle Struct constructor
-                if let Expr::Variable { name } = &**callee
-                    && let Some(struct_def) = self.sys.get_struct(&name.lexeme)
+                if let Type::Metatype(name, generics) = &callee_typed.ty
+                    && let Some(struct_def) = self.sys.get_struct(&name)
                 {
+                    let mut map: HashMap<Symbol, Type> =
+                        generics_to_map(&struct_def.generic_params, generics);
                     let owned_name = struct_def.name.clone();
                     let bound_args = self.sys.bind_arguments(
-                        &name.lexeme,
+                        &name,
+                        &mut map,
                         &struct_def.ordered_fields,
                         inferred_args,
                         false,
                         callee.get_line(),
                     )?;
 
+                    let type_args = struct_def
+                        .generic_params
+                        .iter()
+                        .map(|name| map.get(name).unwrap().clone())
+                        .collect();
+
+                    let uninferred: Vec<_> = map
+                        .iter()
+                        .filter(|(_, v)| **v == Type::Unknown)
+                        .map(|(name, t)| name.to_string())
+                        .collect();
+                    if uninferred.len() > 0 {
+                        return Err(TypeCheckerError::CannotInferType {
+                            line: callee.get_line(),
+                            uninferred_generics: uninferred,
+                        });
+                    }
                     return Ok(TypedExpr {
-                        ty: Type::Struct(owned_name.clone()),
+                        ty: Type::Struct(owned_name.clone(), Rc::new(type_args)),
                         kind: ExprKind::StructInit {
                             name: Box::from(owned_name.to_string()),
                             args: bound_args,
@@ -325,27 +318,48 @@ impl<'src> TypeChecker<'src> {
                         line: callee.get_line(),
                     });
                 }
-                // Check for an Enum constructor pattern
-                if let Expr::Get { object, field, .. } = callee.as_ref() {
-                    if let Expr::Variable { name } = object.as_ref() {
-                        if let Some(enum_def) = self.sys.get_enum(name.lexeme) {
-                            if let Some((variant_idx, variant_type)) =
-                                enum_def.get_variant(field.lexeme)
-                            {
-                                return self.handle_enum_call(
-                                    &variant_type,
-                                    variant_idx,
-                                    inferred_args,
-                                    field,
-                                    enum_def,
-                                    callee.get_line(),
-                                );
-                            }
+
+                if let Type::Metatype(name, generics) = &callee_typed.ty
+                    && let Some(enum_def) = self.sys.get_enum(&name)
+                {
+                    if let ExprKind::EnumInit {
+                        variant_idx, value, ..
+                    } = &mut callee_typed.kind
+                    {
+                        let (variant_name, ty) = &enum_def.ordered_variants[*variant_idx as usize];
+                        let (expr, map) = self.handle_enum_call(
+                            variant_name,
+                            ty,
+                            &enum_def.generic_params,
+                            generics,
+                            inferred_args,
+                            callee.get_line(),
+                        )?;
+                        *value = Box::from(expr);
+                        let issue = map.iter().any(|(_, v)| *v == Type::Unknown);
+                        if issue {
+                            return Err(TypeCheckerError::CannotInferType {
+                                line: callee.get_line(),
+                                uninferred_generics: map
+                                    .iter()
+                                    .filter(|(_, v)| **v == Type::Unknown)
+                                    .map(|(name, t)| name.to_string())
+                                    .collect(),
+                            });
                         }
+                        // TODO handle generics
+                        callee_typed.ty = Type::Enum(
+                            name.clone(),
+                            enum_def
+                                .generic_params
+                                .iter()
+                                .map(|s| map.get(s).unwrap().clone())
+                                .collect::<Vec<_>>()
+                                .into(),
+                        );
+                        return Ok(callee_typed);
                     }
                 }
-
-                let callee_typed = self.infer_expression(callee)?;
 
                 let safe = if let ExprKind::MethodGet { safe, .. } = callee_typed.kind {
                     safe
@@ -374,19 +388,34 @@ impl<'src> TypeChecker<'src> {
                 // Check for Normal Function Call
                 match lookup_type {
                     Type::Function(func) => {
+                        let mut map: HashMap<Symbol, Type> =
+                            generics_to_map(&func.type_params, &[]);
                         let bound_args = self.sys.bind_arguments(
-                            "function",
+                            callee.to_string().as_ref(),
+                            &mut map,
                             &func.params,
                             inferred_args,
                             func.is_vararg,
                             callee_typed.line,
                         )?;
-
                         let ret_type = if safe {
                             func.return_type.clone().wrap_in_optional()
                         } else {
                             func.return_type.clone()
                         };
+
+                        let uninferred: Vec<_> = map
+                            .iter()
+                            .filter(|(_, v)| **v == Type::Unknown)
+                            .map(|(name, t)| name.to_string())
+                            .collect();
+                        if uninferred.len() > 0 {
+                            return Err(TypeCheckerError::CannotInferType {
+                                line: callee.get_line(),
+                                uninferred_generics: uninferred,
+                            });
+                        }
+                        let ret_type = TypeSystem::generic_to_concrete(ret_type, &map);
 
                         Ok(TypedExpr {
                             ty: ret_type,
@@ -410,13 +439,10 @@ impl<'src> TypeChecker<'src> {
                 safe,
             } => {
                 //TODO Ignores safe static access probably should be a warning
-                if let Expr::Variable { name } = object.as_ref()
-                    && self.sys.does_type_exist(name.lexeme)
-                {
-                    return self.resolve_static_access(name, field);
-                }
-
                 let object_typed = self.infer_expression(object)?;
+                if let Type::Metatype(name, generics) = &object_typed.ty {
+                    return self.resolve_static_access(name, field, generics);
+                }
 
                 self.resolve_instance_access(object_typed, field, *safe)
             }
@@ -471,6 +497,7 @@ impl<'src> TypeChecker<'src> {
                             index: idx,
                             safe: *safe,
                             value: Box::new(self.sys.verify_assignment(
+                                &mut HashMap::new(),
                                 &tuple_type.types[idx as usize],
                                 value,
                                 field.line,
@@ -480,14 +507,14 @@ impl<'src> TypeChecker<'src> {
                     });
                 }
 
-                if let Type::Struct(struct_def) = type_ {
+                if let Type::Struct(struct_def, generics) = type_ {
                     let struct_def = self
                         .sys
                         .get_struct(&struct_def)
                         .expect("Should have errored earlier");
 
                     let (field_idx, field_type) =
-                        self.check_field_type(&struct_def, field, &value)?;
+                        self.check_field_type(&struct_def, field, &value, generics)?;
 
                     Ok(TypedExpr {
                         ty: field_type,
@@ -534,6 +561,7 @@ impl<'src> TypeChecker<'src> {
         struct_def: &StructType,
         field: &Token,
         field_value: &TypedExpr,
+        generic_args: GenericArgs,
     ) -> Result<(usize, Type), TypeCheckerError> {
         let field_type = struct_def
             .fields
@@ -547,165 +575,18 @@ impl<'src> TypeChecker<'src> {
                 line: field.line,
             }),
             Some((id, field_type)) => {
-                self.sys
-                    .verify_assignment(&field_type, field_value.clone(), field.line)?;
-                Ok((id, field_type))
-            }
-        }
-    }
+                let actual = TypeSystem::generic_to_concrete(
+                    field_type,
+                    &generics_to_map(&struct_def.generic_params, &generic_args),
+                );
 
-    fn check_binary_expression(
-        &mut self,
-        operator: &Token,
-        left: &Expr<'src>,
-        right: &Expr<'src>,
-    ) -> Result<TypedExpr, TypeCheckerError> {
-        let left_typed = self.infer_expression(left)?;
-        let right_typed = self.infer_expression(right)?;
-
-        let left_type = left_typed.ty.clone();
-        let right_type = right_typed.ty.clone();
-
-        match operator.token_type {
-            TokenType::Minus | TokenType::Slash | TokenType::Star => {
-                if left_type == Type::Number && right_type == Type::Number {
-                    let op = match operator.token_type {
-                        TokenType::Minus => BinaryOp::Subtract,
-                        TokenType::Slash => BinaryOp::Divide,
-                        TokenType::Star => BinaryOp::Multiply,
-                        _ => unreachable!(),
-                    };
-
-                    Ok(TypedExpr {
-                        ty: Type::Number,
-                        kind: ExprKind::Binary {
-                            left: Box::new(left_typed),
-                            operator: op,
-                            right: Box::new(right_typed),
-                        },
-                        line: operator.line,
-                    })
-                } else {
-                    Err(TypeCheckerError::TypeMismatch {
-                        expected: Type::Number,
-                        found: if left_type != Type::Number {
-                            left_type
-                        } else {
-                            right_type
-                        },
-                        line: operator.line,
-                        message: "Expected number but found something else.",
-                    })
-                }
-            }
-            TokenType::Plus => {
-                if left_type == Type::Number && right_type == Type::Number {
-                    Ok(TypedExpr {
-                        ty: Type::Number,
-                        kind: ExprKind::Binary {
-                            left: Box::new(left_typed),
-                            operator: BinaryOp::Add,
-                            right: Box::new(right_typed),
-                        },
-                        line: operator.line,
-                    })
-                } else if left_type == Type::String && right_type == Type::String {
-                    Ok(TypedExpr {
-                        ty: Type::String,
-                        kind: ExprKind::Binary {
-                            left: Box::new(left_typed),
-                            operator: BinaryOp::Concat,
-                            right: Box::new(right_typed),
-                        },
-                        line: operator.line,
-                    })
-                } else {
-                    Err(TypeCheckerError::TypeMismatch {
-                        expected: left_type,
-                        found: right_type,
-                        line: operator.line,
-                        message: "Operands to '+' must be both numbers or both strings.",
-                    })
-                }
-            }
-            TokenType::Greater
-            | TokenType::GreaterEqual
-            | TokenType::Less
-            | TokenType::LessEqual => {
-                if (left_type == Type::Number && right_type == Type::Number)
-                    || (left_type == Type::String && right_type == Type::String)
-                {
-                    let op = match (operator.token_type.clone(), left_type) {
-                        (TokenType::Greater, Type::String) => BinaryOp::GreaterString,
-                        (TokenType::GreaterEqual, Type::String) => BinaryOp::GreaterEqualString,
-                        (TokenType::Less, Type::String) => BinaryOp::LessString,
-                        (TokenType::LessEqual, Type::String) => BinaryOp::LessEqualString,
-                        (TokenType::GreaterEqual, Type::Number) => BinaryOp::GreaterEqualNumber,
-                        (TokenType::Greater, Type::Number) => BinaryOp::GreaterNumber,
-                        (TokenType::LessEqual, Type::Number) => BinaryOp::LessEqualNumber,
-                        (TokenType::Less, Type::Number) => BinaryOp::LessNumber,
-                        _ => unreachable!(),
-                    };
-
-                    Ok(TypedExpr {
-                        ty: Type::Boolean,
-                        kind: ExprKind::Binary {
-                            left: Box::new(left_typed),
-                            operator: op,
-                            right: Box::new(right_typed),
-                        },
-                        line: operator.line,
-                    })
-                } else {
-                    Err(TypeCheckerError::TypeMismatch {
-                        expected: Type::Number,
-                        found: left_type,
-                        line: operator.line,
-                        message: "Expected number but found something else.",
-                    })
-                }
-            }
-            TokenType::EqualEqual | TokenType::BangEqual => {
-                if self.sys.can_compare(&left_type, &right_type) {
-                    let op = match left_type {
-                        Type::Number => BinaryOp::EqualEqualNumber,
-                        Type::String => BinaryOp::EqualEqualString,
-                        _ => BinaryOp::EqualEqual,
-                    };
-
-                    let binary_expr = TypedExpr {
-                        ty: Type::Boolean,
-                        kind: ExprKind::Binary {
-                            left: Box::new(left_typed),
-                            operator: op,
-                            right: Box::new(right_typed),
-                        },
-                        line: operator.line,
-                    };
-
-                    if operator.token_type == TokenType::BangEqual {
-                        Ok(TypedExpr {
-                            ty: Type::Boolean,
-                            kind: ExprKind::Unary {
-                                operator: UnaryOp::Not,
-                                operand: Box::new(binary_expr),
-                            },
-                            line: operator.line,
-                        })
-                    } else {
-                        Ok(binary_expr)
-                    }
-                } else {
-                    Err(TypeCheckerError::TypeMismatch {
-                        expected: left_type,
-                        found: right_type,
-                        line: operator.line,
-                        message: "Expected the same type but found something else.",
-                    })
-                }
-            }
-            _ => {
-                unreachable!("Ast should be checked for invalid operators before this point.")
+                self.sys.verify_assignment(
+                    &mut HashMap::new(),
+                    &actual,
+                    field_value.clone(),
+                    field.line,
+                )?;
+                Ok((id, actual))
             }
         }
     }

@@ -14,7 +14,7 @@ pub enum Literal {
 #[derive(Clone, Debug, PartialEq)]
 pub enum TypeAst<'src> {
     Optional(Box<TypeAst<'src>>),
-    Named(Token<'src>),
+    Named(Token<'src>, Vec<TypeAst<'src>>),
     Function {
         param_types: Box<[TypeAst<'src>]>,
         return_type: Box<TypeAst<'src>>,
@@ -56,6 +56,10 @@ pub enum Expr<'src> {
         left: Box<Expr<'src>>,
         operator: Token<'src>,
         right: Box<Expr<'src>>,
+    },
+    TypeSpecialization {
+        callee: Box<Expr<'src>>,
+        generics: Vec<TypeAst<'src>>,
     },
     Call {
         callee: Box<Expr<'src>>,
@@ -174,24 +178,29 @@ pub enum Stmt<'src> {
         name: Token<'src>,
         params: Vec<Token<'src>>,
         body: Vec<Stmt<'src>>,
+        generics: Vec<Token<'src>>,
         type_: TypeAst<'src>,
     },
     Struct {
         name: Token<'src>,
         fields: Vec<(Token<'src>, TypeAst<'src>)>,
+        generics: Vec<Token<'src>>,
     },
     Impl {
         interfaces: Vec<Token<'src>>,
-        name: Token<'src>,
+        name: (Token<'src>, Vec<Token<'src>>),
         methods: Vec<Stmt<'src>>,
+        generics: Vec<Token<'src>>,
     },
     Interface {
         name: Token<'src>,
         methods: Vec<InterfaceSig<'src>>,
+        generics: Vec<Token<'src>>,
     },
     Enum {
         name: Token<'src>,
         variants: Vec<(Token<'src>, VariantType<'src>)>,
+        generics: Vec<Token<'src>>,
     },
     Match {
         value: Box<Expr<'src>>,
@@ -211,6 +220,7 @@ pub struct InterfaceSig<'src> {
     pub name: Token<'src>,
     pub params: Vec<Token<'src>>,
     pub type_: TypeAst<'src>,
+    pub generics: Vec<Token<'src>>,
 }
 
 impl Display for Literal {
@@ -269,6 +279,13 @@ impl Display for Expr<'_> {
                 right,
             } => {
                 write!(f, "({} {} {})", operator.lexeme, left, right)
+            }
+            Expr::TypeSpecialization { callee, generics } => {
+                write!(f, "{} <", callee)?;
+                for generic in generics {
+                    write!(f, "{}, ", generic)?;
+                }
+                write!(f, ">")
             }
             Expr::Call {
                 callee, arguments, ..
@@ -330,7 +347,7 @@ impl Display for CallArg<'_> {
 impl Display for TypeAst<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            TypeAst::Named(name) => write!(f, "{}", name.lexeme),
+            TypeAst::Named(name, _) => write!(f, "{}", name.lexeme),
             TypeAst::Function {
                 param_types: params,
                 return_type,
@@ -416,7 +433,11 @@ impl Display for Stmt<'_> {
             }
             Stmt::Return(expr) => write!(f, "return {}", expr),
 
-            Stmt::Struct { name, fields } => {
+            Stmt::Struct {
+                name,
+                fields,
+                generics,
+            } => {
                 write!(f, "Struct {} {{", name.lexeme)?;
                 for field in fields {
                     write!(f, "{} : {}, ", field.0.lexeme, field.1)?;
@@ -427,6 +448,7 @@ impl Display for Stmt<'_> {
                 interfaces,
                 name,
                 methods,
+                generics,
             } => {
                 write!(
                     f,
@@ -436,21 +458,29 @@ impl Display for Stmt<'_> {
                         .map(|e| e.lexeme)
                         .collect::<Vec<_>>()
                         .join(", "),
-                    name.lexeme
+                    name.0.lexeme
                 )?;
                 for method in methods {
                     write!(f, "{}\n", method)?;
                 }
                 write!(f, "}}")
             }
-            Stmt::Interface { name, methods } => {
+            Stmt::Interface {
+                name,
+                methods,
+                generics,
+            } => {
                 write!(f, "Interface {} {{", name.lexeme)?;
                 for m in methods {
                     write!(f, " func {}(...): {};", m.name.lexeme, m.type_)?;
                 }
                 write!(f, "}}")
             }
-            Stmt::Enum { name, variants } => {
+            Stmt::Enum {
+                name,
+                variants,
+                generics,
+            } => {
                 write!(f, "Enum {} {{", name.lexeme)?;
                 for case in variants {
                     write!(f, "case {} ", case.0.lexeme,)?;
@@ -503,6 +533,7 @@ impl Expr<'_> {
             Expr::ForceUnwrap { line, .. } => *line,
             Expr::Tuple { elements } => elements[0].get_line(),
             Expr::Is { type_name, .. } => type_name.line,
+            Expr::TypeSpecialization { callee, .. } => callee.get_line(),
         }
     }
 }
@@ -521,7 +552,7 @@ impl Stmt<'_> {
             Stmt::Function { name, .. } => name.line,
             Stmt::Return(expr) => expr.get_line(),
             Stmt::Struct { name, .. } => name.line,
-            Stmt::Impl { name, .. } => name.line,
+            Stmt::Impl { name, .. } => name.0.line,
             Stmt::Interface { name, .. } => name.line,
             Stmt::Enum { name, .. } => name.line,
             Stmt::Match { value, .. } => value.get_line(),
