@@ -247,6 +247,13 @@ impl TypeSystem {
             }
             Type::Function(expected_inner) => {
                 if let Type::Function(provided_inner) = provided {
+                    if provided_inner.is_vararg {
+                        return Err("Cannot use vararg functions as arguments".into());
+                    }
+                    if provided_inner.type_params.len() != 0 {
+                        return Err("Cannot assign a generic function.\n TIP: specify generics using .<Type> notation.".into());
+                    }
+
                     for (expected_param, provided_param) in expected_inner
                         .params
                         .iter()
@@ -353,7 +360,12 @@ impl TypeSystem {
         }
         match are_equal {
             Ok(_) => Ok(expr),
-            Err(msg) => Err(TypeCheckerError::ComplexTypeMismatch { line, message: msg }),
+            Err(msg) => Err(TypeCheckerError::ComplexTypeMismatch {
+                expected: expected_type.clone(),
+                line,
+                message: msg,
+                found: expr.ty.clone(),
+            }),
         }
     }
 

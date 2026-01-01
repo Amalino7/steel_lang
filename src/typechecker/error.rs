@@ -22,6 +22,8 @@ pub enum TypeCheckerError {
         message: &'static str,
     },
     ComplexTypeMismatch {
+        expected: Type,
+        found: Type,
         message: String,
         line: u32,
     },
@@ -390,8 +392,17 @@ impl std::fmt::Display for TypeCheckerError {
                     line, message
                 )
             }
-            TypeCheckerError::ComplexTypeMismatch { line, message } => {
-                write!(f, "[line {}] Error: {}\n", line, message)
+            TypeCheckerError::ComplexTypeMismatch {
+                expected,
+                found,
+                line,
+                message,
+            } => {
+                write!(
+                    f,
+                    "[line {}] Error: Type mismatch {} {}.\n Precise: {}\n",
+                    line, expected, found, message
+                )
             }
         }
     }

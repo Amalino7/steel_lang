@@ -1615,10 +1615,13 @@ mod tests {
         let src = r#"
             struct Point<T> {x: T, y: T}
             let p = Point(x: 1, y: 2);
+            let Point(:x, :y) = p;
+            assert(x + 0, 1);
+            assert(y + 0, 2);
             assert(p.x, 1);
             assert(p.y, 2);
             "#;
-        execute_source(src, false, "run", true);
+        execute_source(src, false, "run", false);
     }
     #[test]
     fn test_generic_function() {
