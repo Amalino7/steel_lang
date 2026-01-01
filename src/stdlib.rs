@@ -7,6 +7,21 @@ pub struct NativeDef {
     pub func: NativeFn,
 }
 
+pub fn get_prelude() -> &'static str {
+    // standard logic lives here
+    r#"
+        impl number {
+            func abs(self): number {
+                if self < 0 {
+                    return -self;
+                }
+                else{
+                    return self;
+                }
+            }
+        }
+    "#
+}
 pub fn get_natives() -> Vec<NativeDef> {
     vec![
         NativeDef {
@@ -17,15 +32,14 @@ pub fn get_natives() -> Vec<NativeDef> {
                     print!("{}", arg);
                 }
                 println!();
-                Value::Nil
+                Ok(Value::Nil)
             },
         },
         NativeDef {
             name: "panic",
             type_: Type::new_function(vec![("msg".into(), Type::Any)], Type::Void, vec![]),
             func: |args, _| {
-                // TODO add language level error handling
-                panic!("{}", args[0]);
+                return Err(args[0].to_string());
             },
         },
         NativeDef {
@@ -35,7 +49,7 @@ pub fn get_natives() -> Vec<NativeDef> {
                 for arg in args {
                     print!("{}", arg);
                 }
-                Value::Nil
+                Ok(Value::Nil)
             },
         },
         NativeDef {
@@ -49,7 +63,7 @@ pub fn get_natives() -> Vec<NativeDef> {
                 if args[0] != args[1] {
                     panic!("Assertion failed: {} != {}", args[0], args[1]);
                 }
-                Value::Nil
+                return Ok(Value::Nil);
             },
         },
         NativeDef {
@@ -59,7 +73,7 @@ pub fn get_natives() -> Vec<NativeDef> {
                 use std::time::{SystemTime, UNIX_EPOCH};
                 let start = SystemTime::now();
                 let since_the_epoch = start.duration_since(UNIX_EPOCH).unwrap();
-                Value::Number(since_the_epoch.as_secs_f64())
+                Ok(Value::Number(since_the_epoch.as_secs_f64()))
             },
         },
         NativeDef {
@@ -71,7 +85,15 @@ pub fn get_natives() -> Vec<NativeDef> {
             ),
             func: |args, gc| {
                 let str = args[0].to_string();
-                Value::String(gc.alloc(str))
+                Ok(Value::String(gc.alloc(str)))
+            },
+        },
+        NativeDef {
+            name: "is_nan",
+            type_: Type::new_function(vec![("_".into(), Type::Number)], Type::Boolean, vec![]),
+            func: |args, _| match args[0] {
+                Value::Number(num) => Ok(Value::Boolean(num.is_nan())),
+                _ => unreachable!(),
             },
         },
     ]

@@ -19,7 +19,7 @@ mod tests {
         function.chunk.write_op(Opcode::Add as u8, 3);
         function.chunk.write_op(Opcode::Return as u8, 4);
 
-        assert_eq!(vm.run(function), Value::Number(3.0));
+        assert_eq!(vm.run(function).unwrap(), Value::Number(3.0));
     }
     #[test]
     fn test_complex_arithmetic() {
@@ -40,7 +40,7 @@ mod tests {
         function.chunk.write_op(Opcode::Divide as u8, 8);
         function.chunk.write_op(Opcode::Return as u8, 9);
 
-        assert_eq!(vm.run(function), Value::Number(6.9));
+        assert_eq!(vm.run(function).unwrap(), Value::Number(6.9));
     }
     #[test]
     fn test_constant_long() {
@@ -52,7 +52,7 @@ mod tests {
             function.chunk.write_op(Opcode::Add as u8, 1);
         }
         function.chunk.write_op(Opcode::Return as u8, 1);
-        assert_eq!(vm.run(function), Value::Number(44850.0)); // (299 * 300) / 2
+        assert_eq!(vm.run(function).unwrap(), Value::Number(44850.0)); // (299 * 300) / 2
     }
     #[test]
     fn test_boolean() {
@@ -60,7 +60,7 @@ mod tests {
         let mut function = Function::new("Main".to_string(), Chunk::new());
         function.chunk.write_constant(Value::Boolean(true), 1);
         function.chunk.write_op(Opcode::Return as u8, 1);
-        assert_eq!(vm.run(function), Value::Boolean(true));
+        assert_eq!(vm.run(function).unwrap(), Value::Boolean(true));
     }
 
     #[test]
@@ -77,7 +77,7 @@ mod tests {
         let function = compiler.compile(&typed_ast);
 
         let mut vm = VM::new(1, gc);
-        vm.run(function);
+        vm.run(function).unwrap();
         assert_eq!(vm.globals[0], Value::Boolean(false));
     }
 
@@ -95,7 +95,7 @@ mod tests {
         let function = compiler.compile(&typed_ast);
 
         let mut vm = VM::new(1, gc);
-        vm.run(function);
+        vm.run(function).unwrap();
         assert_eq!(vm.globals[0], Value::Boolean(true));
     }
     #[test]
@@ -1758,6 +1758,21 @@ mod tests {
 
         let box = Box.<number,string>.new(10);
         assert(box.top + 12, 22);
+        "#;
+        execute_source(src, false, "run", true);
+    }
+    #[test]
+    fn test_panic() {
+        let src = r#"
+        func panic_func() {
+            panic("Panic!");
+        }
+
+        func rec(a: number) {
+            if a > 0 {rec(a - 1);}
+            panic("reached bottom!");
+        }
+        rec(10);
         "#;
         execute_source(src, false, "run", true);
     }
