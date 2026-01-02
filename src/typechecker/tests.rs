@@ -3,8 +3,8 @@ mod tests {
     use crate::execute_source;
     use crate::parser::Parser;
     use crate::scanner::Scanner;
-    use crate::typechecker::error::TypeCheckerError;
     use crate::typechecker::TypeChecker;
+    use crate::typechecker::error::TypeCheckerError;
 
     #[test]
     fn test_type_checker() {

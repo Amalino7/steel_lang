@@ -1,7 +1,7 @@
+use crate::typechecker::TypeChecker;
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::type_ast::{MatchCase, StmtKind, TypedStmt};
 use crate::typechecker::types::Type;
-use crate::typechecker::TypeChecker;
 
 impl<'src> TypeChecker<'src> {
     pub(crate) fn check_returns(&mut self, stmt: &[TypedStmt]) {

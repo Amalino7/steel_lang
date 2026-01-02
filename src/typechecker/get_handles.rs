@@ -3,7 +3,7 @@ use crate::token::Token;
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::type_ast::{ExprKind, TypedExpr};
 use crate::typechecker::type_system::TypeSystem;
-use crate::typechecker::types::{generics_to_map, GenericArgs, Type};
+use crate::typechecker::types::{GenericArgs, Type, generics_to_map};
 use crate::typechecker::{Symbol, TypeChecker};
 use std::collections::HashMap;
 use std::rc::Rc;

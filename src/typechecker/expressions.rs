@@ -6,7 +6,7 @@ use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::error::TypeCheckerError::AssignmentToCapturedVariable;
 use crate::typechecker::type_ast::{ExprKind, LogicalOp, TypedExpr, UnaryOp};
 use crate::typechecker::type_system::TypeSystem;
-use crate::typechecker::types::{generics_to_map, GenericArgs, StructType, TupleType, Type};
+use crate::typechecker::types::{GenericArgs, StructType, TupleType, Type, generics_to_map};
 use crate::typechecker::{FunctionContext, Symbol, TypeChecker};
 use std::collections::HashMap;
 use std::rc::Rc;

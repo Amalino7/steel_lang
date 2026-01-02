@@ -2,11 +2,11 @@ use crate::compiler::Compiler;
 use crate::parser::Parser;
 use crate::scanner::Scanner;
 use crate::stdlib::get_natives;
-use crate::typechecker::type_ast::StmtKind;
 use crate::typechecker::TypeChecker;
+use crate::typechecker::type_ast::StmtKind;
+use crate::vm::VM;
 use crate::vm::disassembler::disassemble_chunk;
 use crate::vm::gc::GarbageCollector;
-use crate::vm::VM;
 use std::env::args;
 use std::fs;
 

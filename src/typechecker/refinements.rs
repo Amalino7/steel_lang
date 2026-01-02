@@ -1,6 +1,6 @@
 use crate::typechecker::type_ast::{BinaryOp, ExprKind, LogicalOp, TypedExpr, UnaryOp};
 use crate::typechecker::type_system::TypeSystem;
-use crate::typechecker::types::{generics_to_map, Type};
+use crate::typechecker::types::{Type, generics_to_map};
 use crate::typechecker::{Symbol, TypeChecker};
 
 type Refinement = (Symbol, Type);

@@ -1,10 +1,10 @@
 use crate::parser::ast::{Binding, Expr, MatchArm, Pattern};
+use crate::typechecker::TypeChecker;
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::scope_manager::ScopeType;
 use crate::typechecker::type_ast::{MatchCase, StmtKind, TypedBinding, TypedExpr, TypedStmt};
 use crate::typechecker::type_system::TypeSystem;
-use crate::typechecker::types::{generics_to_map, EnumType, TupleType, Type};
-use crate::typechecker::TypeChecker;
+use crate::typechecker::types::{EnumType, TupleType, Type, generics_to_map};
 use std::collections::HashSet;
 use std::rc::Rc;
 

@@ -1,8 +1,8 @@
 use crate::token::Token;
+use crate::typechecker::Symbol;
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::type_ast::{ExprKind, TypedExpr};
 use crate::typechecker::types::{EnumType, InterfaceType, StructType, TupleType, Type};
-use crate::typechecker::Symbol;
 use std::collections::HashMap;
 use std::rc::Rc;
 

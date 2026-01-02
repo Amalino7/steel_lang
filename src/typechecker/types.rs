@@ -1,8 +1,8 @@
 use crate::parser::ast::TypeAst;
 use crate::token::Token;
+use crate::typechecker::Symbol;
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::type_system::TypeSystem;
-use crate::typechecker::Symbol;
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::rc::Rc;

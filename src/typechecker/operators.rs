@@ -1,10 +1,10 @@
 use crate::parser::ast::Expr;
 use crate::token::{Token, TokenType};
+use crate::typechecker::TypeChecker;
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::scope_manager::ScopeType;
 use crate::typechecker::type_ast::{BinaryOp, ExprKind, LogicalOp, TypedExpr, UnaryOp};
 use crate::typechecker::types::Type;
-use crate::typechecker::TypeChecker;
 
 impl<'src> TypeChecker<'src> {
     pub(crate) fn check_unary_expression(

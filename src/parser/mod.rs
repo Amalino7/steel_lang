@@ -150,8 +150,8 @@ impl<'src> Parser<'src> {
 
 #[cfg(test)]
 mod tests {
-    use crate::parser::ast::{Binding, Expr, Literal, Stmt, TypeAst};
     use crate::parser::Parser;
+    use crate::parser::ast::{Binding, Expr, Literal, Stmt, TypeAst};
     use crate::scanner::Scanner;
     use crate::token::{Token, TokenType};
 
