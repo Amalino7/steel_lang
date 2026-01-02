@@ -1698,9 +1698,16 @@ mod tests {
                 return Box(top: transform(self.top));
             }
         }
+
+        impl Box<number> {
+            func square(self): number { return self.top * self.top;}
+        }
+
         func wrap(a: number): string { return to_str(a);}
 
+
         let box = Box.new(10);
+        println(Box(20).square());
         let str_box = box.map(wrap);
         assert(str_box.top + "1", "101");
         assert(box.unwrap() , 10);

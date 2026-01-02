@@ -7,7 +7,7 @@ use crate::typechecker::error::TypeCheckerError::AssignmentToCapturedVariable;
 use crate::typechecker::type_ast::{ExprKind, LogicalOp, TypedExpr, UnaryOp};
 use crate::typechecker::type_system::TypeSystem;
 use crate::typechecker::types::{generics_to_map, GenericArgs, StructType, TupleType, Type};
-use crate::typechecker::{Symbol, TypeChecker};
+use crate::typechecker::{FunctionContext, Symbol, TypeChecker};
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -129,6 +129,49 @@ impl<'src> TypeChecker<'src> {
                     },
                     line: elements[0].get_line(),
                 })
+            }
+            Expr::Unary {
+                operator,
+                expression,
+            } if operator.token_type == TokenType::Try => {
+                let mut typed_expr = self.infer_expression(expression)?;
+                if let Type::Enum(name, instance) = &mut typed_expr.ty
+                    && name.as_ref() == "Result"
+                {
+                    let enum_def = self.sys.get_enum(name.as_ref()).unwrap();
+                    let map = generics_to_map(&enum_def.generic_params, instance);
+                    let ok_type = TypeSystem::generic_to_concrete(
+                        enum_def.ordered_variants[0].1.clone(),
+                        &map,
+                    );
+                    let err_type = TypeSystem::generic_to_concrete(
+                        enum_def.ordered_variants[1].1.clone(),
+                        &map,
+                    );
+
+                    if let FunctionContext::Function(func_return_type) =
+                        self.current_function.clone()
+                    {
+                        let ok = TypeSystem::unify_types(
+                            &func_return_type,
+                            &mut HashMap::new(),
+                            &Type::Enum(name.clone(), vec![Type::Never, err_type].into()),
+                        );
+                        ok.expect("Unification failed");
+                    } else {
+                        todo!("err")
+                    }
+
+                    Ok(TypedExpr {
+                        ty: ok_type,
+                        kind: ExprKind::Try {
+                            operand: Box::new(typed_expr),
+                        },
+                        line: operator.line,
+                    })
+                } else {
+                    todo!("err")
+                }
             }
             Expr::Unary {
                 operator,

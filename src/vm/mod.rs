@@ -7,7 +7,6 @@ use crate::vm::stack::Stack;
 use crate::vm::value::{
     BoundMethod, Closure, EnumVariant, Function, Instance, InterfaceObj, VTable, Value,
 };
-use std::process::exit;
 
 mod byte_utils;
 pub mod bytecode;
@@ -124,8 +123,8 @@ impl VM {
                     self.stack.push(-val);
                 }
                 Opcode::Halt => {
-                    println!("Halting");
-                    exit(-1);
+                    self.frames.push(current_frame);
+                    return Err(self.make_error("Halt instruction encountered"));
                 }
                 Opcode::Subtract => {
                     let b = self.stack.pop();

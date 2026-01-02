@@ -86,6 +86,9 @@ pub enum ExprKind {
         operator: UnaryOp,
         operand: Box<TypedExpr>,
     },
+    Try {
+        operand: Box<TypedExpr>,
+    },
     Binary {
         left: Box<TypedExpr>,
         operator: BinaryOp,

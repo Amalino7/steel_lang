@@ -189,7 +189,7 @@ impl<'src> Parser<'src> {
         Ok(expr)
     }
     fn unary(&mut self) -> Result<Expr<'src>, ParserError<'src>> {
-        if match_token_type!(self, TokT::Bang, TokT::Minus) {
+        if match_token_type!(self, TokT::Bang, TokT::Minus, TokT::Try) {
             let op = self.previous_token.clone();
             let expr = self.unary()?;
             Ok(Expr::Unary {

@@ -20,6 +20,24 @@ pub fn get_prelude() -> &'static str {
                 }
             }
         }
+        func Void() {}
+        enum Result<Ok, Err> {
+            Ok(Ok),Err(Err)
+        }
+        impl<Ok,Err> Result<Ok, Err> {
+            func unwrap(self): Ok {
+                match self {
+                    .Ok(val) => {return val;}
+                    .Err(err) => {return panic(err);}
+                }
+            }
+            func map<NewOk>(self, f: func(Ok): NewOk): Result<NewOk, Err> {
+                match self {
+                    .Ok(val) => {return Result.<NewOk, Err>.Ok(f(val));}
+                    .Err(err) => {return Result.<NewOk, Err>.Err(err);}
+                }
+            }
+        }
     "#
 }
 pub fn get_natives() -> Vec<NativeDef> {
@@ -37,7 +55,7 @@ pub fn get_natives() -> Vec<NativeDef> {
         },
         NativeDef {
             name: "panic",
-            type_: Type::new_function(vec![("msg".into(), Type::Any)], Type::Void, vec![]),
+            type_: Type::new_function(vec![("msg".into(), Type::Any)], Type::Never, vec![]),
             func: |args, _| {
                 return Err(args[0].to_string());
             },
