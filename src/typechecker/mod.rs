@@ -5,7 +5,7 @@ use crate::typechecker::scope_manager::{ScopeManager, ScopeType};
 use crate::typechecker::type_ast::{StmtKind, TypedStmt};
 use crate::typechecker::type_system::TypeSystem;
 use crate::typechecker::types::Type;
-use std::mem::replace;
+use std::mem::take;
 use std::rc::Rc;
 
 mod declarations;
@@ -90,7 +90,7 @@ impl<'src> TypeChecker<'src> {
 
         self.check_returns(&typed_ast);
         if !self.errors.is_empty() {
-            Err(replace(&mut self.errors, vec![]))
+            Err(take(&mut self.errors))
         } else {
             Ok(TypedStmt {
                 kind: StmtKind::Global {

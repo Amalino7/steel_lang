@@ -1,15 +1,15 @@
+#![allow(clippy::uninlined_format_args)]
 use crate::compiler::Compiler;
 use crate::parser::Parser;
 use crate::scanner::Scanner;
 use crate::stdlib::get_natives;
-use crate::typechecker::TypeChecker;
 use crate::typechecker::type_ast::StmtKind;
-use crate::vm::VM;
+use crate::typechecker::TypeChecker;
 use crate::vm::disassembler::disassemble_chunk;
 use crate::vm::gc::GarbageCollector;
+use crate::vm::VM;
 use std::env::args;
 use std::fs;
-
 mod compiler;
 mod parser;
 mod scanner;
@@ -25,11 +25,11 @@ pub fn execute_source(source: &str, debug: bool, mode: &str, force: bool) {
     let ast = parser.parse();
     if !force && let Err(e) = &ast {
         for err in e {
-            println!("{}", err);
+            println!("{err}");
         }
         return;
     }
-    let mut ast = ast.unwrap();
+    let ast = ast.unwrap();
 
     if mode == "parse" {
         if debug {
@@ -43,14 +43,14 @@ pub fn execute_source(source: &str, debug: bool, mode: &str, force: bool) {
     let natives = get_natives();
     let mut typechecker = TypeChecker::new_with_natives(&natives);
 
-    let analysis = typechecker.check(&mut ast);
+    let analysis = typechecker.check(&ast);
     if !force && let Err(e) = &analysis {
         for err in e {
-            println!("{}", err);
+            println!("{err}");
             let error_line = err.get_line() as usize - 1;
             source.lines().enumerate().for_each(|(i, line)| {
                 if error_line == i {
-                    println!("{}", line);
+                    println!("{line}");
                 }
             });
             println!("======================");
@@ -64,10 +64,10 @@ pub fn execute_source(source: &str, debug: bool, mode: &str, force: bool) {
         println!("Type checking has passed.");
         if debug {
             println!("=== AST ===");
-            println!("{:#?}", ast);
+            println!("{ast:#?}");
             println!("=============");
             println!("=== Type analysis ===");
-            println!("Typed ast: {:#?}", typed_ast);
+            println!("Typed ast: {typed_ast:#?}");
             println!("====================");
         }
         return;
@@ -94,7 +94,7 @@ pub fn execute_source(source: &str, debug: bool, mode: &str, force: bool) {
     match res {
         Ok(_) => {}
         Err(err) => {
-            println!("{}", err);
+            println!("{err}");
         }
     }
 }

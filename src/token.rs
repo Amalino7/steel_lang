@@ -86,6 +86,7 @@ pub enum TokenType {
     Error,
     UnexpectedSymbolError,
 
+    #[allow(clippy::upper_case_acronyms)]
     EOF,
 }
 

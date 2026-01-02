@@ -1,7 +1,7 @@
-use crate::typechecker::TypeChecker;
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::type_ast::{MatchCase, StmtKind, TypedStmt};
 use crate::typechecker::types::Type;
+use crate::typechecker::TypeChecker;
 
 impl<'src> TypeChecker<'src> {
     pub(crate) fn check_returns(&mut self, stmt: &[TypedStmt]) {
@@ -66,6 +66,7 @@ impl<'src> TypeChecker<'src> {
             StmtKind::EnumDecl { .. } => Ok(()),
         }
     }
+    #[allow(clippy::only_used_in_recursion)]
     pub fn stmt_returns(&mut self, stmt: &TypedStmt) -> Result<bool, TypeCheckerError> {
         Ok(match &stmt.kind {
             StmtKind::Expression(_) => false,

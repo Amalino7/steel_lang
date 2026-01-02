@@ -1,8 +1,8 @@
 use crate::token::Token;
-use crate::typechecker::Symbol;
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::type_ast::{ExprKind, TypedExpr};
 use crate::typechecker::types::{EnumType, InterfaceType, StructType, TupleType, Type};
+use crate::typechecker::Symbol;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -110,7 +110,9 @@ impl TypeSystem {
     }
 
     pub fn define_interface(&mut self, name: &str, methods: HashMap<String, (usize, Type)>) {
-        self.interfaces.get_mut(name).map(|e| e.methods = methods);
+        if let Some(e) = self.interfaces.get_mut(name) {
+            e.methods = methods;
+        }
     }
 
     pub fn define_impl(&mut self, struct_name: &str, iface_name: Symbol) {
@@ -129,23 +131,19 @@ impl TypeSystem {
     pub fn get_enum(&self, name: &str) -> Option<&EnumType> {
         self.enums.get(name)
     }
-
+    #[allow(dead_code)]
     pub fn does_enum_exist(&self, name: &str) -> bool {
         self.enums.contains_key(name)
     }
+    #[allow(dead_code)]
     pub fn does_type_exist(&self, name: &str) -> bool {
-        if self.structs.contains_key(name)
+        self.structs.contains_key(name)
             || self.interfaces.contains_key(name)
             || self.enums.contains_key(name)
             || name == "string"
             || name == "number"
             || name == "boolean"
             || name == "void"
-        {
-            true
-        } else {
-            false
-        }
     }
     pub fn get_owned_type_name(&self, name: &str) -> Option<Symbol> {
         if let Some(s) = self.structs.get(name) {
@@ -164,7 +162,7 @@ impl TypeSystem {
     pub fn get_generics_count(&self, name: &str) -> usize {
         if let Some(s) = self.structs.get(name) {
             s.generic_params.len()
-        } else if let Some(i) = self.interfaces.get(name) {
+        } else if self.interfaces.contains_key(name) {
             0
         } else if let Some(e) = self.enums.get(name) {
             e.generic_params.len()
@@ -173,23 +171,21 @@ impl TypeSystem {
         }
     }
 
-    pub fn can_compare(&self, left: &Type, right: &Type) -> bool {
+    pub fn can_compare(left: &Type, right: &Type) -> bool {
         if let Type::Optional(inner) = left {
             if *right == Type::Nil {
                 true
             } else {
-                self.can_compare(inner, right)
+                Self::can_compare(inner, right)
             }
         } else if let Type::Optional(inner) = right {
             if *left == Type::Nil {
                 true
             } else {
-                self.can_compare(left, inner)
+                Self::can_compare(left, inner)
             }
-        } else if left == right {
-            true
         } else {
-            false
+            left == right
         }
     }
 
@@ -253,7 +249,7 @@ impl TypeSystem {
                     if provided_inner.is_vararg {
                         return Err("Cannot use vararg functions as arguments".into());
                     }
-                    if provided_inner.type_params.len() != 0 {
+                    if !provided_inner.type_params.is_empty() {
                         return Err("Cannot assign a generic function.\n TIP: specify generics using .<Type> notation.".into());
                     }
 
@@ -278,7 +274,7 @@ impl TypeSystem {
                     for (expected_param, provided_param) in
                         expected_inner.types.iter().zip(provided_inner.types.iter())
                     {
-                        Self::unify_types(expected_param, generics_map, &provided_param)?;
+                        Self::unify_types(expected_param, generics_map, provided_param)?;
                     }
                     Ok(())
                 } else {
@@ -286,7 +282,7 @@ impl TypeSystem {
                 }
             }
             Type::GenericParam(name) => {
-                // If it exists in map it must be inferred
+                // If it exists in the map or if it must be inferred
                 if let Some(new_ty) = generics_map.get(name) {
                     if new_ty == &Type::Unknown {
                         generics_map.insert(name.clone(), provided.clone());
@@ -298,14 +294,12 @@ impl TypeSystem {
                     } else {
                         Self::unify_types(&new_ty.clone(), generics_map, provided)
                     }
+                } else if let Type::GenericParam(provided_name) = provided
+                    && name == provided_name
+                {
+                    Ok(())
                 } else {
-                    if let Type::GenericParam(provided_name) = provided
-                        && name == provided_name
-                    {
-                        Ok(())
-                    } else {
-                        mismatch(expected_ty, provided)
-                    }
+                    mismatch(expected_ty, provided)
                 }
             }
             Type::Struct(name, args) => {
@@ -504,12 +498,12 @@ impl TypeSystem {
                     .map(|(s, t)| {
                         (
                             s.to_string(),
-                            TypeSystem::generic_to_concrete(t.clone(), &generics_map),
+                            TypeSystem::generic_to_concrete(t.clone(), generics_map),
                         )
                     })
                     .collect();
                 let return_type =
-                    TypeSystem::generic_to_concrete(func_type.return_type.clone(), &generics_map);
+                    TypeSystem::generic_to_concrete(func_type.return_type.clone(), generics_map);
 
                 Type::new_function(
                     params,

@@ -30,7 +30,7 @@ pub fn disassemble_instruction(
             offset += 1;
             print!("Constant");
             let index = bytecode[offset];
-            let val = constants[index as usize].clone();
+            let val = constants[index as usize];
             println!(" {}", val);
             if let Value::Function(func) = val {
                 disassemble_chunk(&func.chunk, func.name.as_str());
@@ -41,7 +41,7 @@ pub fn disassemble_instruction(
             print!("Constant Long");
             let arr: &[Bytecode] = &bytecode[(offset - 2)..=offset];
             let index = read_bytes(arr);
-            let val = constants[index].clone();
+            let val = constants[index];
             println!(" {}", val);
         }
         Opcode::Return => println!("Return"),

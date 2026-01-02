@@ -3,7 +3,7 @@ use crate::token::Token;
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::type_ast::{ExprKind, TypedExpr};
 use crate::typechecker::type_system::TypeSystem;
-use crate::typechecker::types::{GenericArgs, Type, generics_to_map};
+use crate::typechecker::types::{generics_to_map, GenericArgs, Type};
 use crate::typechecker::{Symbol, TypeChecker};
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -66,7 +66,7 @@ impl<'src> TypeChecker<'src> {
 
         let bind_args = |args: &[(String, Type)]| {
             self.sys
-                .bind_arguments(&variant_name, &mut map, args, inferred_args, false, line)
+                .bind_arguments(variant_name, &mut map, args, inferred_args, false, line)
         };
 
         let val_expr = match variant_type {
@@ -217,7 +217,7 @@ impl<'src> TypeChecker<'src> {
             if let Some((idx, field_type)) = struct_def.get_field(member_token.lexeme) {
                 let actual = TypeSystem::generic_to_concrete(
                     field_type,
-                    &generics_to_map(&struct_def.generic_params, &generics),
+                    &generics_to_map(&struct_def.generic_params, generics),
                 );
 
                 let mut expr = TypedExpr {

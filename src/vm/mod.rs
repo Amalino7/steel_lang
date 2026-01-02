@@ -63,8 +63,8 @@ impl VM {
     pub fn set_native_functions(&mut self, natives: Vec<NativeDef>) {
         self.globals
             .resize(natives.len() + self.globals.len(), Value::Nil);
-        for i in 0..natives.len() {
-            self.globals[i] = Value::NativeFunction(natives[i].func);
+        for (i, def) in natives.iter().enumerate() {
+            self.globals[i] = Value::NativeFunction(def.func);
         }
     }
 
@@ -487,7 +487,7 @@ impl VM {
 
                     let instance_val = self.stack.pop();
                     if let Value::Instance(instance) = instance_val {
-                        self.stack.push(instance.fields[index].clone());
+                        self.stack.push(instance.fields[index]);
                     } else {
                         panic!("GetField on non-instance");
                     }

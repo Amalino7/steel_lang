@@ -56,9 +56,7 @@ pub fn get_natives() -> Vec<NativeDef> {
         NativeDef {
             name: "panic",
             type_: Type::new_function(vec![("msg".into(), Type::Any)], Type::Never, vec![]),
-            func: |args, _| {
-                return Err(args[0].to_string());
-            },
+            func: |args, _| Err(args[0].to_string()),
         },
         NativeDef {
             name: "print",
@@ -81,7 +79,7 @@ pub fn get_natives() -> Vec<NativeDef> {
                 if args[0] != args[1] {
                     panic!("Assertion failed: {} != {}", args[0], args[1]);
                 }
-                return Ok(Value::Nil);
+                Ok(Value::Nil)
             },
         },
         NativeDef {
