@@ -63,4 +63,4 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Miri Test
-        run: cargo miri test --lib src/vm/ --features stress_gc
+        run: cargo miri test vm::tests::tests --features stress_gc

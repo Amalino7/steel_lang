@@ -132,7 +132,7 @@ mod tests {
                 assert!(
                     errors
                         .iter()
-                        .any(|e| matches!(e, TypeCheckerError::TypeMismatch { .. }))
+                        .any(|e| matches!(e, TypeCheckerError::ComplexTypeMismatch { .. }))
                 );
             }
             _ => panic!("Expected TypeMismatch error"),
@@ -176,7 +176,7 @@ mod tests {
                 assert!(
                     errors
                         .iter()
-                        .any(|e| matches!(e, TypeCheckerError::TypeMismatch { .. }))
+                        .any(|e| matches!(e, TypeCheckerError::ComplexTypeMismatch { .. }))
                 );
             }
             _ => panic!("Expected FunctionParameterTypeMismatch error"),
