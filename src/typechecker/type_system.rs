@@ -193,7 +193,7 @@ impl TypeSystem {
         }
     }
 
-    fn unify_types(
+    pub(crate) fn unify_types(
         expected_ty: &Type,
         generics_map: &mut HashMap<Symbol, Type>,
         provided: &Type,
@@ -225,10 +225,13 @@ impl TypeSystem {
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(())
         }
+        if provided == &Type::Never {
+            return Ok(());
+        }
 
         match expected_ty {
             Type::Metatype(_, _) => Err("Cannot unify metatypes".into()),
-            Type::Nil | Type::Number | Type::String | Type::Void | Type::Boolean => {
+            Type::Nil | Type::Number | Type::String | Type::Void | Type::Boolean | Type::Never => {
                 if expected_ty == provided {
                     Ok(())
                 } else {
@@ -489,6 +492,7 @@ impl TypeSystem {
             | Type::Boolean
             | Type::Void
             | Type::Unknown
+            | Type::Never
             | Type::Any => generic_ty,
             Type::Optional(inner) => {
                 Type::Optional(Box::new(Self::generic_to_concrete(*inner, generics_map)))

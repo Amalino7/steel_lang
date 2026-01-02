@@ -94,6 +94,7 @@ pub enum Type {
     String,
     Boolean,
     Void,
+    Never,
     Optional(Box<Type>),
     Unknown,
     Function(Rc<FunctionType>),
@@ -147,6 +148,8 @@ impl Type {
             Ok(Type::Boolean)
         } else if name == "void" {
             Ok(Type::Void)
+        } else if name == "never" {
+            Ok(Type::Never)
         } else if let Some(struct_type) = type_system.get_struct(name) {
             missing_generics(
                 &struct_type.name,
@@ -198,6 +201,7 @@ impl Type {
             Type::String => Some("string"),
             Type::Boolean => Some("boolean"),
             Type::Void => Some("void"),
+            Type::Never => Some("never"),
             Type::Function(_) => None,
             Type::Unknown => None,
             Type::Struct(name, _) => Some(name),
@@ -359,25 +363,37 @@ impl Type {
     }
 }
 
+fn print_generics(args: &[Type], f: &mut Formatter<'_>) -> std::fmt::Result {
+    if args.is_empty() {
+        Ok(())
+    } else {
+        write!(f, "<")?;
+        for (i, arg) in args.iter().enumerate() {
+            write!(f, "{}", arg)?;
+            if i != args.len() - 1 {
+                write!(f, ", ")?;
+            }
+        }
+        write!(f, ">")
+    }
+}
 impl Display for Type {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Type::Metatype(name, generic_args) => {
-                write!(f, "Type {}<", name)?;
-                for generic_arg in generic_args.iter() {
-                    write!(f, "{}", generic_arg)?;
-                }
-                write!(f, ">")
+                write!(f, "Type {}", name)?;
+                print_generics(generic_args, f)
             }
             Type::GenericParam(name) => write!(f, "{}", name),
-            Type::Number => write!(f, "Number"),
-            Type::Boolean => write!(f, "Bool"),
-            Type::String => write!(f, "String"),
-            Type::Void => write!(f, "Void"),
+            Type::Number => write!(f, "number"),
+            Type::Boolean => write!(f, "boolean"),
+            Type::String => write!(f, "string"),
+            Type::Void => write!(f, "void"),
+            Type::Never => write!(f, "never"),
             Type::Function(function_type) => {
                 write!(
                     f,
-                    "fn({}) -> {}",
+                    "func({}) -> {}",
                     function_type
                         .params
                         .iter()
@@ -387,36 +403,27 @@ impl Display for Type {
                     function_type.return_type
                 )
             }
-            Type::Unknown => write!(f, "Unknown"),
+            Type::Unknown => write!(f, "unknown"),
             Type::Any => write!(f, "any"),
             Type::Struct(name, generic_args) => {
-                write!(f, "struct {} <", name,)?;
-                for generic_arg in generic_args.iter() {
-                    write!(f, "{},", generic_arg)?;
-                }
-                write!(f, ">")
+                write!(f, "struct {}", name,)?;
+                print_generics(generic_args, f)
             }
             Type::Interface(name, generic_args) => {
-                write!(f, "interface {} <", name,)?;
-                for generic_arg in generic_args.iter() {
-                    write!(f, "{}", generic_arg)?;
-                }
-                write!(f, ">")
+                write!(f, "interface {}", name,)?;
+                print_generics(generic_args, f)
             }
 
             Type::Enum(name, generic_args) => {
-                write!(f, "enum {} <", name,)?;
-                for generic_arg in generic_args.iter() {
-                    write!(f, "{},", generic_arg)?;
-                }
-                write!(f, ">")
+                write!(f, "enum {}", name,)?;
+                print_generics(generic_args, f)
             }
-            Type::Optional(inner) => write!(f, "Optional<{}>", inner),
+            Type::Optional(inner) => write!(f, "{}?", inner),
             Type::Nil => write!(f, "Nil"),
             Type::Tuple(types) => {
                 write!(
                     f,
-                    "Tuple({})",
+                    "tuple({})",
                     types
                         .types
                         .iter()

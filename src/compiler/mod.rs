@@ -395,7 +395,20 @@ impl<'a> Compiler<'a> {
                 }
                 Literal::Nil => self.emit_op(Opcode::Nil, line),
             },
-
+            ExprKind::Try { operand } => {
+                self.compile_expr(operand);
+                self.emit_op(Opcode::CheckEnumTag, expr.line);
+                self.emit_byte(1, expr.line);
+                let jump = self.emit_jump(Opcode::JumpIfFalse, expr.line);
+                // if ok destructure
+                self.emit_op(Opcode::Pop, expr.line);
+                self.emit_op(Opcode::DestructureEnum, expr.line);
+                let exit_jump = self.emit_jump(Opcode::Jump, expr.line);
+                self.patch_jump(jump);
+                self.emit_op(Opcode::Pop, expr.line); // condition
+                self.emit_op(Opcode::Return, expr.line); // return enum
+                self.patch_jump(exit_jump);
+            }
             ExprKind::Unary { operator, operand } => {
                 self.compile_expr(operand);
                 match operator {

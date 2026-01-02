@@ -66,7 +66,7 @@ pub enum Value {
     InterfaceObj(Gc<InterfaceObj>),
 }
 
-pub type NativeFn = fn(&[Value], &mut GarbageCollector) -> Value;
+pub type NativeFn = fn(&[Value], &mut GarbageCollector) -> Result<Value, String>;
 
 impl PartialOrd for Value {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {

@@ -1,16 +1,17 @@
 use crate::stdlib::NativeDef;
 use crate::vm::byte_utils::{byte_to_opcode, read_16_bytes, read_24_bytes};
 use crate::vm::bytecode::Opcode;
+use crate::vm::error::RuntimeError;
 use crate::vm::gc::{GarbageCollector, Gc};
 use crate::vm::stack::Stack;
 use crate::vm::value::{
     BoundMethod, Closure, EnumVariant, Function, Instance, InterfaceObj, VTable, Value,
 };
-use std::process::exit;
 
 mod byte_utils;
 pub mod bytecode;
 pub mod disassembler;
+mod error;
 pub mod gc;
 mod stack;
 mod tests;
@@ -43,6 +44,22 @@ impl VM {
         }
     }
 
+    fn make_error(&self, message: &str) -> RuntimeError {
+        let mut stack_trace = Vec::new();
+        for frame in self.frames.iter().rev() {
+            let line = if frame.ip > 0 {
+                frame.function.chunk.lines[frame.ip - 1]
+            } else {
+                0
+            };
+            stack_trace.push(format!("{} (line {})", frame.function.name, line));
+        }
+        RuntimeError {
+            message: message.to_string(),
+            stack_trace,
+        }
+    }
+
     pub fn set_native_functions(&mut self, natives: Vec<NativeDef>) {
         self.globals
             .resize(natives.len() + self.globals.len(), Value::Nil);
@@ -51,7 +68,7 @@ impl VM {
         }
     }
 
-    pub fn run(&mut self, main_function: Function) -> Value {
+    pub fn run(&mut self, main_function: Function) -> Result<Value, RuntimeError> {
         self.frames.push(CallFrame {
             slot_offset: 0,
             ip: 0,
@@ -86,7 +103,7 @@ impl VM {
                 Opcode::Return => {
                     let val = self.stack.pop();
                     if self.frames.is_empty() {
-                        return val;
+                        return Ok(val);
                     }
                     self.stack.truncate(current_frame.slot_offset);
                     let _frame = self.frames.pop().expect("Stack underflow");
@@ -106,8 +123,8 @@ impl VM {
                     self.stack.push(-val);
                 }
                 Opcode::Halt => {
-                    println!("Halting");
-                    exit(-1);
+                    self.frames.push(current_frame);
+                    return Err(self.make_error("Halt instruction encountered"));
                 }
                 Opcode::Subtract => {
                     let b = self.stack.pop();
@@ -137,7 +154,19 @@ impl VM {
                 Opcode::Divide => {
                     let b = self.stack.pop();
                     let a = self.stack.pop();
-                    self.stack.push(a / b);
+                    match (a, b) {
+                        (Value::Number(a), Value::Number(b)) => {
+                            if b == 0.0 {
+                                self.frames.push(current_frame);
+                                return Err(self.make_error("Division by zero"));
+                            }
+                            self.stack.push(Value::Number(a / b));
+                        }
+                        _ => {
+                            self.frames.push(current_frame);
+                            return Err(self.make_error("Operands must be numbers"));
+                        }
+                    }
                 }
                 Opcode::Multiply => {
                     let b = self.stack.pop();
@@ -151,7 +180,8 @@ impl VM {
                 Opcode::Unwrap => {
                     let val = self.stack.get_top();
                     if let Value::Nil = val {
-                        panic!("Unwrap on nil"); // TODO: better error handling
+                        self.frames.push(current_frame);
+                        return Err(self.make_error("Unwrap on nil value"));
                     }
                 }
                 Opcode::Equal => {
@@ -333,11 +363,16 @@ impl VM {
                             for i in 0..arg_count {
                                 args.push(self.stack.get_at(args_start + i));
                             }
-                            let result = native_fn(&args, &mut self.gc);
-
-                            self.stack.truncate(top - arg_count - 1);
-
-                            self.stack.push(result);
+                            match native_fn(&args, &mut self.gc) {
+                                Ok(result) => {
+                                    self.stack.truncate(top - arg_count - 1);
+                                    self.stack.push(result);
+                                }
+                                Err(msg) => {
+                                    self.frames.push(current_frame);
+                                    return Err(self.make_error(&msg));
+                                }
+                            }
                         }
                         val => unreachable!("Only functions should be called found {}", val),
                     }

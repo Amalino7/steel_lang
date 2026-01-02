@@ -216,6 +216,7 @@ fn is_valid_identifier(identifier_char: char) -> bool {
 
 fn keywords() -> HashMap<&'static str, TokenType> {
     HashMap::from([
+        ("try", TokenType::Try),
         ("and", TokenType::And),
         ("or", TokenType::Or),
         ("is", TokenType::Is),

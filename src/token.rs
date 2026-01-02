@@ -61,6 +61,7 @@ pub enum TokenType {
     Number,
 
     // Keywords.
+    Try,
     And,
     Or,
     Is,
@@ -146,6 +147,7 @@ impl Display for TokenType {
             TokenType::Match => f.write_str("match"),
             TokenType::Arrow => f.write_str("=>"),
             TokenType::Is => f.write_str("is"),
+            TokenType::Try => f.write_str("try"),
         }
     }
 }
