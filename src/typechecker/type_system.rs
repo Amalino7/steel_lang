@@ -343,17 +343,16 @@ impl TypeSystem {
 
         if let (Type::Interface(iface_name, generics), Some(name)) =
             (expected_type, expr.ty.get_name())
+            && let Some(idx) = self.impls.get(&(name.into(), iface_name.clone()))
         {
-            if let Some(idx) = self.impls.get(&(name.into(), iface_name.clone())) {
-                return Ok(TypedExpr {
-                    ty: Type::Interface(iface_name.clone(), generics.clone()),
-                    line: expr.line,
-                    kind: ExprKind::InterfaceUpcast {
-                        expr: Box::new(expr),
-                        vtable_idx: *idx,
-                    },
-                });
-            }
+            return Ok(TypedExpr {
+                ty: Type::Interface(iface_name.clone(), generics.clone()),
+                line: expr.line,
+                kind: ExprKind::InterfaceUpcast {
+                    expr: Box::new(expr),
+                    vtable_idx: *idx,
+                },
+            });
         }
         match are_equal {
             Ok(_) => Ok(expr),

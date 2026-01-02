@@ -122,12 +122,12 @@ impl<'src> TypeChecker<'src> {
                         }
                     }
                 }
-                if let Some(else_branch_typed) = &else_branch_typed {
-                    if self.stmt_returns(else_branch_typed)? {
-                        for (name, ty) in refinements.true_path {
-                            if let Some(case) = self.scopes.refine(&name, ty.clone()) {
-                                typed_refinements.after_path.push(case)
-                            }
+                if let Some(else_branch_typed) = &else_branch_typed
+                    && self.stmt_returns(else_branch_typed)?
+                {
+                    for (name, ty) in refinements.true_path {
+                        if let Some(case) = self.scopes.refine(&name, ty.clone()) {
+                            typed_refinements.after_path.push(case)
                         }
                     }
                 }

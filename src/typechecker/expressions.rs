@@ -380,44 +380,42 @@ impl<'src> TypeChecker<'src> {
 
                 if let Type::Metatype(name, generics) = &callee_typed.ty
                     && let Some(enum_def) = self.sys.get_enum(name)
-                {
-                    if let ExprKind::EnumInit {
+                    && let ExprKind::EnumInit {
                         variant_idx, value, ..
                     } = &mut callee_typed.kind
-                    {
-                        let (variant_name, ty) = &enum_def.ordered_variants[*variant_idx as usize];
-                        let (expr, map) = self.handle_enum_call(
-                            variant_name,
-                            ty,
-                            &enum_def.generic_params,
-                            generics,
-                            inferred_args,
-                            callee.get_line(),
-                        )?;
-                        *value = Box::from(expr);
-                        let issue = map.iter().any(|(_, v)| *v == Type::Unknown);
-                        if issue {
-                            return Err(TypeCheckerError::CannotInferType {
-                                line: callee.get_line(),
-                                uninferred_generics: map
-                                    .iter()
-                                    .filter(|(_, v)| **v == Type::Unknown)
-                                    .map(|(name, _)| name.to_string())
-                                    .collect(),
-                            });
-                        }
-                        // TODO handle generics
-                        callee_typed.ty = Type::Enum(
-                            name.clone(),
-                            enum_def
-                                .generic_params
+                {
+                    let (variant_name, ty) = &enum_def.ordered_variants[*variant_idx as usize];
+                    let (expr, map) = self.handle_enum_call(
+                        variant_name,
+                        ty,
+                        &enum_def.generic_params,
+                        generics,
+                        inferred_args,
+                        callee.get_line(),
+                    )?;
+                    *value = Box::from(expr);
+                    let issue = map.iter().any(|(_, v)| *v == Type::Unknown);
+                    if issue {
+                        return Err(TypeCheckerError::CannotInferType {
+                            line: callee.get_line(),
+                            uninferred_generics: map
                                 .iter()
-                                .map(|s| map.get(s).unwrap().clone())
-                                .collect::<Vec<_>>()
-                                .into(),
-                        );
-                        return Ok(callee_typed);
+                                .filter(|(_, v)| **v == Type::Unknown)
+                                .map(|(name, _)| name.to_string())
+                                .collect(),
+                        });
                     }
+                    // TODO handle generics
+                    callee_typed.ty = Type::Enum(
+                        name.clone(),
+                        enum_def
+                            .generic_params
+                            .iter()
+                            .map(|s| map.get(s).unwrap().clone())
+                            .collect::<Vec<_>>()
+                            .into(),
+                    );
+                    return Ok(callee_typed);
                 }
 
                 let safe = if let ExprKind::MethodGet { safe, .. } = callee_typed.kind {

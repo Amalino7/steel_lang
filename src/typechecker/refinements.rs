@@ -1,6 +1,6 @@
 use crate::typechecker::type_ast::{BinaryOp, ExprKind, LogicalOp, TypedExpr, UnaryOp};
 use crate::typechecker::type_system::TypeSystem;
-use crate::typechecker::types::{Type, generics_to_map};
+use crate::typechecker::types::{generics_to_map, Type};
 use crate::typechecker::{Symbol, TypeChecker};
 
 type Refinement = (Symbol, Type);
@@ -30,13 +30,13 @@ impl<'src> TypeChecker<'src> {
                     };
                 };
 
-                if let ExprKind::GetVar(_, name) = &other.kind {
-                    if let Type::Optional(inner) = &other.ty {
-                        return BranchRefinements {
-                            true_path: vec![],
-                            false_path: vec![(name.clone(), *inner.clone())],
-                        };
-                    }
+                if let ExprKind::GetVar(_, name) = &other.kind
+                    && let Type::Optional(inner) = &other.ty
+                {
+                    return BranchRefinements {
+                        true_path: vec![],
+                        false_path: vec![(name.clone(), *inner.clone())],
+                    };
                 }
                 BranchRefinements {
                     true_path: vec![],
