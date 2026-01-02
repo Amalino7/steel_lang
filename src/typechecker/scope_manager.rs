@@ -1,7 +1,7 @@
 use crate::compiler::analysis::ResolvedVar;
-use crate::typechecker::Symbol;
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::types::Type;
+use crate::typechecker::Symbol;
 use std::collections::HashMap;
 
 #[derive(Clone)]
@@ -40,6 +40,7 @@ pub struct ScopeManager {
 }
 
 // Might use it instead of manual clean-up
+#[allow(dead_code)]
 pub struct ScopeGuard<'a>(pub &'a mut ScopeManager);
 impl<'a> Drop for ScopeGuard<'a> {
     fn drop(&mut self) {
