@@ -315,8 +315,15 @@ impl<'src> TypeChecker<'src> {
                         line: field.line,
                     });
                 }
-                let a = TypeSystem::unify_types(&func.params[0].1, &mut pairs, lookup_type);
-                a.expect("First param of method must be self"); // TODO proper error handling and optimization
+                let res = TypeSystem::unify_types(&func.params[0].1, &mut pairs, lookup_type);
+                if let Err(err) = res {
+                    return Err(TypeCheckerError::ComplexTypeMismatch {
+                        expected: func.params[0].1.clone(),
+                        found: lookup_type.clone(),
+                        message: format!("Cannot call this method on this type instance {}", err),
+                        line: object_expr.line,
+                    });
+                }
 
                 let params = func
                     .params

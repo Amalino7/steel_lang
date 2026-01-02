@@ -1707,7 +1707,7 @@ mod tests {
 
 
         let box = Box.new(10);
-        println(Box(20).square());
+        println(Box("20").square());
         let str_box = box.map(wrap);
         assert(str_box.top + "1", "101");
         assert(box.unwrap() , 10);

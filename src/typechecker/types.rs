@@ -381,22 +381,19 @@ impl Display for Type {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Type::Metatype(name, generic_args) => {
-                write!(f, "Type {}<", name)?;
-                for generic_arg in generic_args.iter() {
-                    write!(f, "{}", generic_arg)?;
-                }
-                write!(f, ">")
+                write!(f, "Type {}", name)?;
+                print_generics(generic_args, f)
             }
             Type::GenericParam(name) => write!(f, "{}", name),
-            Type::Number => write!(f, "Number"),
-            Type::Boolean => write!(f, "Bool"),
-            Type::String => write!(f, "String"),
-            Type::Void => write!(f, "Void"),
-            Type::Never => write!(f, "Never"),
+            Type::Number => write!(f, "number"),
+            Type::Boolean => write!(f, "boolean"),
+            Type::String => write!(f, "string"),
+            Type::Void => write!(f, "void"),
+            Type::Never => write!(f, "never"),
             Type::Function(function_type) => {
                 write!(
                     f,
-                    "fn({}) -> {}",
+                    "func({}) -> {}",
                     function_type
                         .params
                         .iter()
@@ -406,14 +403,14 @@ impl Display for Type {
                     function_type.return_type
                 )
             }
-            Type::Unknown => write!(f, "Unknown"),
+            Type::Unknown => write!(f, "unknown"),
             Type::Any => write!(f, "any"),
             Type::Struct(name, generic_args) => {
-                write!(f, "struct {} <", name,)?;
+                write!(f, "struct {}", name,)?;
                 print_generics(generic_args, f)
             }
             Type::Interface(name, generic_args) => {
-                write!(f, "interface {} <", name,)?;
+                write!(f, "interface {}", name,)?;
                 print_generics(generic_args, f)
             }
 
@@ -421,12 +418,12 @@ impl Display for Type {
                 write!(f, "enum {}", name,)?;
                 print_generics(generic_args, f)
             }
-            Type::Optional(inner) => write!(f, "Optional<{}>", inner),
+            Type::Optional(inner) => write!(f, "{}?", inner),
             Type::Nil => write!(f, "Nil"),
             Type::Tuple(types) => {
                 write!(
                     f,
-                    "Tuple({})",
+                    "tuple({})",
                     types
                         .types
                         .iter()

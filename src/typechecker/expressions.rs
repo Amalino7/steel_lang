@@ -152,14 +152,25 @@ impl<'src> TypeChecker<'src> {
                     if let FunctionContext::Function(func_return_type) =
                         self.current_function.clone()
                     {
+                        let provided_err =
+                            Type::Enum(name.clone(), vec![Type::Never, err_type].into());
                         let ok = TypeSystem::unify_types(
                             &func_return_type,
                             &mut HashMap::new(),
-                            &Type::Enum(name.clone(), vec![Type::Never, err_type].into()),
+                            &provided_err,
                         );
-                        ok.expect("Unification failed");
+                        if let Err(_) = ok {
+                            return Err(TypeCheckerError::TypeMismatch {
+                                expected: func_return_type,
+                                found: provided_err,
+                                line: operator.line,
+                                message: "The Result type propagate by try must be compatible with the function return type.",
+                            });
+                        }
                     } else {
-                        todo!("err")
+                        return Err(TypeCheckerError::InvalidReturnOutsideFunction {
+                            line: operator.line,
+                        });
                     }
 
                     Ok(TypedExpr {
@@ -170,7 +181,12 @@ impl<'src> TypeChecker<'src> {
                         line: operator.line,
                     })
                 } else {
-                    todo!("err")
+                    Err(TypeCheckerError::TypeMismatch {
+                        expected: Type::Enum("Result".into(), vec![Type::Any, Type::Any].into()),
+                        found: typed_expr.ty,
+                        line: operator.line,
+                        message: "Try works only on the Result enum.",
+                    })
                 }
             }
             Expr::Unary {
