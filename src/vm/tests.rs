@@ -5,10 +5,10 @@ mod tests {
     use crate::parser::Parser;
     use crate::scanner::Scanner;
     use crate::typechecker::TypeChecker;
+    use crate::vm::VM;
     use crate::vm::bytecode::{Chunk, Opcode};
     use crate::vm::gc::GarbageCollector;
     use crate::vm::value::{Function, Value};
-    use crate::vm::VM;
 
     #[test]
     fn test_simple_add() {

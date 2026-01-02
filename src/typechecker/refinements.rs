@@ -30,13 +30,13 @@ impl<'src> TypeChecker<'src> {
                     };
                 };
 
-                if let ExprKind::GetVar(_, name) = &other.kind {
-                    if let Type::Optional(inner) = &other.ty {
-                        return BranchRefinements {
-                            true_path: vec![],
-                            false_path: vec![(name.clone(), *inner.clone())],
-                        };
-                    }
+                if let ExprKind::GetVar(_, name) = &other.kind
+                    && let Type::Optional(inner) = &other.ty
+                {
+                    return BranchRefinements {
+                        true_path: vec![],
+                        false_path: vec![(name.clone(), *inner.clone())],
+                    };
                 }
                 BranchRefinements {
                     true_path: vec![],

@@ -342,11 +342,11 @@ mod tests {
     }
     #[test]
     fn test_error_token() {
-        let input = "?";
+        let input = "@";
         let mut scanner = Scanner::new(input);
         assert_eq!(
             scanner.next_token(),
-            Token::new(TokenType::UnexpectedSymbolError, 1, "?")
+            Token::new(TokenType::UnexpectedSymbolError, 1, "@")
         );
     }
     #[test]

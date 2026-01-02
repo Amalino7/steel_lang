@@ -379,7 +379,16 @@ impl Display for TypeAst<'_> {
         }
     }
 }
-
+fn print_generics(f: &mut Formatter<'_>, generics: &[Token<'_>]) -> fmt::Result {
+    write!(f, "<")?;
+    for (i, generic) in generics.iter().enumerate() {
+        write!(f, "{}", generic.lexeme)?;
+        if i != generics.len() - 1 {
+            write!(f, ", ")?;
+        }
+    }
+    write!(f, ">")
+}
 impl Display for Stmt<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
@@ -391,9 +400,9 @@ impl Display for Stmt<'_> {
                 ..
             } => write!(f, "let {}: {} = {}", binding, type_info, value),
             Stmt::Block { body, .. } => {
-                write!(f, "do\n")?;
+                writeln!(f, "do\n")?;
                 for statement in body {
-                    write!(f, " {}\n", statement)?;
+                    writeln!(f, " {}\n", statement)?;
                 }
                 write!(f, "end")
             }
@@ -439,6 +448,7 @@ impl Display for Stmt<'_> {
                 generics,
             } => {
                 write!(f, "Struct {} {{", name.lexeme)?;
+                print_generics(f, generics)?;
                 for field in fields {
                     write!(f, "{} : {}, ", field.0.lexeme, field.1)?;
                 }
@@ -450,18 +460,19 @@ impl Display for Stmt<'_> {
                 methods,
                 generics,
             } => {
+                write!(f, "Impl {}", name.0.lexeme)?;
+                print_generics(f, generics)?;
                 write!(
                     f,
-                    "Impl {} : {} {{",
+                    ": {} {{",
                     interfaces
                         .iter()
                         .map(|e| e.lexeme)
                         .collect::<Vec<_>>()
                         .join(", "),
-                    name.0.lexeme
                 )?;
                 for method in methods {
-                    write!(f, "{}\n", method)?;
+                    writeln!(f, "{}\n", method)?;
                 }
                 write!(f, "}}")
             }
@@ -470,7 +481,9 @@ impl Display for Stmt<'_> {
                 methods,
                 generics,
             } => {
-                write!(f, "Interface {} {{", name.lexeme)?;
+                write!(f, "Interface {}", name.lexeme)?;
+                print_generics(f, generics)?;
+                write!(f, ": {{")?;
                 for m in methods {
                     write!(f, " func {}(...): {};", m.name.lexeme, m.type_)?;
                 }
@@ -481,7 +494,9 @@ impl Display for Stmt<'_> {
                 variants,
                 generics,
             } => {
-                write!(f, "Enum {} {{", name.lexeme)?;
+                write!(f, "Enum {}", name.lexeme)?;
+                print_generics(f, generics)?;
+                write!(f, "{{")?;
                 for case in variants {
                     write!(f, "case {} ", case.0.lexeme,)?;
                     match &case.1 {

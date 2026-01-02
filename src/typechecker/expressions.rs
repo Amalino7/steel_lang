@@ -39,7 +39,7 @@ impl<'src> TypeChecker<'src> {
                                 ),
                             });
                         }
-                        if func.type_params.len() == 0 {
+                        if func.type_params.is_empty() {
                             return Err(TypeCheckerError::InvalidGenericSpecification {
                                 line: callee_typed.line,
                                 message: "Cannot specialize generic on function without generics!"
@@ -52,7 +52,7 @@ impl<'src> TypeChecker<'src> {
                         Ok(callee_typed)
                     }
                     Type::Metatype(type_name, generics) => {
-                        if generics.len() > 0 {
+                        if !generics.is_empty() {
                             return Err(TypeCheckerError::InvalidGenericSpecification {
                                 line: callee_typed.line,
                                 message: "Cannot specialize generic more than once!".to_string(),
@@ -159,7 +159,7 @@ impl<'src> TypeChecker<'src> {
                             &mut HashMap::new(),
                             &provided_err,
                         );
-                        if let Err(_) = ok {
+                        if ok.is_err() {
                             return Err(TypeCheckerError::TypeMismatch {
                                 expected: func_return_type,
                                 found: provided_err,
@@ -337,13 +337,13 @@ impl<'src> TypeChecker<'src> {
 
                 // Handle Struct constructor
                 if let Type::Metatype(name, generics) = &callee_typed.ty
-                    && let Some(struct_def) = self.sys.get_struct(&name)
+                    && let Some(struct_def) = self.sys.get_struct(name)
                 {
                     let mut map: HashMap<Symbol, Type> =
                         generics_to_map(&struct_def.generic_params, generics);
                     let owned_name = struct_def.name.clone();
                     let bound_args = self.sys.bind_arguments(
-                        &name,
+                        name,
                         &mut map,
                         &struct_def.ordered_fields,
                         inferred_args,
@@ -360,9 +360,9 @@ impl<'src> TypeChecker<'src> {
                     let uninferred: Vec<_> = map
                         .iter()
                         .filter(|(_, v)| **v == Type::Unknown)
-                        .map(|(name, t)| name.to_string())
+                        .map(|(name, _)| name.to_string())
                         .collect();
-                    if uninferred.len() > 0 {
+                    if !uninferred.is_empty() {
                         return Err(TypeCheckerError::CannotInferType {
                             line: callee.get_line(),
                             uninferred_generics: uninferred,
@@ -379,45 +379,43 @@ impl<'src> TypeChecker<'src> {
                 }
 
                 if let Type::Metatype(name, generics) = &callee_typed.ty
-                    && let Some(enum_def) = self.sys.get_enum(&name)
-                {
-                    if let ExprKind::EnumInit {
+                    && let Some(enum_def) = self.sys.get_enum(name)
+                    && let ExprKind::EnumInit {
                         variant_idx, value, ..
                     } = &mut callee_typed.kind
-                    {
-                        let (variant_name, ty) = &enum_def.ordered_variants[*variant_idx as usize];
-                        let (expr, map) = self.handle_enum_call(
-                            variant_name,
-                            ty,
-                            &enum_def.generic_params,
-                            generics,
-                            inferred_args,
-                            callee.get_line(),
-                        )?;
-                        *value = Box::from(expr);
-                        let issue = map.iter().any(|(_, v)| *v == Type::Unknown);
-                        if issue {
-                            return Err(TypeCheckerError::CannotInferType {
-                                line: callee.get_line(),
-                                uninferred_generics: map
-                                    .iter()
-                                    .filter(|(_, v)| **v == Type::Unknown)
-                                    .map(|(name, t)| name.to_string())
-                                    .collect(),
-                            });
-                        }
-                        // TODO handle generics
-                        callee_typed.ty = Type::Enum(
-                            name.clone(),
-                            enum_def
-                                .generic_params
+                {
+                    let (variant_name, ty) = &enum_def.ordered_variants[*variant_idx as usize];
+                    let (expr, map) = self.handle_enum_call(
+                        variant_name,
+                        ty,
+                        &enum_def.generic_params,
+                        generics,
+                        inferred_args,
+                        callee.get_line(),
+                    )?;
+                    *value = Box::from(expr);
+                    let issue = map.iter().any(|(_, v)| *v == Type::Unknown);
+                    if issue {
+                        return Err(TypeCheckerError::CannotInferType {
+                            line: callee.get_line(),
+                            uninferred_generics: map
                                 .iter()
-                                .map(|s| map.get(s).unwrap().clone())
-                                .collect::<Vec<_>>()
-                                .into(),
-                        );
-                        return Ok(callee_typed);
+                                .filter(|(_, v)| **v == Type::Unknown)
+                                .map(|(name, _)| name.to_string())
+                                .collect(),
+                        });
                     }
+                    // TODO handle generics
+                    callee_typed.ty = Type::Enum(
+                        name.clone(),
+                        enum_def
+                            .generic_params
+                            .iter()
+                            .map(|s| map.get(s).unwrap().clone())
+                            .collect::<Vec<_>>()
+                            .into(),
+                    );
+                    return Ok(callee_typed);
                 }
 
                 let safe = if let ExprKind::MethodGet { safe, .. } = callee_typed.kind {
@@ -466,9 +464,9 @@ impl<'src> TypeChecker<'src> {
                         let uninferred: Vec<_> = map
                             .iter()
                             .filter(|(_, v)| **v == Type::Unknown)
-                            .map(|(name, t)| name.to_string())
+                            .map(|(name, _)| name.to_string())
                             .collect();
-                        if uninferred.len() > 0 {
+                        if !uninferred.is_empty() {
                             return Err(TypeCheckerError::CannotInferType {
                                 line: callee.get_line(),
                                 uninferred_generics: uninferred,
@@ -573,7 +571,7 @@ impl<'src> TypeChecker<'src> {
                         .expect("Should have errored earlier");
 
                     let (field_idx, field_type) =
-                        self.check_field_type(&struct_def, field, &value, generics)?;
+                        self.check_field_type(struct_def, field, &value, generics)?;
 
                     Ok(TypedExpr {
                         ty: field_type,

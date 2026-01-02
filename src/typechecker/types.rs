@@ -311,7 +311,7 @@ impl Type {
                 {
                     if name.lexeme == "Self" {
                         let self_ty = Type::from_identifier(
-                            &self_type,
+                            self_type,
                             type_system,
                             self_generics
                                 .iter()

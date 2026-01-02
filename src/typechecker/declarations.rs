@@ -8,6 +8,7 @@ use crate::typechecker::type_system::TypeSystem;
 use crate::typechecker::types::Type;
 use crate::typechecker::{FunctionContext, Symbol, TypeChecker};
 use std::collections::HashMap;
+use std::iter::repeat_n;
 
 impl<'src> TypeChecker<'src> {
     pub(crate) fn declare_global_functions(&mut self, ast: &[Stmt<'src>]) {
@@ -168,7 +169,7 @@ impl<'src> TypeChecker<'src> {
                             let full_name: Symbol =
                                 format!("{}.{}", name.lexeme, v_name.lexeme).into();
                             // TODO generics here???
-                            self.sys.declare_struct(full_name.clone(), &vec![]);
+                            self.sys.declare_struct(full_name.clone(), &[]);
                             self.sys.define_struct(&full_name, field_types);
                             Type::Struct(full_name, vec![].into())
                         }
@@ -178,7 +179,7 @@ impl<'src> TypeChecker<'src> {
                     typed_variants.insert(v_name.lexeme.to_string(), (idx, ty));
                 }
                 self.sys.pop_n_generics(generics.len());
-                self.sys.define_enum(name.lexeme.into(), typed_variants);
+                self.sys.define_enum(name.lexeme, typed_variants);
             }
         }
     }
@@ -187,8 +188,8 @@ impl<'src> TypeChecker<'src> {
         fields: &[(Token, TypeAst)],
     ) -> HashMap<String, (usize, Type)> {
         let mut field_types = HashMap::new();
-        for (i, (name, type_ast)) in fields.into_iter().enumerate() {
-            let field_type = Type::from_ast(&type_ast, &self.sys);
+        for (i, (name, type_ast)) in fields.iter().enumerate() {
+            let field_type = Type::from_ast(type_ast, &self.sys);
             match field_type {
                 Ok(field_type) => {
                     field_types.insert(name.lexeme.to_string(), (i, field_type));
@@ -257,9 +258,8 @@ impl<'src> TypeChecker<'src> {
                 continue;
             };
 
-            let mut vtable = std::iter::repeat(ResolvedVar::Local(0))
-                .take(interface_type.methods.len())
-                .collect::<Vec<_>>();
+            let mut vtable =
+                repeat_n(ResolvedVar::Local(0), interface_type.methods.len()).collect::<Vec<_>>();
             let mut missing_methods = vec![];
 
             for (method_name, (location, method_type)) in interface_type.methods.iter() {
@@ -271,7 +271,7 @@ impl<'src> TypeChecker<'src> {
                     if TypeSystem::implement_method(&resolved_type.type_info, method_type) {
                         vtable[*location] = method_location;
                     } else {
-                        missing_methods.push(format!("{} (type mismatch)", method_name));
+                        missing_methods.push(format!("{method_name} (type mismatch)"));
                     }
                 } else {
                     missing_methods.push(method_name.clone());

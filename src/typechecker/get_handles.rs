@@ -66,7 +66,7 @@ impl<'src> TypeChecker<'src> {
 
         let bind_args = |args: &[(String, Type)]| {
             self.sys
-                .bind_arguments(&variant_name, &mut map, args, inferred_args, false, line)
+                .bind_arguments(variant_name, &mut map, args, inferred_args, false, line)
         };
 
         let val_expr = match variant_type {
@@ -217,7 +217,7 @@ impl<'src> TypeChecker<'src> {
             if let Some((idx, field_type)) = struct_def.get_field(member_token.lexeme) {
                 let actual = TypeSystem::generic_to_concrete(
                     field_type,
-                    &generics_to_map(&struct_def.generic_params, &generics),
+                    &generics_to_map(&struct_def.generic_params, generics),
                 );
 
                 let mut expr = TypedExpr {

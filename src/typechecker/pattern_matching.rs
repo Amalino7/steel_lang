@@ -16,7 +16,7 @@ impl<'src> TypeChecker<'src> {
     ) -> Result<TypedStmt, TypeCheckerError> {
         let value_typed = self.infer_expression(value)?;
         let enum_name = match &value_typed.ty {
-            Type::Enum(name, generics) => name,
+            Type::Enum(name, ..) => name,
             _ => {
                 return Err(TypeCheckerError::TypeMismatch {
                     expected: Type::Enum("Any".into(), vec![].into()),
@@ -122,7 +122,13 @@ impl<'src> TypeChecker<'src> {
                 let typed_binding = if let Some(binding) = &bind {
                     self.check_binding(binding, &payload_type)?
                 } else {
-                    if !matches!(payload_type, Type::Void) {}
+                    if !matches!(payload_type, Type::Void) {
+                        // TODO potentially warn about unused bindings
+                        // self.warnings.push(TypeCheckerWarning::UnusedBinding {
+                        //     binding: binding.lexeme.to_string(),
+                        //     line: binding.line,
+                        // });
+                    }
                     TypedBinding::Ignored
                 };
 

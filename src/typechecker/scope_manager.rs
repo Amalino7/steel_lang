@@ -40,6 +40,7 @@ pub struct ScopeManager {
 }
 
 // Might use it instead of manual clean-up
+#[allow(dead_code)]
 pub struct ScopeGuard<'a>(pub &'a mut ScopeManager);
 impl<'a> Drop for ScopeGuard<'a> {
     fn drop(&mut self) {
@@ -91,11 +92,12 @@ impl ScopeManager {
     pub fn end_scope(&mut self) -> usize {
         let finished_scope = self.scopes.pop().expect("No scope to end");
         let max = finished_scope.max_index;
-        if let Some(parent) = self.scopes.last_mut() {
-            if parent.scope_type != ScopeType::Global {
-                parent.max_index = parent.max_index.max(max);
-            }
+        if let Some(parent) = self.scopes.last_mut()
+            && parent.scope_type != ScopeType::Global
+        {
+            parent.max_index = parent.max_index.max(max);
         }
+
         max
     }
 

@@ -66,6 +66,7 @@ impl<'src> TypeChecker<'src> {
             StmtKind::EnumDecl { .. } => Ok(()),
         }
     }
+    #[allow(clippy::only_used_in_recursion)]
     pub fn stmt_returns(&mut self, stmt: &TypedStmt) -> Result<bool, TypeCheckerError> {
         Ok(match &stmt.kind {
             StmtKind::Expression(_) => false,

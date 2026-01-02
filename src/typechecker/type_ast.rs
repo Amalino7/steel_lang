@@ -1,7 +1,7 @@
 use crate::compiler::analysis::ResolvedVar;
 use crate::parser::ast::Literal;
-use crate::typechecker::types::Type;
 use crate::typechecker::Symbol;
+use crate::typechecker::types::Type;
 
 #[derive(Debug, Clone)]
 pub struct TypedExpr {
