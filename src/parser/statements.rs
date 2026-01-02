@@ -2,8 +2,8 @@ use crate::parser::ast::{
     Binding, Expr, InterfaceSig, Literal, MatchArm, Pattern, Stmt, TypeAst, VariantType,
 };
 use crate::parser::error::ParserError;
-use crate::parser::{check_next_token_type, TokT};
-use crate::parser::{check_token_type, match_token_type, Parser};
+use crate::parser::{Parser, check_token_type, match_token_type};
+use crate::parser::{TokT, check_next_token_type};
 use crate::token::{Token, TokenType};
 
 impl<'src> Parser<'src> {

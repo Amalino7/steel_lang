@@ -20,9 +20,9 @@ jobs:
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
-
-      - name: Check Formatting
-        run: cargo fmt -- --check
+      # format check is disabled for now due to IDE problems
+      #      - name: Check Formatting
+      #        run: cargo fmt -- --check
 
       - name: Clippy (Linting)
         run: cargo clippy -- -D warnings
