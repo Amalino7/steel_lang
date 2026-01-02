@@ -1,0 +1,63 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    name: Build Release (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            name: steel_lang-linux-x86_64
+            executable: steel_lang
+          - os: macOS-latest
+            target: x86_64-apple-darwin
+            name: steel_lang-macos-x86_64
+            executable: steel_lang
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            name: steel_lang-windows-x86_64
+            executable: steel_lang.exe
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build Release
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package Binary
+        shell: bash
+        run: |
+          mkdir ${{ matrix.name }}
+          cp target/${{ matrix.target }}/release/${{ matrix.executable }} ${{ matrix.name }}/
+          # If you have a README or LICENSE, copy it here too
+          # cp README.md ${{ matrix.name }}/
+          
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            7z a ${{ matrix.name }}.zip ${{ matrix.name }}
+          else
+            tar -czvf ${{ matrix.name }}.tar.gz ${{ matrix.name }}
+          fi
+
+      - name: Upload Artifact
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            ${{ matrix.name }}.tar.gz
+            ${{ matrix.name }}.zip

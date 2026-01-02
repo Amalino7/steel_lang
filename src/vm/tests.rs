@@ -180,6 +180,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_fib() {
         let src = "
             let a = 0;
@@ -308,6 +309,7 @@ mod tests {
         execute_source(src, false, "run", true);
     }
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_function_recursion() {
         let src = r#"
             {
@@ -324,6 +326,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_gc() {
         let src = r#"
             let a = 0;
@@ -414,6 +417,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn string_concatenation() {
         let src = r#"
             let str = "Hello";
@@ -531,6 +535,7 @@ mod tests {
         execute_source(src, false, "run", true);
     }
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_local_recursion() {
         let src = r#"
         func main(): void {
@@ -831,6 +836,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_recursive_method() {
         let src = r#"
             struct Fiber {}
@@ -1707,7 +1713,7 @@ mod tests {
 
 
         let box = Box.new(10);
-        println(Box("20").square());
+        println(Box(20).square());
         let str_box = box.map(wrap);
         assert(str_box.top + "1", "101");
         assert(box.unwrap() , 10);
