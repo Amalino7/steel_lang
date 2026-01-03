@@ -12,16 +12,17 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 impl<'src> TypeChecker<'src> {
-    pub(crate) fn infer_expression(
+    pub(crate) fn check_expression(
         &mut self,
         expr: &Expr<'src>,
+        expected: Option<&Type>,
     ) -> Result<TypedExpr, TypeCheckerError> {
         match expr {
             Expr::TypeSpecialization {
                 callee,
                 generics: generics_provided,
             } => {
-                let mut callee_typed = self.infer_expression(callee)?;
+                let mut callee_typed = self.check_expression(callee, None)?;
                 let generic_args = generics_provided
                     .iter()
                     .map(|t| Type::from_ast(t, &self.sys))
@@ -83,7 +84,7 @@ impl<'src> TypeChecker<'src> {
                 expression,
                 type_name,
             } => {
-                let target = self.infer_expression(expression)?;
+                let target = self.check_expression(expression, None)?;
                 let Type::Enum(enum_name, _) = &target.ty else {
                     return Err(TypeCheckerError::InvalidIsUsage {
                         line: type_name.line,
@@ -115,8 +116,16 @@ impl<'src> TypeChecker<'src> {
             Expr::Tuple { elements } => {
                 let mut typed_elements = Vec::with_capacity(elements.len());
                 let mut type_vec = vec![];
-                for element in elements {
-                    let el = self.infer_expression(element)?;
+
+                let expected_types = if let Some(Type::Tuple(t)) = expected {
+                    Some(&t.types)
+                } else {
+                    None
+                };
+
+                for (idx, element) in elements.iter().enumerate() {
+                    let target_inner = expected_types.and_then(|v| v.get(idx));
+                    let el = self.check_expression(element, target_inner)?;
                     type_vec.push(el.ty.clone());
                     typed_elements.push(el);
                 }
@@ -134,7 +143,8 @@ impl<'src> TypeChecker<'src> {
                 operator,
                 expression,
             } if operator.token_type == TokenType::Try => {
-                let mut typed_expr = self.infer_expression(expression)?;
+                // TODO add suggested type
+                let mut typed_expr = self.check_expression(expression, None)?;
                 if let Type::Enum(name, instance) = &mut typed_expr.ty
                     && name.as_ref() == "Result"
                 {
@@ -192,12 +202,12 @@ impl<'src> TypeChecker<'src> {
             Expr::Unary {
                 operator,
                 expression,
-            } => self.check_unary_expression(operator, expression),
+            } => self.check_unary_expression(operator, expression, expected),
             Expr::Binary {
                 operator,
                 left,
                 right,
-            } => self.check_binary_expression(operator, left, right),
+            } => self.check_binary_expression(operator, left, right, expected),
 
             Expr::Variable { name } => {
                 let var = self.scopes.lookup(name.lexeme);
@@ -220,7 +230,7 @@ impl<'src> TypeChecker<'src> {
                     })
                 }
             }
-            Expr::Grouping { expression } => self.infer_expression(expression),
+            Expr::Grouping { expression } => self.check_expression(expression, expected),
             Expr::Literal { literal, line } => {
                 let ty = match literal {
                     Literal::Number(_) => Type::Number,
@@ -237,7 +247,6 @@ impl<'src> TypeChecker<'src> {
                 })
             }
             Expr::Assignment { identifier, value } => {
-                let typed_value = self.infer_expression(value)?;
                 let var_lookup = self.scopes.lookup(identifier.lexeme);
 
                 if let Some((ctx, resolved)) = var_lookup {
@@ -247,10 +256,12 @@ impl<'src> TypeChecker<'src> {
                             line: identifier.line,
                         });
                     }
+                    let expected = ctx.type_info.clone();
+                    let typed_value = self.check_expression(value, Some(&expected))?;
 
                     let coerced_value = self.sys.verify_assignment(
                         &mut HashMap::new(),
-                        &ctx.type_info,
+                        &expected,
                         typed_value,
                         identifier.line,
                     )?;
@@ -275,8 +286,10 @@ impl<'src> TypeChecker<'src> {
                 left,
                 right,
             } if operator.token_type == TokenType::QuestionQuestion => {
-                let left_typed = self.infer_expression(left)?;
-                let right_typed = self.infer_expression(right)?;
+                let wrapped_expected = expected.map(|t| t.clone().wrap_in_optional());
+
+                let left_typed = self.check_expression(left, wrapped_expected.as_ref())?;
+                let right_typed = self.check_expression(right, expected)?;
                 let left_inner = match &left_typed.ty {
                     Type::Optional(inner) => inner.as_ref(),
                     _ => {
@@ -318,12 +331,12 @@ impl<'src> TypeChecker<'src> {
                 arguments,
                 safe,
             } => {
-                let mut callee_typed = self.infer_expression(callee)?;
+                let mut callee_typed = self.check_expression(callee, None)?;
                 // Handle args
                 let mut inferred_args = Vec::with_capacity(arguments.len());
 
                 for arg in arguments {
-                    let typed_val = self.infer_expression(&arg.expr)?;
+                    let typed_val = self.check_expression(&arg.expr, None)?;
 
                     let label = arg.label.as_ref().map(|t| t.lexeme);
                     let line = arg
@@ -341,6 +354,33 @@ impl<'src> TypeChecker<'src> {
                 {
                     let mut map: HashMap<Symbol, Type> =
                         generics_to_map(&struct_def.generic_params, generics);
+
+                    if let Some(Type::Interface(..)) = expected {
+                    } else {
+                        let struct_ans = Type::Struct(
+                            name.clone(),
+                            struct_def
+                                .generic_params
+                                .iter()
+                                .map(|n| Type::GenericParam(n.clone()))
+                                .collect::<Vec<_>>()
+                                .into(),
+                        );
+                        let err = TypeSystem::unify_types(
+                            expected.unwrap_or(&Type::Unknown),
+                            &mut map,
+                            &struct_ans,
+                        );
+                        if let Err(err) = err {
+                            return Err(TypeCheckerError::ComplexTypeMismatch {
+                                expected: expected.unwrap_or(&Type::Unknown).clone(),
+                                found: struct_ans.clone(),
+                                message: err,
+                                line: callee.get_line(),
+                            });
+                        }
+                    }
+
                     let owned_name = struct_def.name.clone();
                     let bound_args = self.sys.bind_arguments(
                         name,
@@ -385,7 +425,7 @@ impl<'src> TypeChecker<'src> {
                     } = &mut callee_typed.kind
                 {
                     let (variant_name, ty) = &enum_def.ordered_variants[*variant_idx as usize];
-                    let (expr, map) = self.handle_enum_call(
+                    let (expr, mut map) = self.handle_enum_call(
                         variant_name,
                         ty,
                         &enum_def.generic_params,
@@ -393,6 +433,29 @@ impl<'src> TypeChecker<'src> {
                         inferred_args,
                         callee.get_line(),
                     )?;
+                    let res_ty = Type::Enum(
+                        name.clone(),
+                        enum_def
+                            .generic_params
+                            .iter()
+                            .map(|n| Type::GenericParam(n.clone()))
+                            .collect::<Vec<_>>()
+                            .into(),
+                    );
+                    let err = TypeSystem::unify_types(
+                        expected.unwrap_or(&Type::Unknown),
+                        &mut map,
+                        &res_ty,
+                    );
+                    if let Err(err) = err {
+                        return Err(TypeCheckerError::ComplexTypeMismatch {
+                            expected: expected.unwrap_or(&Type::Unknown).clone(),
+                            found: expr.ty.clone(),
+                            message: err,
+                            line: callee.get_line(),
+                        });
+                    }
+
                     *value = Box::from(expr);
                     let issue = map.iter().any(|(_, v)| *v == Type::Unknown);
                     if issue {
@@ -441,12 +504,25 @@ impl<'src> TypeChecker<'src> {
                 } else {
                     callee_typed.ty.clone()
                 };
-
                 // Check for Normal Function Call
                 match lookup_type {
                     Type::Function(func) => {
                         let mut map: HashMap<Symbol, Type> =
                             generics_to_map(&func.type_params, &[]);
+                        let err = TypeSystem::unify_types(
+                            expected.unwrap_or(&Type::Unknown),
+                            &mut map,
+                            &func.return_type,
+                        );
+                        if let Err(err) = err {
+                            return Err(TypeCheckerError::ComplexTypeMismatch {
+                                expected: expected.unwrap_or(&Type::Unknown).clone(),
+                                found: func.return_type.clone(),
+                                message: err,
+                                line: callee.get_line(),
+                            });
+                        }
+
                         let bound_args = self.sys.bind_arguments(
                             callee.to_string().as_ref(),
                             &mut map,
@@ -496,7 +572,7 @@ impl<'src> TypeChecker<'src> {
                 safe,
             } => {
                 //TODO Ignores safe static access probably should be a warning
-                let object_typed = self.infer_expression(object)?;
+                let object_typed = self.check_expression(object, None)?;
                 if let Type::Metatype(name, generics) = &object_typed.ty {
                     return self.resolve_static_access(name, field, generics);
                 }
@@ -509,8 +585,9 @@ impl<'src> TypeChecker<'src> {
                 value,
                 safe,
             } => {
-                let object_typed = self.infer_expression(object)?;
-                let value = self.infer_expression(value)?;
+                let object_typed = self.check_expression(object, None)?;
+                // TODO add target type inference
+                let value = self.check_expression(value, None)?;
 
                 let type_ = if *safe {
                     match &object_typed.ty {
@@ -592,7 +669,9 @@ impl<'src> TypeChecker<'src> {
             }
 
             Expr::ForceUnwrap { expression, line } => {
-                let expr_typed = self.infer_expression(expression)?;
+                let expected_opt = expected.map(|t| Type::Optional(Box::new(t.clone())));
+
+                let expr_typed = self.check_expression(expression, expected_opt.as_ref())?;
                 match expr_typed.ty.clone() {
                     Type::Optional(inner) => Ok(TypedExpr {
                         ty: *inner,

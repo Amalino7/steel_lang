@@ -1,7 +1,9 @@
 use crate::token::Token;
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::type_ast::{ExprKind, TypedExpr};
-use crate::typechecker::types::{EnumType, InterfaceType, StructType, TupleType, Type};
+use crate::typechecker::types::{
+    generics_to_map, EnumType, InterfaceType, StructType, TupleType, Type,
+};
 use crate::typechecker::Symbol;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -32,6 +34,18 @@ impl TypeSystem {
     }
     pub fn get_active_generics(&self) -> Vec<Symbol> {
         self.active_generics.clone()
+    }
+
+    pub fn get_generics_map(&self, ty: &Type) -> HashMap<Symbol, Type> {
+        match ty {
+            Type::Struct(name, args) => {
+                generics_to_map(&self.get_struct(name).unwrap().generic_params, args)
+            }
+            Type::Enum(name, args) => {
+                generics_to_map(&self.get_enum(name).unwrap().generic_params, args)
+            }
+            _ => HashMap::new(),
+        }
     }
 
     pub fn pop_n_generics(&mut self, count: usize) {
@@ -225,6 +239,23 @@ impl TypeSystem {
             return Ok(());
         }
 
+        if let Type::GenericParam(name) = provided
+            && let Some(generic_ty) = generics_map.get(name)
+        {
+            if generic_ty == &Type::Unknown {
+                generics_map.insert(name.clone(), expected_ty.clone());
+                return Ok(());
+            } else if let Type::GenericParam(provided_name) = generic_ty
+                && name == provided_name
+            {
+                return Ok(());
+            } else if expected_ty != generic_ty {
+                Self::unify_types(expected_ty, generics_map, &generic_ty.clone())?;
+            } else {
+                return Ok(());
+            }
+        }
+
         match expected_ty {
             Type::Metatype(_, _) => Err("Cannot unify metatypes".into()),
             Type::Nil | Type::Number | Type::String | Type::Void | Type::Boolean | Type::Never => {
@@ -357,7 +388,7 @@ impl TypeSystem {
         match are_equal {
             Ok(_) => Ok(expr),
             Err(msg) => Err(TypeCheckerError::ComplexTypeMismatch {
-                expected: expected_type.clone(),
+                expected: Self::generic_to_concrete(expected_type.clone(), generics_map),
                 line,
                 message: msg,
                 found: expr.ty.clone(),
@@ -491,6 +522,9 @@ impl TypeSystem {
                 Type::Optional(Box::new(Self::generic_to_concrete(*inner, generics_map)))
             }
             Type::Function(func_type) => {
+                if func_type.is_vararg {
+                    return Type::Function(func_type);
+                }
                 let params = func_type
                     .params
                     .iter()
@@ -526,9 +560,10 @@ impl TypeSystem {
             Type::GenericParam(generic) => {
                 if let Some(new_type) = generics_map.get(&generic) {
                     if new_type == &Type::Unknown {
-                        panic!("Generic type not found") // TODO error handling
+                        Type::GenericParam(generic)
+                    } else {
+                        new_type.clone()
                     }
-                    new_type.clone()
                 } else {
                     Type::GenericParam(generic)
                 }

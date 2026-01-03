@@ -10,7 +10,7 @@ impl<'src> TypeChecker<'src> {
     pub(crate) fn check_stmt(&mut self, stmt: &Stmt<'src>) -> Result<TypedStmt, TypeCheckerError> {
         match stmt {
             Stmt::Expression(expr) => Ok(TypedStmt {
-                kind: StmtKind::Expression(self.infer_expression(expr)?),
+                kind: StmtKind::Expression(self.check_expression(expr, None)?),
                 line: stmt.get_line(),
                 type_info: Type::Void,
             }),
@@ -19,8 +19,9 @@ impl<'src> TypeChecker<'src> {
                 value,
                 type_info,
             } => {
-                let value_node = self.infer_expression(value)?;
                 let declared_type = Type::from_ast(type_info, &self.sys)?;
+                let value_node = self.check_expression(value, Some(&declared_type))?;
+                // TODO consider if Unknown is a good usage
 
                 let coerced_value = self.sys.verify_assignment(
                     &mut HashMap::new(),
@@ -74,7 +75,7 @@ impl<'src> TypeChecker<'src> {
                 then_branch,
                 else_branch,
             } => {
-                let cond_typed = self.infer_expression(condition)?;
+                let cond_typed = self.check_expression(condition, Some(&Type::Boolean))?;
 
                 if cond_typed.ty != Type::Boolean {
                     return Err(TypeCheckerError::TypeMismatch {
@@ -144,7 +145,7 @@ impl<'src> TypeChecker<'src> {
                 })
             }
             Stmt::While { condition, body } => {
-                let cond_type = self.infer_expression(condition)?;
+                let cond_type = self.check_expression(condition, Some(&Type::Boolean))?;
                 let body = self.check_stmt(body)?;
                 if cond_type.ty != Type::Boolean {
                     return Err(TypeCheckerError::TypeMismatch {
@@ -187,8 +188,8 @@ impl<'src> TypeChecker<'src> {
                 res
             }
             Stmt::Return(expr) => {
-                let return_expr = self.infer_expression(expr)?;
                 if let FunctionContext::Function(func_return_type) = self.current_function.clone() {
+                    let return_expr = self.check_expression(expr, Some(&func_return_type))?;
                     let coerced_return = self.sys.verify_assignment(
                         &mut HashMap::new(),
                         &func_return_type,

@@ -400,7 +400,7 @@ impl std::fmt::Display for TypeCheckerError {
             } => {
                 write!(
                     f,
-                    "[line {}] Error: Type mismatch {} {}.\n Precise: {}\n",
+                    "[line {}] Error: Type mismatch expected: '{}' but found '{}'.\n Precise: {}\n",
                     line, expected, found, message
                 )
             }

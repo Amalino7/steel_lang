@@ -98,6 +98,10 @@ pub fn execute_source(source: &str, debug: bool, mode: &str, force: bool) {
         }
     }
 }
+
+fn identity<T>(x: T) -> T {
+    x
+}
 fn main() {
     let source_path = args().nth(1).expect("No source file provided.");
     let mut source = fs::read_to_string(source_path).expect("Failed to read source file.");

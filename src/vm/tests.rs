@@ -1,129 +1,127 @@
-#[cfg(test)]
-mod tests {
-    use crate::compiler::Compiler;
-    use crate::execute_source;
-    use crate::parser::Parser;
-    use crate::scanner::Scanner;
-    use crate::typechecker::TypeChecker;
-    use crate::vm::VM;
-    use crate::vm::bytecode::{Chunk, Opcode};
-    use crate::vm::gc::GarbageCollector;
-    use crate::vm::value::{Function, Value};
+use crate::compiler::Compiler;
+use crate::execute_source;
+use crate::parser::Parser;
+use crate::scanner::Scanner;
+use crate::typechecker::TypeChecker;
+use crate::vm::bytecode::{Chunk, Opcode};
+use crate::vm::gc::GarbageCollector;
+use crate::vm::value::{Function, Value};
+use crate::vm::VM;
 
-    #[test]
-    fn test_simple_add() {
-        let mut vm = VM::new(0, GarbageCollector::new());
-        let mut function = Function::new("Main".to_string(), Chunk::new());
-        function.chunk.write_constant(Value::Number(1.0), 1);
-        function.chunk.write_constant(Value::Number(2.0), 2);
-        function.chunk.write_op(Opcode::Add as u8, 3);
-        function.chunk.write_op(Opcode::Return as u8, 4);
+#[test]
+fn test_simple_add() {
+    let mut vm = VM::new(0, GarbageCollector::new());
+    let mut function = Function::new("Main".to_string(), Chunk::new());
+    function.chunk.write_constant(Value::Number(1.0), 1);
+    function.chunk.write_constant(Value::Number(2.0), 2);
+    function.chunk.write_op(Opcode::Add as u8, 3);
+    function.chunk.write_op(Opcode::Return as u8, 4);
 
-        assert_eq!(vm.run(function).unwrap(), Value::Number(3.0));
+    assert_eq!(vm.run(function).unwrap(), Value::Number(3.0));
+}
+#[test]
+fn test_complex_arithmetic() {
+    let mut vm = VM::new(0, GarbageCollector::new());
+
+    let mut function = Function::new("Main".to_string(), Chunk::new());
+    function.chunk.write_constant(Value::Number(6.9), 1);
+    function.chunk.write_constant(Value::Number(4.0), 2);
+    function.chunk.write_constant(Value::Number(3.0), 3);
+    function.chunk.write_constant(Value::Number(2.0), 4);
+    function.chunk.write_constant(Value::Number(1.0), 4);
+
+    // 6.9 / (4 - 3 * (2 + (-1)))) = 6.9
+    function.chunk.write_op(Opcode::Negate as u8, 5);
+    function.chunk.write_op(Opcode::Add as u8, 5);
+    function.chunk.write_op(Opcode::Multiply as u8, 6);
+    function.chunk.write_op(Opcode::Subtract as u8, 7);
+    function.chunk.write_op(Opcode::Divide as u8, 8);
+    function.chunk.write_op(Opcode::Return as u8, 9);
+
+    assert_eq!(vm.run(function).unwrap(), Value::Number(6.9));
+}
+#[test]
+fn test_constant_long() {
+    let mut vm = VM::new(0, GarbageCollector::new());
+    let mut function = Function::new("Main".to_string(), Chunk::new());
+    function.chunk.write_constant(Value::Number(0.0), 1);
+    for i in 1..300 {
+        function.chunk.write_constant(Value::Number(i as f64), 1);
+        function.chunk.write_op(Opcode::Add as u8, 1);
     }
-    #[test]
-    fn test_complex_arithmetic() {
-        let mut vm = VM::new(0, GarbageCollector::new());
+    function.chunk.write_op(Opcode::Return as u8, 1);
+    assert_eq!(vm.run(function).unwrap(), Value::Number(44850.0)); // (299 * 300) / 2
+}
+#[test]
+fn test_boolean() {
+    let mut vm = VM::new(0, GarbageCollector::new());
+    let mut function = Function::new("Main".to_string(), Chunk::new());
+    function.chunk.write_constant(Value::Boolean(true), 1);
+    function.chunk.write_op(Opcode::Return as u8, 1);
+    assert_eq!(vm.run(function).unwrap(), Value::Boolean(true));
+}
 
-        let mut function = Function::new("Main".to_string(), Chunk::new());
-        function.chunk.write_constant(Value::Number(6.9), 1);
-        function.chunk.write_constant(Value::Number(4.0), 2);
-        function.chunk.write_constant(Value::Number(3.0), 3);
-        function.chunk.write_constant(Value::Number(2.0), 4);
-        function.chunk.write_constant(Value::Number(1.0), 4);
+#[test]
+fn test_expressions() {
+    let src = "let a = 7 + 3 * 2 == 1;";
+    let scanner = Scanner::new(src);
+    let mut parser = Parser::new(scanner);
+    let mut typecheker = TypeChecker::new();
+    let mut ast = parser.parse().expect("Failed to parse");
+    let typed_ast = typecheker.check(&mut ast).expect("Failed to typecheck");
 
-        // 6.9 / (4 - 3 * (2 + (-1)))) = 6.9
-        function.chunk.write_op(Opcode::Negate as u8, 5);
-        function.chunk.write_op(Opcode::Add as u8, 5);
-        function.chunk.write_op(Opcode::Multiply as u8, 6);
-        function.chunk.write_op(Opcode::Subtract as u8, 7);
-        function.chunk.write_op(Opcode::Divide as u8, 8);
-        function.chunk.write_op(Opcode::Return as u8, 9);
+    let mut gc = GarbageCollector::new();
+    let compiler = Compiler::new("main".to_string(), &mut gc);
+    let function = compiler.compile(&typed_ast);
 
-        assert_eq!(vm.run(function).unwrap(), Value::Number(6.9));
-    }
-    #[test]
-    fn test_constant_long() {
-        let mut vm = VM::new(0, GarbageCollector::new());
-        let mut function = Function::new("Main".to_string(), Chunk::new());
-        function.chunk.write_constant(Value::Number(0.0), 1);
-        for i in 1..300 {
-            function.chunk.write_constant(Value::Number(i as f64), 1);
-            function.chunk.write_op(Opcode::Add as u8, 1);
-        }
-        function.chunk.write_op(Opcode::Return as u8, 1);
-        assert_eq!(vm.run(function).unwrap(), Value::Number(44850.0)); // (299 * 300) / 2
-    }
-    #[test]
-    fn test_boolean() {
-        let mut vm = VM::new(0, GarbageCollector::new());
-        let mut function = Function::new("Main".to_string(), Chunk::new());
-        function.chunk.write_constant(Value::Boolean(true), 1);
-        function.chunk.write_op(Opcode::Return as u8, 1);
-        assert_eq!(vm.run(function).unwrap(), Value::Boolean(true));
-    }
+    let mut vm = VM::new(1, gc);
+    vm.run(function).unwrap();
+    assert_eq!(vm.globals[0], Value::Boolean(false));
+}
 
-    #[test]
-    fn test_expressions() {
-        let src = "let a = 7 + 3 * 2 == 1;";
-        let scanner = Scanner::new(src);
-        let mut parser = Parser::new(scanner);
-        let mut typecheker = TypeChecker::new();
-        let mut ast = parser.parse().expect("Failed to parse");
-        let typed_ast = typecheker.check(&mut ast).expect("Failed to typecheck");
+#[test]
+fn test_cmp() {
+    let src = "let a = 7 >= 1;";
+    let scanner = Scanner::new(src);
+    let mut parser = Parser::new(scanner);
+    let mut typecheker = TypeChecker::new();
+    let mut ast = parser.parse().expect("Failed to parse");
+    let typed_ast = typecheker.check(&mut ast).expect("Failed to typecheck");
 
-        let mut gc = GarbageCollector::new();
-        let compiler = Compiler::new("main".to_string(), &mut gc);
-        let function = compiler.compile(&typed_ast);
+    let mut gc = GarbageCollector::new();
+    let compiler = Compiler::new("main".to_string(), &mut gc);
+    let function = compiler.compile(&typed_ast);
 
-        let mut vm = VM::new(1, gc);
-        vm.run(function).unwrap();
-        assert_eq!(vm.globals[0], Value::Boolean(false));
-    }
-
-    #[test]
-    fn test_cmp() {
-        let src = "let a = 7 >= 1;";
-        let scanner = Scanner::new(src);
-        let mut parser = Parser::new(scanner);
-        let mut typecheker = TypeChecker::new();
-        let mut ast = parser.parse().expect("Failed to parse");
-        let typed_ast = typecheker.check(&mut ast).expect("Failed to typecheck");
-
-        let mut gc = GarbageCollector::new();
-        let compiler = Compiler::new("main".to_string(), &mut gc);
-        let function = compiler.compile(&typed_ast);
-
-        let mut vm = VM::new(1, gc);
-        vm.run(function).unwrap();
-        assert_eq!(vm.globals[0], Value::Boolean(true));
-    }
-    #[test]
-    fn test_while_loop() {
-        let src = "let a = 1;
+    let mut vm = VM::new(1, gc);
+    vm.run(function).unwrap();
+    assert_eq!(vm.globals[0], Value::Boolean(true));
+}
+#[test]
+fn test_while_loop() {
+    let src = "let a = 1;
         while a < 10 {
             a = a + 1;
         }
         ";
 
-        let scanner = Scanner::new(src);
-        let mut parser = Parser::new(scanner);
-        let mut typecheker = TypeChecker::new();
-        let mut ast = parser.parse().expect("Failed to parse");
-        let typed_ast = typecheker.check(&mut ast).expect("Failed to typecheck");
+    let scanner = Scanner::new(src);
+    let mut parser = Parser::new(scanner);
+    let mut typecheker = TypeChecker::new();
+    let mut ast = parser.parse().expect("Failed to parse");
+    let typed_ast = typecheker.check(&mut ast).expect("Failed to typecheck");
 
-        let mut gc = GarbageCollector::new();
-        let compiler = Compiler::new("main".to_string(), &mut gc);
-        let function = compiler.compile(&typed_ast);
+    let mut gc = GarbageCollector::new();
+    let compiler = Compiler::new("main".to_string(), &mut gc);
+    let function = compiler.compile(&typed_ast);
 
-        let mut vm = VM::new(1, gc);
+    let mut vm = VM::new(1, gc);
 
-        vm.run(function);
-        assert_eq!(vm.globals[0], Value::Number(10.0));
-    }
-    #[test]
-    fn test_local_variables() {
-        let src = "
+    vm.run(function);
+    assert_eq!(vm.globals[0], Value::Number(10.0));
+}
+#[test]
+fn test_local_variables() {
+    let src = "
             let a = 0;
             {
                 let a = 1;
@@ -146,12 +144,12 @@ mod tests {
             }
         ";
 
-        execute_source(src, false, "run", true);
-    }
+    execute_source(src, false, "run", true);
+}
 
-    #[test]
-    fn test_functions() {
-        let src = "
+#[test]
+fn test_functions() {
+    let src = "
             let a = 0;
             func add2(): number{
                 a = a + 1;
@@ -176,13 +174,13 @@ mod tests {
             b;
         ";
 
-        execute_source(src, false, "run", true);
-    }
+    execute_source(src, false, "run", true);
+}
 
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn test_fib() {
-        let src = "
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_fib() {
+    let src = "
             let a = 0;
             func fib(n: number): number {
                 if n == 1 or n == 2 {
@@ -195,23 +193,23 @@ mod tests {
             assert(a, 6765);
         ";
 
-        execute_source(src, false, "run", true);
-    }
+    execute_source(src, false, "run", true);
+}
 
-    #[test]
-    fn test_short_circuit() {
-        let src = "
+#[test]
+fn test_short_circuit() {
+    let src = "
             let a = 0;
             if a != 0 and (10 / a > 1) {
                 // ...
             }
         ";
 
-        execute_source(src, false, "run", true);
-    }
-    #[test]
-    fn torture_test() {
-        let src = r#"let g_counter = 0;
+    execute_source(src, false, "run", true);
+}
+#[test]
+fn torture_test() {
+    let src = r#"let g_counter = 0;
         // 2. Function with shadowing and recursion
         func complex(n: number): number {
             g_counter+=1;
@@ -254,12 +252,12 @@ mod tests {
         assert(combined, "startend");
         print(combined);
          "#;
-        execute_source(src, false, "run", true);
-    }
+    execute_source(src, false, "run", true);
+}
 
-    #[test]
-    fn test_assignment_operators() {
-        let src = r#"
+#[test]
+fn test_assignment_operators() {
+    let src = r#"
             let a = 2;
             a = a += 1;
             assert(a, 3);
@@ -275,12 +273,12 @@ mod tests {
             a *= a -= a += 2;
             assert(a, -3);
         "#;
-        execute_source(src, false, "run", true);
-    }
+    execute_source(src, false, "run", true);
+}
 
-    #[test]
-    fn test_local_functions() {
-        let src = r#"
+#[test]
+fn test_local_functions() {
+    let src = r#"
             func main(): void {
 
                 func local_func(a: number): number {
@@ -292,11 +290,11 @@ mod tests {
             }
             main();
         "#;
-        execute_source(src, false, "run", true);
-    }
-    #[test]
-    fn test_shadowing() {
-        let src = r#"
+    execute_source(src, false, "run", true);
+}
+#[test]
+fn test_shadowing() {
+    let src = r#"
             let a = 2;
             {
                 let a = a + 5;
@@ -306,12 +304,12 @@ mod tests {
             a = 1;
             assert(a, 1);
         "#;
-        execute_source(src, false, "run", true);
-    }
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn test_function_recursion() {
-        let src = r#"
+    execute_source(src, false, "run", true);
+}
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_function_recursion() {
+    let src = r#"
             {
                 func fib(n: number): number {
                     if n <= 1 {
@@ -322,13 +320,13 @@ mod tests {
                 fib(20);
             }
         "#;
-        execute_source(src, false, "run", true);
-    }
+    execute_source(src, false, "run", true);
+}
 
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn test_gc() {
-        let src = r#"
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_gc() {
+    let src = r#"
             let a = 0;
             let str = "";
             while a < 100 {
@@ -337,12 +335,12 @@ mod tests {
             }
             print(str);
         "#;
-        execute_source(src, false, "run", true);
-    }
+    execute_source(src, false, "run", true);
+}
 
-    #[test]
-    fn test_higher_order_functions() {
-        let src = r#"
+#[test]
+fn test_higher_order_functions() {
+    let src = r#"
         func foo(a: number, b: func():string): func(number): number {
             print(b());
             func bar(c: number): number {
@@ -359,12 +357,12 @@ mod tests {
         assert(res(10), 20);
         "#;
 
-        execute_source(src, false, "run", true);
-    }
+    execute_source(src, false, "run", true);
+}
 
-    #[test]
-    fn test_closure() {
-        let src = r#"
+#[test]
+fn test_closure() {
+    let src = r#"
         func foo(a: number): func(number): number {
             func bar(c: number): number {
                 return c + a;
@@ -379,12 +377,12 @@ mod tests {
         print(res2(10));
 
         "#;
-        execute_source(src, false, "run", true);
-    }
+    execute_source(src, false, "run", true);
+}
 
-    #[test]
-    fn test_closure_capture() {
-        let src = r#"
+#[test]
+fn test_closure_capture() {
+    let src = r#"
         {
             let i = 5;
             while i < 10 {
@@ -397,12 +395,12 @@ mod tests {
             }
         }
         "#;
-        execute_source(src, false, "run", true);
-    }
+    execute_source(src, false, "run", true);
+}
 
-    #[test]
-    fn test_local_override() {
-        let src = r#"
+#[test]
+fn test_local_override() {
+    let src = r#"
         {
             let a = 1;
             {
@@ -413,13 +411,13 @@ mod tests {
             print(a + c);
         }
         "#;
-        execute_source(src, false, "run", true);
-    }
+    execute_source(src, false, "run", true);
+}
 
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn string_concatenation() {
-        let src = r#"
+#[test]
+#[cfg_attr(miri, ignore)]
+fn string_concatenation() {
+    let src = r#"
             let str = "Hello";
             let i = 1;
             while i < 1000 {
@@ -430,41 +428,41 @@ mod tests {
             // for 1000000: 22s
             print(str);
             "#;
-        execute_source(src, false, "run", true);
-    }
+    execute_source(src, false, "run", true);
+}
 
-    #[test]
-    fn test_forward_declaration() {
-        let src = r#"
+#[test]
+fn test_forward_declaration() {
+    let src = r#"
             assert(add(1,2), 3);
             print(add(1,2));
             func add(a: number, b: number): number {
                 return a + b;
             }
         "#;
-        execute_source(src, false, "run", true);
-    }
+    execute_source(src, false, "run", true);
+}
 
-    #[test]
-    fn test_complex_closure() {
-        let src = r#"
+#[test]
+fn test_complex_closure() {
+    let src = r#"
             func outer(): func() {
               let x = "outside";
               func inner() {
                 print(x);
               }
-              
+
               return inner;
             }
 
             let closure = outer();
             closure();
             "#;
-        execute_source(src, false, "run", true);
-    }
-    #[test]
-    fn test_complex_closure_2() {
-        let src = r#"
+    execute_source(src, false, "run", true);
+}
+#[test]
+fn test_complex_closure_2() {
+    let src = r#"
             func outer(a: number): func(number): number {
               let x = a;
               func inner(b: number): number {
@@ -477,12 +475,12 @@ mod tests {
             assert(closure(5), 15);
             print(closure(5));
             "#;
-        execute_source(src, false, "run", true);
-    }
+    execute_source(src, false, "run", true);
+}
 
-    #[test]
-    fn test_complex_closure_3() {
-        let src = r#"
+#[test]
+fn test_complex_closure_3() {
+    let src = r#"
             func outer(a: number):number {
                 let x = a;
                 func spole() {
@@ -493,11 +491,11 @@ mod tests {
             }
             print(outer(8));
               "#;
-        execute_source(src, false, "run", true);
-    }
-    #[test]
-    fn test_complex_higher_order_closure() {
-        let src = r#"
+    execute_source(src, false, "run", true);
+}
+#[test]
+fn test_complex_higher_order_closure() {
+    let src = r#"
             func add(a: number, b: number): number {
                 return a + b;
             }
@@ -532,12 +530,12 @@ mod tests {
              assert(multiplier(3)(4), 12);
              "#;
 
-        execute_source(src, false, "run", true);
-    }
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn test_local_recursion() {
-        let src = r#"
+    execute_source(src, false, "run", true);
+}
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_local_recursion() {
+    let src = r#"
         func main(): void {
             func fib(n: number): number {
                 if n <= 1 {
@@ -550,12 +548,12 @@ mod tests {
         }
         main();
         "#;
-        execute_source(src, false, "run", true);
-    }
+    execute_source(src, false, "run", true);
+}
 
-    #[test]
-    fn test_mutually_recursive_functions() {
-        let src = r#"
+#[test]
+fn test_mutually_recursive_functions() {
+    let src = r#"
             let a = "something";
             func fib(n: number): number {
                 if n <= 1 {
@@ -574,18 +572,18 @@ mod tests {
             assert(a, "something");
             "#;
 
-        execute_source(src, false, "run", true);
-    }
+    execute_source(src, false, "run", true);
+}
 
-    #[test]
-    fn test_structs() {
-        let src = r#"
+#[test]
+fn test_structs() {
+    let src = r#"
             struct Point {
                 x: number,
                 y: number,
             }
             let p1 = Point(1, 2);
-            
+
             assert(p1.x, 1);
             assert(p1.y, 2);
 
@@ -606,12 +604,12 @@ mod tests {
             print_point(p1);
             assert(p2.x, 100);
         "#;
-        execute_source(src, false, "run", true);
-    }
+    execute_source(src, false, "run", true);
+}
 
-    #[test]
-    fn test_struct_function_fields() {
-        let src = r#"
+#[test]
+fn test_struct_function_fields() {
+    let src = r#"
             struct Point {
                 x: number,
                 y: number,
@@ -628,12 +626,12 @@ mod tests {
             assert(p1.add(6,7), 13);
             println(p1.add(6,7));
         "#;
-        execute_source(src, false, "run", true);
-    }
+    execute_source(src, false, "run", true);
+}
 
-    #[test]
-    fn test_complex_structs() {
-        let src = r#"
+#[test]
+fn test_complex_structs() {
+    let src = r#"
             struct Point {
                 x: number,
                 y: number,
@@ -654,11 +652,11 @@ mod tests {
             assert(rect.corner.y, 200);
             println(rect.corner.x," ", rect.corner.y," ", rect.width," ", rect.height);
             "#;
-        execute_source(src, false, "run", true);
-    }
-    #[test]
-    fn test_recursive_structs() {
-        let src = r#"
+    execute_source(src, false, "run", true);
+}
+#[test]
+fn test_recursive_structs() {
+    let src = r#"
             struct Node {
                 value: number,
                 next: Node?,
@@ -668,12 +666,12 @@ mod tests {
             head.next = tail;
             assert(head.next?.value, 2);
             "#;
-        execute_source(src, false, "run", true);
-    }
+    execute_source(src, false, "run", true);
+}
 
-    #[test]
-    fn test_different_types_in_struct() {
-        let src = r#"
+#[test]
+fn test_different_types_in_struct() {
+    let src = r#"
             struct Point {
                 x: number,
                 y: string,
@@ -683,12 +681,12 @@ mod tests {
             assert(p1.y, "2");
             println(p1.x," ", p1.y);
             "#;
-        execute_source(src, false, "run", true);
-    }
+    execute_source(src, false, "run", true);
+}
 
-    #[test]
-    fn test_initialization_order() {
-        let src = r#"
+#[test]
+fn test_initialization_order() {
+    let src = r#"
             struct Vec5 {
                 x: number,
                 y: number,
@@ -709,11 +707,11 @@ mod tests {
             assert(v1.y, 4);
             assert(v1.z, 5);
         "#;
-        execute_source(src, false, "run", true);
-    }
-    #[test]
-    fn test_struct_methods() {
-        let src = r#"
+    execute_source(src, false, "run", true);
+}
+#[test]
+fn test_struct_methods() {
+    let src = r#"
             struct Point {
                 x: number,
                 y: number,
@@ -748,11 +746,11 @@ mod tests {
             println((-14).abs());
             assert(10.abs(), 10);
             "#;
-        execute_source(src, false, "run", true);
-    }
-    #[test]
-    fn test_counter() {
-        let src = r#"
+    execute_source(src, false, "run", true);
+}
+#[test]
+fn test_counter() {
+    let src = r#"
             struct Counter {
                 value: number,
             }
@@ -776,12 +774,12 @@ mod tests {
             Counter.add(c, 10);
             println(c.value);
         "#;
-        execute_source(src, false, "run", true);
-    }
+    execute_source(src, false, "run", true);
+}
 
-    #[test]
-    fn test_method_on_nothing() {
-        let src = r#"
+#[test]
+fn test_method_on_nothing() {
+    let src = r#"
             impl void {
                 func lmao(self): void {
                     println("Someone called a method on nothing!!");
@@ -801,12 +799,12 @@ mod tests {
             a.lmao();
             println(2 + 4).lmao().lmao().lmao().lmao().lmao();
         "#;
-        execute_source(src, false, "run", true);
-    }
+    execute_source(src, false, "run", true);
+}
 
-    #[test]
-    fn test_different_method_calls() {
-        let src = r#"
+#[test]
+fn test_different_method_calls() {
+    let src = r#"
             struct Point {
                 x: number,
                 y: number,
@@ -832,13 +830,13 @@ mod tests {
             // let result4 = instance1.add2(instance2); //illegal
             "#;
 
-        execute_source(src, false, "run", true);
-    }
+    execute_source(src, false, "run", true);
+}
 
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn test_recursive_method() {
-        let src = r#"
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_recursive_method() {
+    let src = r#"
             struct Fiber {}
             impl Fiber {
                 func fib(self, num: number): number{
@@ -854,11 +852,11 @@ mod tests {
             assert(res, 6765);
             println(res);
             "#;
-        execute_source(src, false, "run", true);
-    }
-    #[test]
-    fn test_bound_method() {
-        let src = r#"
+    execute_source(src, false, "run", true);
+}
+#[test]
+fn test_bound_method() {
+    let src = r#"
             func _10xer(op: func()){
                 let i = 0;
                 while i < 10 {
@@ -882,12 +880,12 @@ mod tests {
             println(c.val);
             assert(c.val, 12);
             "#;
-        execute_source(src, false, "run", true);
-    }
+    execute_source(src, false, "run", true);
+}
 
-    #[test]
-    fn test_interface() {
-        let src = r#"
+#[test]
+fn test_interface() {
+    let src = r#"
             interface Drawable {
                 func draw(self): void;
             }
@@ -917,11 +915,11 @@ mod tests {
             draw(d);
             draw(o);
            "#;
-        execute_source(src, false, "run", true);
-    }
-    #[test]
-    fn test_interface_autocast() {
-        let src = r#"
+    execute_source(src, false, "run", true);
+}
+#[test]
+fn test_interface_autocast() {
+    let src = r#"
             interface Drawable {
                 func draw(self): void;
             }
@@ -943,11 +941,11 @@ mod tests {
             other.draw();
 
             "#;
-        execute_source(src, false, "run", true);
-    }
-    #[test]
-    fn test_interface_on_primitive() {
-        let src = r#"
+    execute_source(src, false, "run", true);
+}
+#[test]
+fn test_interface_on_primitive() {
+    let src = r#"
             interface Drawable {
                 func draw(self): void;
             }
@@ -960,12 +958,12 @@ mod tests {
             let n: Drawable = 10;
             n.draw();
         "#;
-        execute_source(src, false, "run", true);
-    }
+    execute_source(src, false, "run", true);
+}
 
-    #[test]
-    fn test_eq_interface() {
-        let src = r#"
+#[test]
+fn test_eq_interface() {
+    let src = r#"
             interface Eq {
                 func eq(self, other: Eq): boolean;
             }
@@ -985,11 +983,11 @@ mod tests {
             func areEqual(a: Eq, b: Eq): boolean { return a.eq(b); }
             assert(areEqual(p1, p2), true);
         "#;
-        execute_source(src, false, "run", true);
-    }
-    #[test]
-    fn test_print_interface() {
-        let src = r#"
+    execute_source(src, false, "run", true);
+}
+#[test]
+fn test_print_interface() {
+    let src = r#"
             interface Printable {
                 func print(self): void;
             }
@@ -1013,11 +1011,11 @@ mod tests {
             myPrint(Point ( x: 3, y: 4 ));
             myPrint(10);
             "#;
-        execute_source(src, false, "run", true);
-    }
-    #[test]
-    fn test_interface_with_many() {
-        let src = r#"
+    execute_source(src, false, "run", true);
+}
+#[test]
+fn test_interface_with_many() {
+    let src = r#"
             interface Shape {
                 func area(self): number;
                 func perimeter(self): number;
@@ -1044,11 +1042,11 @@ mod tests {
             printPerimeter(Rectangle ( width: 10, height: 5 ));
 
             "#;
-        execute_source(src, false, "run", true);
-    }
-    #[test]
-    fn test_nil_safety() {
-        let src = r#"
+    execute_source(src, false, "run", true);
+}
+#[test]
+fn test_nil_safety() {
+    let src = r#"
             let a: number? = nil;
             assert(a, nil);
             println(a);
@@ -1058,11 +1056,11 @@ mod tests {
             println(b);
             assert(b, 0);
             "#;
-        execute_source(src, false, "run", true);
-    }
-    #[test]
-    fn test_nil_access() {
-        let src = r#"
+    execute_source(src, false, "run", true);
+}
+#[test]
+fn test_nil_access() {
+    let src = r#"
             struct Point { x: number, y: number }
             let p: Point? = Point ( x: 1, y: 2 );
             assert(p?.x, 1);
@@ -1076,11 +1074,11 @@ mod tests {
             assert(p?.y, nil);
             println(p?.x);
             "#;
-        execute_source(src, false, "run", true);
-    }
-    #[test]
-    fn test_linked_list() {
-        let src = r#"
+    execute_source(src, false, "run", true);
+}
+#[test]
+fn test_linked_list() {
+    let src = r#"
             struct Node {
                 value: number,
                 next: Node?,
@@ -1095,22 +1093,22 @@ mod tests {
             head.next?.value = 4;
             assert(head.next?.value, nil);
             "#;
-        execute_source(src, false, "run", true);
-    }
-    #[test]
-    fn test_unwrap() {
-        let src = r#"
+    execute_source(src, false, "run", true);
+}
+#[test]
+fn test_unwrap() {
+    let src = r#"
             struct Point { x: number, y: number }
             let p: Point? = Point ( x: 1, y: 2 );
             let strong_p = p!;
             p = nil;
             assert(strong_p.x, 1);
             "#;
-        execute_source(src, false, "run", true);
-    }
-    #[test]
-    fn test_complex_linked_list() {
-        let src = r#"
+    execute_source(src, false, "run", true);
+}
+#[test]
+fn test_complex_linked_list() {
+    let src = r#"
             struct Node {
                 value: number,
                 next: Node?,
@@ -1208,11 +1206,11 @@ mod tests {
 
             print_list(list);
             "#;
-        execute_source(src, false, "run", true);
-    }
-    #[test]
-    fn test_functions_on_nil() {
-        let src = r#"
+    execute_source(src, false, "run", true);
+}
+#[test]
+fn test_functions_on_nil() {
+    let src = r#"
             struct Point { x: number, y: number }
             impl Point {
                 func do_something(self): void {
@@ -1235,11 +1233,11 @@ mod tests {
             p?.other();
             fun?();
             "#;
-        execute_source(src, false, "run", true);
-    }
-    #[test]
-    fn test_nil_functions() {
-        let src = r#"
+    execute_source(src, false, "run", true);
+}
+#[test]
+fn test_nil_functions() {
+    let src = r#"
 
             let fun: func?(): void = nil;
             if fun?() != nil {
@@ -1250,11 +1248,11 @@ mod tests {
             fun = other;
             fun?();
             "#;
-        execute_source(src, false, "run", true);
-    }
-    #[test]
-    fn test_nil_interface() {
-        let src = r#"
+    execute_source(src, false, "run", true);
+}
+#[test]
+fn test_nil_interface() {
+    let src = r#"
             interface Printable {
                 func print(self): void;
             }
@@ -1266,11 +1264,11 @@ mod tests {
             p = 10;
             p?.print();
             "#;
-        execute_source(src, false, "run", true);
-    }
-    #[test]
-    fn test_nil_refinements() {
-        let src = r#"
+    execute_source(src, false, "run", true);
+}
+#[test]
+fn test_nil_refinements() {
+    let src = r#"
             let num_called = 0;
             interface Printable {
                 func print(self): void;
@@ -1301,11 +1299,11 @@ mod tests {
             main();
             assert(num_called, 3);
             "#;
-        execute_source(src, false, "run", true);
-    }
-    #[test]
-    fn test_nil_refinement_2() {
-        let src = r#"
+    execute_source(src, false, "run", true);
+}
+#[test]
+fn test_nil_refinement_2() {
+    let src = r#"
             func main()
             {
                 let x: number? = nil;
@@ -1323,11 +1321,11 @@ mod tests {
             }
             main();
             "#;
-        execute_source(src, false, "run", true);
-    }
-    #[test]
-    fn test_nil_refinement_3() {
-        let src = r#"
+    execute_source(src, false, "run", true);
+}
+#[test]
+fn test_nil_refinement_3() {
+    let src = r#"
             func main()
             {
                 let x: number? = nil;
@@ -1346,11 +1344,11 @@ mod tests {
             }
             main();
             "#;
-        execute_source(src, false, "run", true);
-    }
-    #[test]
-    fn test_nil_refinement_logical() {
-        let src = r#"
+    execute_source(src, false, "run", true);
+}
+#[test]
+fn test_nil_refinement_logical() {
+    let src = r#"
             struct Array {length: number}
             func main()
             {
@@ -1361,7 +1359,7 @@ mod tests {
                 }
 
                 x = nil;
-    
+
                 if x == nil or x.length == 0 {
                     println(x);
                     assert(x, nil);
@@ -1370,11 +1368,11 @@ mod tests {
             }
             main();
             "#;
-        execute_source(src, false, "run", true);
-    }
-    #[test]
-    fn test_enums() {
-        let src = r#"
+    execute_source(src, false, "run", true);
+}
+#[test]
+fn test_enums() {
+    let src = r#"
             enum Color { Red, Green, Blue }
             let c = Color.Red;
             match c {
@@ -1385,11 +1383,11 @@ mod tests {
             assert(c, Color.Red);
             println(c);
             "#;
-        execute_source(src, false, "run", true);
-    }
-    #[test]
-    fn test_structure_enums() {
-        let src = r#"
+    execute_source(src, false, "run", true);
+}
+#[test]
+fn test_structure_enums() {
+    let src = r#"
             enum Message {
              Quit,
              Move{
@@ -1418,11 +1416,11 @@ mod tests {
                 _ => {println("Not a change color");}
             }
            "#;
-        execute_source(src, false, "run", true);
-    }
-    #[test]
-    fn test_val_enums() {
-        let src = r#"
+    execute_source(src, false, "run", true);
+}
+#[test]
+fn test_val_enums() {
+    let src = r#"
             enum Shape { Circle(number), Rectangle(number, number) }
             func area(s: Shape): number {
                 match s {
@@ -1442,11 +1440,11 @@ mod tests {
             assert(area(Shape.Circle(5)), 78.5);
             assert(area(Shape.Rectangle(10, 5)), 50);
         "#;
-        execute_source(src, false, "run", true);
-    }
-    #[test]
-    fn test_enum_branch_analysis() {
-        let src = r#"
+    execute_source(src, false, "run", true);
+}
+#[test]
+fn test_enum_branch_analysis() {
+    let src = r#"
             enum Res {Ok(number), Err(string)}
             {
                 let res = Res.Ok(10);
@@ -1472,11 +1470,11 @@ mod tests {
             }
             main();
         "#;
-        execute_source(src, true, "run", true);
-    }
-    #[test]
-    fn test_number_result() {
-        let src = r#"
+    execute_source(src, true, "run", true);
+}
+#[test]
+fn test_number_result() {
+    let src = r#"
             enum Result { Ok(number), Err(string) }
             impl Result {
                 func unwrap(self): number {
@@ -1485,7 +1483,7 @@ mod tests {
                         Result.Err(err) => {
                             println("Unwrapping error: ", err);
                             panic("");
-                            return 0; // Ureachable 
+                            return 0; // Ureachable
                         }
                     }
                 }
@@ -1504,11 +1502,11 @@ mod tests {
             // res2.unwrap();
             assert(res2.unwrap_or(10), 10);
         "#;
-        execute_source(src, false, "run", true);
-    }
-    #[test]
-    fn test_func_named_args() {
-        let src = r#"
+    execute_source(src, false, "run", true);
+}
+#[test]
+fn test_func_named_args() {
+    let src = r#"
             func print_msg(msg: string) {
                 println("Here ->", msg);
             }
@@ -1528,12 +1526,12 @@ mod tests {
             a = other;
             a(msg: "Not ok!");
         "#;
-        execute_source(src, false, "run", true);
-    }
+    execute_source(src, false, "run", true);
+}
 
-    #[test]
-    fn test_inner_type() {
-        let src = r#"
+#[test]
+fn test_inner_type() {
+    let src = r#"
         struct Vector {
             start: Point,
             end: Point,
@@ -1547,11 +1545,11 @@ mod tests {
         let vec = Vector(start: Point(x: 1, y: 2), end: Point(x: 3, y: 4));
         vec.start.print();
         "#;
-        execute_source(src, false, "run", true);
-    }
-    #[test]
-    fn test_tuples() {
-        let src = r#"
+    execute_source(src, false, "run", true);
+}
+#[test]
+fn test_tuples() {
+    let src = r#"
             func takes_str(a: string) {}
             func takes_tuple(a: (number, string)) {
                 println(a);
@@ -1566,11 +1564,11 @@ mod tests {
             assert(tuple.0, 1);
             assert(tuple.1, "What");
         "#;
-        execute_source(src, false, "lex", true);
-    }
-    #[test]
-    fn test_tuples2() {
-        let src = r#"
+    execute_source(src, false, "lex", true);
+}
+#[test]
+fn test_tuples2() {
+    let src = r#"
             func returns_tuple(): (number, number) { return (1, 2);}
             let tuple = returns_tuple();
             let (a,b) = returns_tuple();
@@ -1591,11 +1589,11 @@ mod tests {
             assert(tuple.0, 1);
             assert(tuple.1, 2);
         "#;
-        execute_source(src, false, "run", true);
-    }
-    #[test]
-    fn test_destructuring() {
-        let src = r#"
+    execute_source(src, false, "run", true);
+}
+#[test]
+fn test_destructuring() {
+    let src = r#"
             struct Point {x: number, y: number}
 
             let Point(y: x, x: y) = Point(x: 1, y: 2);
@@ -1614,11 +1612,11 @@ mod tests {
             assert(d, 8);
 
         "#;
-        execute_source(src, false, "run", true);
-    }
-    #[test]
-    fn test_generic_struct() {
-        let src = r#"
+    execute_source(src, false, "run", true);
+}
+#[test]
+fn test_generic_struct() {
+    let src = r#"
             struct Point<T> {x: T, y: T}
             let p = Point(x: 1, y: 2);
             let Point(:x, :y) = p;
@@ -1627,11 +1625,11 @@ mod tests {
             assert(p.x, 1);
             assert(p.y, 2);
             "#;
-        execute_source(src, false, "run", false);
-    }
-    #[test]
-    fn test_generic_function() {
-        let src = r#"
+    execute_source(src, false, "run", false);
+}
+#[test]
+fn test_generic_function() {
+    let src = r#"
         func identity<T>(stg: T): T {
             return stg;
         }
@@ -1651,11 +1649,11 @@ mod tests {
         // assert(str + "1", "str1");
         assert(a + 2, 3);
         "#;
-        execute_source(src, false, "run", true);
-    }
-    #[test]
-    fn test_simple_generic_struct() {
-        let src = r#"
+    execute_source(src, false, "run", true);
+}
+#[test]
+fn test_simple_generic_struct() {
+    let src = r#"
         struct Box<T> {top: T}
 
         func square(a: number): number{
@@ -1688,18 +1686,18 @@ mod tests {
         box = Box(10);
         assert(box.top + 12, 22);
         "#;
-        execute_source(src, false, "run", true);
-    }
-    #[test]
-    fn test_generic_impl() {
-        let src = r#"
+    execute_source(src, false, "run", true);
+}
+#[test]
+fn test_generic_impl() {
+    let src = r#"
         struct Box<T> {top: T}
         impl<T> Box<T> {
             func new(top: T): Box<T> {
                 return Box(top: top);
             }
             func unwrap(self): T { return self.top; }
-            
+
             func map<U>(self, transform: func(T): U): Box<U> {
                 return Box(top: transform(self.top));
             }
@@ -1718,11 +1716,11 @@ mod tests {
         assert(str_box.top + "1", "101");
         assert(box.unwrap() , 10);
         "#;
-        execute_source(src, false, "run", true);
-    }
-    #[test]
-    fn test_generic_enums() {
-        let src = r#"
+    execute_source(src, false, "run", true);
+}
+#[test]
+fn test_generic_enums() {
+    let src = r#"
         enum List<T> {
             Nil, Cons(T, List<T>)
         }
@@ -1733,9 +1731,9 @@ mod tests {
                 match self {
                     .Err(err) => {
                         let new_err = transform(err);
-                        return Result.<T,U>.Err(new_err);
+                        return Result.Err(new_err);
                     }
-                    .Ok(ok) => {return Result.<T,U>.Ok(ok);}
+                    .Ok(ok) => {return Result.Ok(ok);}
                 }
             }
         }
@@ -1755,11 +1753,11 @@ mod tests {
 
         assert(list is Cons, true);
         "#;
-        execute_source(src, false, "run", true);
-    }
-    #[test]
-    fn test_complex_generic() {
-        let src = r#"
+    execute_source(src, false, "run", false);
+}
+#[test]
+fn test_complex_generic() {
+    let src = r#"
         struct Box<T,U> {top: T}
 
         impl<T,U> Box<T,U> {
@@ -1772,11 +1770,11 @@ mod tests {
         let box = Box.<number,string>.new(10);
         assert(box.top + 12, 22);
         "#;
-        execute_source(src, false, "run", true);
-    }
-    #[test]
-    fn test_panic() {
-        let src = r#"
+    execute_source(src, false, "run", true);
+}
+#[test]
+fn test_panic() {
+    let src = r#"
         func panic_func() {
             panic("Panic!");
         }
@@ -1787,6 +1785,5 @@ mod tests {
         }
         rec(10);
         "#;
-        execute_source(src, false, "run", true);
-    }
+    execute_source(src, false, "run", true);
 }

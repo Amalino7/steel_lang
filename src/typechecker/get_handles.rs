@@ -297,15 +297,7 @@ impl<'src> TypeChecker<'src> {
                     method_name: field.lexeme.to_string(),
                 })?;
 
-        let mut pairs = match lookup_type {
-            Type::Struct(name, args) => {
-                generics_to_map(&self.sys.get_struct(name).unwrap().generic_params, args)
-            }
-            Type::Enum(name, args) => {
-                generics_to_map(&self.sys.get_enum(name).unwrap().generic_params, args)
-            }
-            _ => HashMap::new(),
-        };
+        let mut pairs = self.sys.get_generics_map(lookup_type);
 
         let ty = match &method.0.type_info {
             Type::Function(func) => {

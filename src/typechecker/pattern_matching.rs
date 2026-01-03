@@ -14,7 +14,7 @@ impl<'src> TypeChecker<'src> {
         value: &Expr<'src>,
         arms: &[MatchArm<'src>],
     ) -> Result<TypedStmt, TypeCheckerError> {
-        let value_typed = self.infer_expression(value)?;
+        let value_typed = self.check_expression(value, None)?;
         let enum_name = match &value_typed.ty {
             Type::Enum(name, ..) => name,
             _ => {
