@@ -1625,7 +1625,7 @@ fn test_generic_struct() {
             assert(p.x, 1);
             assert(p.y, 2);
             "#;
-    execute_source(src, false, "run", false);
+    execute_source(src, false, "run", true);
 }
 #[test]
 fn test_generic_function() {
@@ -1762,12 +1762,13 @@ fn test_complex_generic() {
 
         impl<T,U> Box<T,U> {
             func new(arg: T): Box<T,U> {
-                return Box.<T,U>(top: arg);
+                return Box(top: arg);
             }
         }
 
 
-        let box = Box.<number,string>.new(10);
+        let box = Box.<number, number>.new(10);
+        println(box.top);
         assert(box.top + 12, 22);
         "#;
     execute_source(src, false, "run", true);

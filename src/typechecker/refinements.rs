@@ -1,6 +1,6 @@
 use crate::typechecker::type_ast::{BinaryOp, ExprKind, LogicalOp, TypedExpr, UnaryOp};
 use crate::typechecker::type_system::TypeSystem;
-use crate::typechecker::types::{generics_to_map, Type};
+use crate::typechecker::types::Type;
 use crate::typechecker::{Symbol, TypeChecker};
 
 type Refinement = (Symbol, Type);
@@ -48,10 +48,10 @@ impl<'src> TypeChecker<'src> {
                 variant_idx,
             } => {
                 if let ExprKind::GetVar(_, name) = &target.kind
-                    && let Type::Enum(enum_name, generic_args) = &target.ty
+                    && let Type::Enum(enum_name, _) = &target.ty
                 {
                     let enum_def = self.sys.get_enum(enum_name).unwrap();
-                    let generics_map = generics_to_map(&enum_def.generic_params, generic_args);
+                    let generics_map = self.sys.get_generics_map(&target.ty);
                     let false_path = if enum_def.variants.len() == 2 {
                         let (_, other_ty) = enum_def
                             .ordered_variants

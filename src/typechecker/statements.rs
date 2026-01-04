@@ -4,7 +4,6 @@ use crate::typechecker::scope_manager::ScopeType;
 use crate::typechecker::type_ast::{StmtKind, TypedRefinements, TypedStmt};
 use crate::typechecker::types::Type;
 use crate::typechecker::{FunctionContext, TypeChecker};
-use std::collections::HashMap;
 
 impl<'src> TypeChecker<'src> {
     pub(crate) fn check_stmt(&mut self, stmt: &Stmt<'src>) -> Result<TypedStmt, TypeCheckerError> {
@@ -20,11 +19,11 @@ impl<'src> TypeChecker<'src> {
                 type_info,
             } => {
                 let declared_type = Type::from_ast(type_info, &self.sys)?;
+
                 let value_node = self.check_expression(value, Some(&declared_type))?;
                 // TODO consider if Unknown is a good usage
-
                 let coerced_value = self.sys.verify_assignment(
-                    &mut HashMap::new(),
+                    &mut self.infer_ctx,
                     &declared_type,
                     value_node,
                     binding.get_line(),
@@ -191,12 +190,11 @@ impl<'src> TypeChecker<'src> {
                 if let FunctionContext::Function(func_return_type) = self.current_function.clone() {
                     let return_expr = self.check_expression(expr, Some(&func_return_type))?;
                     let coerced_return = self.sys.verify_assignment(
-                        &mut HashMap::new(),
+                        &mut self.infer_ctx,
                         &func_return_type,
                         return_expr,
                         expr.get_line(),
                     )?;
-
                     Ok(TypedStmt {
                         kind: StmtKind::Return(coerced_return),
                         line: expr.get_line(),

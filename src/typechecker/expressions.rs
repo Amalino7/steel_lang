@@ -5,8 +5,9 @@ use crate::token::{Token, TokenType};
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::error::TypeCheckerError::AssignmentToCapturedVariable;
 use crate::typechecker::type_ast::{ExprKind, LogicalOp, TypedExpr, UnaryOp};
-use crate::typechecker::type_system::TypeSystem;
-use crate::typechecker::types::{generics_to_map, GenericArgs, StructType, TupleType, Type};
+use crate::typechecker::type_system::{generics_to_map, TySys, TypeSystem};
+use crate::typechecker::types::Type::GenericParam;
+use crate::typechecker::types::{GenericArgs, StructType, TupleType, Type};
 use crate::typechecker::{FunctionContext, Symbol, TypeChecker};
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -47,7 +48,7 @@ impl<'src> TypeChecker<'src> {
                                     .to_string(),
                             });
                         }
-                        let map = generics_to_map(&func.type_params, &generic_args);
+                        let map = generics_to_map(&func.type_params, &generic_args, None);
                         let new_ty = TypeSystem::generic_to_concrete(callee_typed.ty, &map);
                         callee_typed.ty = new_ty;
                         Ok(callee_typed)
@@ -149,7 +150,7 @@ impl<'src> TypeChecker<'src> {
                     && name.as_ref() == "Result"
                 {
                     let enum_def = self.sys.get_enum(name.as_ref()).unwrap();
-                    let map = generics_to_map(&enum_def.generic_params, instance);
+                    let map = generics_to_map(&enum_def.generic_params, instance, None);
                     let ok_type = TypeSystem::generic_to_concrete(
                         enum_def.ordered_variants[0].1.clone(),
                         &map,
@@ -164,19 +165,19 @@ impl<'src> TypeChecker<'src> {
                     {
                         let provided_err =
                             Type::Enum(name.clone(), vec![Type::Never, err_type].into());
-                        let ok = TypeSystem::unify_types(
-                            &func_return_type,
-                            &mut HashMap::new(),
-                            &provided_err,
-                        );
-                        if ok.is_err() {
-                            return Err(TypeCheckerError::TypeMismatch {
-                                expected: func_return_type,
-                                found: provided_err,
-                                line: operator.line,
-                                message: "The Result type propagate by try must be compatible with the function return type.",
-                            });
-                        }
+                        // let ok = TypeSystem::unify_types(
+                        //     &func_return_type,
+                        //     &mut HashMap::new(),
+                        //     &provided_err,
+                        // );
+                        // if ok.is_err() {
+                        //     return Err(TypeCheckerError::TypeMismatch {
+                        //         expected: func_return_type,
+                        //         found: provided_err,
+                        //         line: operator.line,
+                        //         message: "The Result type propagate by try must be compatible with the function return type.",
+                        //     });
+                        // }
                     } else {
                         return Err(TypeCheckerError::InvalidReturnOutsideFunction {
                             line: operator.line,
@@ -257,10 +258,10 @@ impl<'src> TypeChecker<'src> {
                         });
                     }
                     let expected = ctx.type_info.clone();
-                    let typed_value = self.check_expression(value, Some(&expected))?;
 
+                    let typed_value = self.check_expression(value, Some(&expected))?;
                     let coerced_value = self.sys.verify_assignment(
-                        &mut HashMap::new(),
+                        &mut self.infer_ctx,
                         &expected,
                         typed_value,
                         identifier.line,
@@ -347,67 +348,51 @@ impl<'src> TypeChecker<'src> {
 
                     inferred_args.push((label, typed_val, line));
                 }
-
                 // Handle Struct constructor
                 if let Type::Metatype(name, generics) = &callee_typed.ty
                     && let Some(struct_def) = self.sys.get_struct(name)
                 {
-                    let mut map: HashMap<Symbol, Type> =
-                        generics_to_map(&struct_def.generic_params, generics);
+                    let map: HashMap<Symbol, Type> = generics_to_map(
+                        &struct_def.generic_params,
+                        generics,
+                        Some(&mut self.infer_ctx),
+                    );
 
-                    if let Some(Type::Interface(..)) = expected {
-                    } else {
-                        let struct_ans = Type::Struct(
+                    let abstracted = struct_def
+                        .ordered_fields
+                        .iter()
+                        .map(|(s, ty)| (s.clone(), TySys::generic_to_concrete(ty.clone(), &map)))
+                        .collect::<Vec<_>>();
+
+                    let res = self.infer_ctx.unify_types(
+                        expected.unwrap_or(&Type::Unknown),
+                        &Type::Struct(
                             name.clone(),
                             struct_def
                                 .generic_params
                                 .iter()
-                                .map(|n| Type::GenericParam(n.clone()))
+                                .map(|t| TySys::generic_to_concrete(GenericParam(t.clone()), &map))
                                 .collect::<Vec<_>>()
                                 .into(),
-                        );
-                        let err = TypeSystem::unify_types(
-                            expected.unwrap_or(&Type::Unknown),
-                            &mut map,
-                            &struct_ans,
-                        );
-                        if let Err(err) = err {
-                            return Err(TypeCheckerError::ComplexTypeMismatch {
-                                expected: expected.unwrap_or(&Type::Unknown).clone(),
-                                found: struct_ans.clone(),
-                                message: err,
-                                line: callee.get_line(),
-                            });
-                        }
-                    }
+                        ),
+                    );
+                    res.expect("Struct constructor should be valid");
 
                     let owned_name = struct_def.name.clone();
                     let bound_args = self.sys.bind_arguments(
                         name,
-                        &mut map,
-                        &struct_def.ordered_fields,
+                        &abstracted,
                         inferred_args,
+                        &mut self.infer_ctx,
                         false,
                         callee.get_line(),
                     )?;
 
-                    let type_args = struct_def
-                        .generic_params
+                    let type_args = abstracted
                         .iter()
-                        .map(|name| map.get(name).unwrap().clone())
-                        .collect();
+                        .map(|(_, ty)| self.infer_ctx.substitute(ty))
+                        .collect::<Vec<_>>();
 
-                    let uninferred: Vec<_> = map
-                        .iter()
-                        .filter(|(_, v)| **v == Type::Unknown)
-                        .map(|(name, _)| name.to_string())
-                        .collect();
-                    if !uninferred.is_empty() {
-                        return Err(TypeCheckerError::CannotInferType {
-                            line: callee.get_line(),
-                            uninferred_generics: uninferred,
-                        });
-                    }
                     return Ok(TypedExpr {
                         ty: Type::Struct(owned_name.clone(), Rc::new(type_args)),
                         kind: ExprKind::StructInit {
@@ -424,61 +409,63 @@ impl<'src> TypeChecker<'src> {
                         variant_idx, value, ..
                     } = &mut callee_typed.kind
                 {
-                    let (variant_name, ty) = &enum_def.ordered_variants[*variant_idx as usize];
-                    let (expr, mut map) = self.handle_enum_call(
-                        variant_name,
-                        ty,
-                        &enum_def.generic_params,
-                        generics,
-                        inferred_args,
-                        callee.get_line(),
-                    )?;
-                    let res_ty = Type::Enum(
-                        name.clone(),
-                        enum_def
-                            .generic_params
-                            .iter()
-                            .map(|n| Type::GenericParam(n.clone()))
-                            .collect::<Vec<_>>()
-                            .into(),
-                    );
-                    let err = TypeSystem::unify_types(
-                        expected.unwrap_or(&Type::Unknown),
-                        &mut map,
-                        &res_ty,
-                    );
-                    if let Err(err) = err {
-                        return Err(TypeCheckerError::ComplexTypeMismatch {
-                            expected: expected.unwrap_or(&Type::Unknown).clone(),
-                            found: expr.ty.clone(),
-                            message: err,
-                            line: callee.get_line(),
-                        });
-                    }
-
-                    *value = Box::from(expr);
-                    let issue = map.iter().any(|(_, v)| *v == Type::Unknown);
-                    if issue {
-                        return Err(TypeCheckerError::CannotInferType {
-                            line: callee.get_line(),
-                            uninferred_generics: map
-                                .iter()
-                                .filter(|(_, v)| **v == Type::Unknown)
-                                .map(|(name, _)| name.to_string())
-                                .collect(),
-                        });
-                    }
-                    // TODO handle generics
-                    callee_typed.ty = Type::Enum(
-                        name.clone(),
-                        enum_def
-                            .generic_params
-                            .iter()
-                            .map(|s| map.get(s).unwrap().clone())
-                            .collect::<Vec<_>>()
-                            .into(),
-                    );
-                    return Ok(callee_typed);
+                    todo!("Handle enum init");
+                    // let (variant_name, ty) = &enum_def.ordered_variants[*variant_idx as usize];
+                    // // let (expr, mut map) = self.handle_enum_call(
+                    // //     variant_name,
+                    // //     ty,
+                    // //     &enum_def.generic_params,
+                    // //     generics,
+                    // //     &mut self.infer_ctx,
+                    // //     inferred_args,
+                    // //     callee.get_line(),
+                    // // )?;
+                    // // let res_ty = Type::Enum(
+                    // //     name.clone(),
+                    // //     enum_def
+                    // //         .generic_params
+                    // //         .iter()
+                    // //         .map(|n| Type::GenericParam(n.clone()))
+                    // //         .collect::<Vec<_>>()
+                    // //         .into(),
+                    // // );
+                    // // let err = TypeSystem::unify_types(
+                    // //     expected.unwrap_or(&Type::Unknown),
+                    // //     &mut map,
+                    // //     &res_ty,
+                    // // );
+                    // // if let Err(err) = err {
+                    // //     return Err(TypeCheckerError::ComplexTypeMismatch {
+                    // //         expected: expected.unwrap_or(&Type::Unknown).clone(),
+                    // //         found: expr.ty.clone(),
+                    // //         message: err,
+                    // //         line: callee.get_line(),
+                    // //     });
+                    // // }
+                    //
+                    // *value = Box::from(expr);
+                    // let issue = map.iter().any(|(_, v)| *v == Type::Unknown);
+                    // if issue {
+                    //     return Err(TypeCheckerError::CannotInferType {
+                    //         line: callee.get_line(),
+                    //         uninferred_generics: map
+                    //             .iter()
+                    //             .filter(|(_, v)| **v == Type::Unknown)
+                    //             .map(|(name, _)| name.to_string())
+                    //             .collect(),
+                    //     });
+                    // }
+                    // // TODO handle generics
+                    // callee_typed.ty = Type::Enum(
+                    //     name.clone(),
+                    //     enum_def
+                    //         .generic_params
+                    //         .iter()
+                    //         .map(|s| map.get(s).unwrap().clone())
+                    //         .collect::<Vec<_>>()
+                    //         .into(),
+                    // );
+                    // return Ok(callee_typed);
                 }
 
                 let safe = if let ExprKind::MethodGet { safe, .. } = callee_typed.kind {
@@ -507,27 +494,33 @@ impl<'src> TypeChecker<'src> {
                 // Check for Normal Function Call
                 match lookup_type {
                     Type::Function(func) => {
-                        let mut map: HashMap<Symbol, Type> =
-                            generics_to_map(&func.type_params, &[]);
-                        let err = TypeSystem::unify_types(
-                            expected.unwrap_or(&Type::Unknown),
-                            &mut map,
-                            &func.return_type,
-                        );
-                        if let Err(err) = err {
-                            return Err(TypeCheckerError::ComplexTypeMismatch {
-                                expected: expected.unwrap_or(&Type::Unknown).clone(),
-                                found: func.return_type.clone(),
-                                message: err,
-                                line: callee.get_line(),
-                            });
-                        }
+                        let map: HashMap<Symbol, Type> =
+                            generics_to_map(&func.type_params, &[], Some(&mut self.infer_ctx));
+
+                        let Type::Function(func) =
+                            TypeSystem::generic_to_concrete(Type::Function(func.clone()), &map)
+                        else {
+                            panic!("Should have errored earlier");
+                        };
+
+                        // let err = self
+                        //     .sys
+                        //     .get_inference_ctx_mut()
+                        //     .unify_types(expected.unwrap_or(&Type::Unknown), &func.return_type);
+                        // if let Err(err) = err {
+                        //     return Err(TypeCheckerError::ComplexTypeMismatch {
+                        //         expected: expected.unwrap_or(&Type::Unknown).clone(),
+                        //         found: func.return_type.clone(),
+                        //         message: err,
+                        //         line: callee.get_line(),
+                        //     });
+                        // }
 
                         let bound_args = self.sys.bind_arguments(
                             callee.to_string().as_ref(),
-                            &mut map,
                             &func.params,
                             inferred_args,
+                            &mut self.infer_ctx,
                             func.is_vararg,
                             callee_typed.line,
                         )?;
@@ -548,7 +541,7 @@ impl<'src> TypeChecker<'src> {
                                 uninferred_generics: uninferred,
                             });
                         }
-                        let ret_type = TypeSystem::generic_to_concrete(ret_type, &map);
+                        let ret_type = self.infer_ctx.substitute(&ret_type);
 
                         Ok(TypedExpr {
                             ty: ret_type,
@@ -631,7 +624,7 @@ impl<'src> TypeChecker<'src> {
                             index: idx,
                             safe: *safe,
                             value: Box::new(self.sys.verify_assignment(
-                                &mut HashMap::new(),
+                                todo!(),
                                 &tuple_type.types[idx as usize],
                                 value,
                                 field.line,
@@ -647,19 +640,20 @@ impl<'src> TypeChecker<'src> {
                         .get_struct(&struct_def)
                         .expect("Should have errored earlier");
 
-                    let (field_idx, field_type) =
-                        self.check_field_type(struct_def, field, &value, generics)?;
-
-                    Ok(TypedExpr {
-                        ty: field_type,
-                        kind: ExprKind::SetField {
-                            safe: *safe,
-                            object: Box::new(object_typed),
-                            index: field_idx as u8,
-                            value: Box::new(value),
-                        },
-                        line: field.line,
-                    })
+                    todo!()
+                    // let (field_idx, field_type) =
+                    //     self.check_field_type(struct_def, field, &value, generics)?;
+                    //
+                    // Ok(TypedExpr {
+                    //     ty: field_type,
+                    //     kind: ExprKind::SetField {
+                    //         safe: *safe,
+                    //         object: Box::new(object_typed),
+                    //         index: field_idx as u8,
+                    //         value: Box::new(value),
+                    //     },
+                    //     line: field.line,
+                    // })
                 } else {
                     Err(TypeCheckerError::TypeHasNoFields {
                         found: type_,
@@ -693,7 +687,7 @@ impl<'src> TypeChecker<'src> {
     }
 
     fn check_field_type(
-        &self,
+        &mut self,
         struct_def: &StructType,
         field: &Token,
         field_value: &TypedExpr,
@@ -713,11 +707,10 @@ impl<'src> TypeChecker<'src> {
             Some((id, field_type)) => {
                 let actual = TypeSystem::generic_to_concrete(
                     field_type,
-                    &generics_to_map(&struct_def.generic_params, &generic_args),
+                    &generics_to_map(&struct_def.generic_params, &generic_args, None),
                 );
-
                 self.sys.verify_assignment(
-                    &mut HashMap::new(),
+                    &mut self.infer_ctx,
                     &actual,
                     field_value.clone(),
                     field.line,

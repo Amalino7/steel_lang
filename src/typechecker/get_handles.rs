@@ -1,9 +1,10 @@
 use crate::parser::ast::Literal;
 use crate::token::Token;
 use crate::typechecker::error::TypeCheckerError;
+use crate::typechecker::inference::InferenceContext;
 use crate::typechecker::type_ast::{ExprKind, TypedExpr};
-use crate::typechecker::type_system::TypeSystem;
-use crate::typechecker::types::{generics_to_map, GenericArgs, Type};
+use crate::typechecker::type_system::{generics_to_map, TypeSystem};
+use crate::typechecker::types::{GenericArgs, Type};
 use crate::typechecker::{Symbol, TypeChecker};
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -59,14 +60,16 @@ impl<'src> TypeChecker<'src> {
         variant_type: &Type,
         type_params: &[Symbol],
         generic_args: &GenericArgs,
+        infer_ctx: &mut InferenceContext,
         inferred_args: Vec<(Option<&str>, TypedExpr, u32)>,
         line: u32,
     ) -> Result<(TypedExpr, HashMap<Symbol, Type>), TypeCheckerError> {
-        let mut map = generics_to_map(type_params, generic_args);
+        let map = generics_to_map(type_params, generic_args, Some(infer_ctx));
 
-        let bind_args = |args: &[(String, Type)]| {
-            self.sys
-                .bind_arguments(variant_name, &mut map, args, inferred_args, false, line)
+        let bind_args = |args: &[(String, Type)]| -> Result<Vec<TypedExpr>, TypeCheckerError> {
+            todo!("Fix enums")
+            // self.sys
+            //     .bind_arguments(variant_name, &mut map, args, inferred_args, false, line)
         };
 
         let val_expr = match variant_type {
@@ -138,7 +141,7 @@ impl<'src> TypeChecker<'src> {
             if generics.len() != def.generic_params.len() {
                 HashMap::new()
             } else {
-                generics_to_map(&def.generic_params, generics)
+                generics_to_map(&def.generic_params, generics, Some(&mut self.infer_ctx))
             }
         } else {
             HashMap::new()
@@ -208,7 +211,7 @@ impl<'src> TypeChecker<'src> {
         }
 
         // Try field access
-        if let Type::Struct(name, generics) = &actual_ty {
+        if let Type::Struct(name, _) = &actual_ty {
             let struct_def = self
                 .sys
                 .get_struct(name)
@@ -217,7 +220,7 @@ impl<'src> TypeChecker<'src> {
             if let Some((idx, field_type)) = struct_def.get_field(member_token.lexeme) {
                 let actual = TypeSystem::generic_to_concrete(
                     field_type,
-                    &generics_to_map(&struct_def.generic_params, generics),
+                    &self.sys.get_generics_map(&actual_ty),
                 );
 
                 let mut expr = TypedExpr {
@@ -297,7 +300,8 @@ impl<'src> TypeChecker<'src> {
                     method_name: field.lexeme.to_string(),
                 })?;
 
-        let mut pairs = self.sys.get_generics_map(lookup_type);
+        let pairs = self.sys.get_generics_map(lookup_type);
+        // TODO check if concrete
 
         let ty = match &method.0.type_info {
             Type::Function(func) => {
@@ -307,15 +311,15 @@ impl<'src> TypeChecker<'src> {
                         line: field.line,
                     });
                 }
-                let res = TypeSystem::unify_types(&func.params[0].1, &mut pairs, lookup_type);
-                if let Err(err) = res {
-                    return Err(TypeCheckerError::ComplexTypeMismatch {
-                        expected: func.params[0].1.clone(),
-                        found: lookup_type.clone(),
-                        message: format!("Cannot call this method on this type instance {}", err),
-                        line: object_expr.line,
-                    });
-                }
+                // let res = new_ctx.unify_types(&func.params[0].1, lookup_type);
+                // if let Err(err) = res {
+                //     return Err(TypeCheckerError::ComplexTypeMismatch {
+                //         expected: func.params[0].1.clone(),
+                //         found: lookup_type.clone(),
+                //         message: format!("Cannot call this method on this type instance {}", err),
+                //         line: object_expr.line,
+                //     });
+                // }
 
                 let params = func
                     .params

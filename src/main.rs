@@ -1,4 +1,5 @@
 #![allow(clippy::uninlined_format_args)]
+
 use crate::compiler::Compiler;
 use crate::parser::Parser;
 use crate::scanner::Scanner;

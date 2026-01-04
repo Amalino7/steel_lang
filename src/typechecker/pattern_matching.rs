@@ -2,8 +2,8 @@ use crate::parser::ast::{Binding, Expr, MatchArm, Pattern};
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::scope_manager::ScopeType;
 use crate::typechecker::type_ast::{MatchCase, StmtKind, TypedBinding, TypedExpr, TypedStmt};
-use crate::typechecker::type_system::TypeSystem;
-use crate::typechecker::types::{generics_to_map, EnumType, TupleType, Type};
+use crate::typechecker::type_system::{generics_to_map, TypeSystem};
+use crate::typechecker::types::{EnumType, TupleType, Type};
 use crate::typechecker::TypeChecker;
 use std::collections::HashSet;
 use std::rc::Rc;
@@ -195,7 +195,11 @@ impl<'src> TypeChecker<'src> {
                             });
                         };
                         let (_, field_type) = struct_def.ordered_fields[field_idx].clone();
-                        let map = generics_to_map(&struct_def.generic_params, generics);
+                        let map = generics_to_map(
+                            &struct_def.generic_params,
+                            generics,
+                            Some(&mut self.infer_ctx),
+                        );
                         let field_type = TypeSystem::generic_to_concrete(field_type.clone(), &map);
 
                         bindings.push((field_idx, field_type, binding));
