@@ -168,7 +168,6 @@ impl<'src> TypeChecker<'src> {
                             let field_types = self.define_struct_fields(struct_def);
                             let full_name: Symbol =
                                 format!("{}.{}", name.lexeme, v_name.lexeme).into();
-                            // TODO generics here???
                             self.sys.declare_struct(full_name.clone(), &[]);
                             self.sys.define_struct(&full_name, field_types);
                             Type::Struct(full_name, vec![].into())

@@ -4,6 +4,7 @@ use crate::parser::ast::{Expr, Literal};
 use crate::token::{Token, TokenType};
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::error::TypeCheckerError::AssignmentToCapturedVariable;
+use crate::typechecker::inference::InferenceContext;
 use crate::typechecker::type_ast::{ExprKind, LogicalOp, TypedExpr, UnaryOp};
 use crate::typechecker::type_system::{generics_to_map, TySys, TypeSystem};
 use crate::typechecker::types::Type::GenericParam;
@@ -165,19 +166,15 @@ impl<'src> TypeChecker<'src> {
                     {
                         let provided_err =
                             Type::Enum(name.clone(), vec![Type::Never, err_type].into());
-                        // let ok = TypeSystem::unify_types(
-                        //     &func_return_type,
-                        //     &mut HashMap::new(),
-                        //     &provided_err,
-                        // );
-                        // if ok.is_err() {
-                        //     return Err(TypeCheckerError::TypeMismatch {
-                        //         expected: func_return_type,
-                        //         found: provided_err,
-                        //         line: operator.line,
-                        //         message: "The Result type propagate by try must be compatible with the function return type.",
-                        //     });
-                        // }
+                        let ok = self.infer_ctx.unify_types(&func_return_type, &provided_err);
+                        if ok.is_err() {
+                            return Err(TypeCheckerError::TypeMismatch {
+                                expected: func_return_type,
+                                found: provided_err,
+                                line: operator.line,
+                                message: "The Result type propagate by try must be compatible with the function return type.",
+                            });
+                        }
                     } else {
                         return Err(TypeCheckerError::InvalidReturnOutsideFunction {
                             line: operator.line,
@@ -624,7 +621,7 @@ impl<'src> TypeChecker<'src> {
                             index: idx,
                             safe: *safe,
                             value: Box::new(self.sys.verify_assignment(
-                                todo!(),
+                                &mut self.infer_ctx,
                                 &tuple_type.types[idx as usize],
                                 value,
                                 field.line,
@@ -640,20 +637,25 @@ impl<'src> TypeChecker<'src> {
                         .get_struct(&struct_def)
                         .expect("Should have errored earlier");
 
-                    todo!()
-                    // let (field_idx, field_type) =
-                    //     self.check_field_type(struct_def, field, &value, generics)?;
-                    //
-                    // Ok(TypedExpr {
-                    //     ty: field_type,
-                    //     kind: ExprKind::SetField {
-                    //         safe: *safe,
-                    //         object: Box::new(object_typed),
-                    //         index: field_idx as u8,
-                    //         value: Box::new(value),
-                    //     },
-                    //     line: field.line,
-                    // })
+                    let (field_idx, field_type) = Self::check_field_type(
+                        &self.sys,
+                        struct_def,
+                        field,
+                        &value,
+                        generics,
+                        &mut self.infer_ctx,
+                    )?;
+
+                    Ok(TypedExpr {
+                        ty: field_type,
+                        kind: ExprKind::SetField {
+                            safe: *safe,
+                            object: Box::new(object_typed),
+                            index: field_idx as u8,
+                            value: Box::new(value),
+                        },
+                        line: field.line,
+                    })
                 } else {
                     Err(TypeCheckerError::TypeHasNoFields {
                         found: type_,
@@ -687,12 +689,14 @@ impl<'src> TypeChecker<'src> {
     }
 
     fn check_field_type(
-        &mut self,
+        type_system: &TypeSystem,
         struct_def: &StructType,
         field: &Token,
         field_value: &TypedExpr,
         generic_args: GenericArgs,
+        infer_ctx: &mut InferenceContext,
     ) -> Result<(usize, Type), TypeCheckerError> {
+        // TODO refactor
         let field_type = struct_def
             .fields
             .get(field.lexeme)
@@ -709,8 +713,8 @@ impl<'src> TypeChecker<'src> {
                     field_type,
                     &generics_to_map(&struct_def.generic_params, &generic_args, None),
                 );
-                self.sys.verify_assignment(
-                    &mut self.infer_ctx,
+                type_system.verify_assignment(
+                    infer_ctx,
                     &actual,
                     field_value.clone(),
                     field.line,
