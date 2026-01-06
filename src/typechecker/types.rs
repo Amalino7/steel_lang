@@ -54,9 +54,9 @@ pub struct InterfaceType {
 #[derive(Debug, PartialEq, Clone)]
 pub struct EnumType {
     pub name: Symbol,
-    pub variants: HashMap<String, usize>,
+    pub variants: HashMap<Symbol, usize>,
     pub generic_params: Vec<Symbol>,
-    pub ordered_variants: Vec<(String, Type)>, // Void, one arg, tuple, struct
+    pub ordered_variants: Vec<(Symbol, Type)>, // Void, one arg, tuple, struct
 }
 
 impl EnumType {

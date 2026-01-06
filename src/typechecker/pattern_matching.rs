@@ -49,9 +49,9 @@ impl<'src> TypeChecker<'src> {
         // Exhaustiveness check
         if !has_fallthrough {
             for variant in enum_def.variants.keys() {
-                if !matched_variants.contains(variant.as_str()) {
+                if !matched_variants.contains(variant.as_ref()) {
                     return Err(TypeCheckerError::UncoveredPattern {
-                        variant: variant.clone(),
+                        variant: variant.to_string(),
                         line: value_typed.line,
                     });
                 }

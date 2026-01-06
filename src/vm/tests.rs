@@ -1741,7 +1741,7 @@ fn test_generic_enums() {
 
         let list = List.Cons(1, List.Nil);
         {
-            let res:Result<number, number> = Result.Err(21);
+            let res: Result<number, number> = Result.Err(21);
             let res = Result.map_error(res, to_str.<number>);
             if res is Ok {
                 println(res + 10);
@@ -1799,6 +1799,8 @@ fn test_option_enum() {
                 println(opt + 10);
             }
             assert(opt is Some, true);
+            opt = Option.None;
+            assert(opt is None, true);
         }
         "#;
     execute_source(src, false, "run", true);

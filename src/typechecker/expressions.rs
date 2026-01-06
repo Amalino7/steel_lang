@@ -6,8 +6,7 @@ use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::error::TypeCheckerError::AssignmentToCapturedVariable;
 use crate::typechecker::inference::InferenceContext;
 use crate::typechecker::type_ast::{ExprKind, LogicalOp, TypedExpr, UnaryOp};
-use crate::typechecker::type_system::{TySys, TypeSystem, generics_to_map};
-use crate::typechecker::types::Type::GenericParam;
+use crate::typechecker::type_system::{generics_to_map, TySys, TypeSystem};
 use crate::typechecker::types::{GenericArgs, StructType, TupleType, Type};
 use crate::typechecker::{FunctionContext, Symbol, TypeChecker};
 use std::collections::HashMap;
@@ -254,14 +253,7 @@ impl<'src> TypeChecker<'src> {
                         });
                     }
                     let expected = ctx.type_info.clone();
-
-                    let typed_value = self.check_expression(value, Some(&expected))?;
-                    let coerced_value = self.sys.verify_assignment(
-                        &mut self.infer_ctx,
-                        &expected,
-                        typed_value,
-                        identifier.line,
-                    )?;
+                    let coerced_value = self.coerce_expression(value, &expected)?;
 
                     Ok(TypedExpr {
                         ty: coerced_value.ty.clone(),
@@ -329,21 +321,6 @@ impl<'src> TypeChecker<'src> {
                 safe,
             } => {
                 let mut callee_typed = self.check_expression(callee, None)?;
-                // Handle args
-                let mut inferred_args = Vec::with_capacity(arguments.len());
-
-                for arg in arguments {
-                    let typed_val = self.check_expression(&arg.expr, None)?;
-
-                    let label = arg.label.as_ref().map(|t| t.lexeme);
-                    let line = arg
-                        .label
-                        .as_ref()
-                        .map(|t| t.line)
-                        .unwrap_or(callee.get_line());
-
-                    inferred_args.push((label, typed_val, line));
-                }
                 // Handle Struct constructor
                 if let Type::Metatype(name, generics) = &callee_typed.ty
                     && let Some(struct_def) = self.sys.get_struct(name)
@@ -360,26 +337,11 @@ impl<'src> TypeChecker<'src> {
                         .map(|(s, ty)| (s.clone(), TySys::generic_to_concrete(ty.clone(), &map)))
                         .collect::<Vec<_>>();
 
-                    let res = self.infer_ctx.unify_types(
-                        expected.unwrap_or(&Type::Unknown),
-                        &Type::Struct(
-                            name.clone(),
-                            struct_def
-                                .generic_params
-                                .iter()
-                                .map(|t| TySys::generic_to_concrete(GenericParam(t.clone()), &map))
-                                .collect::<Vec<_>>()
-                                .into(),
-                        ),
-                    );
-                    res.expect("Struct constructor should be valid");
-
                     let owned_name = struct_def.name.clone();
-                    let bound_args = self.sys.bind_arguments(
+                    let bound_args = self.bind_arguments(
                         name,
                         &abstracted,
-                        inferred_args,
-                        &mut self.infer_ctx,
+                        arguments,
                         false,
                         callee.get_line(),
                     )?;
@@ -401,27 +363,34 @@ impl<'src> TypeChecker<'src> {
 
                 if let Type::Metatype(name, generics) = &callee_typed.ty
                     && let Some(enum_def) = self.sys.get_enum(name)
-                    && let ExprKind::EnumInit { variant_idx, value, .. } = &mut callee_typed.kind
+                    && let ExprKind::EnumInit {
+                        variant_idx, value, ..
+                    } = &mut callee_typed.kind
                 {
-                    let (variant_name, variant_type) = &enum_def.ordered_variants[*variant_idx as usize];
-
-                    let (init_expr, map) = Self::handle_enum_call(
-                        &self.sys,
-                        variant_name,
-                        variant_type,
+                    let map = generics_to_map(
                         &enum_def.generic_params,
                         generics,
-                        &mut self.infer_ctx,
-                        inferred_args,
+                        Some(&mut self.infer_ctx),
+                    );
+                    let (variant_name, variant_type) =
+                        &enum_def.ordered_variants[*variant_idx as usize];
+                    let concrete_generics = enum_def
+                        .generic_params
+                        .iter()
+                        .map(|s| map.get(s).unwrap().clone())
+                        .collect::<Vec<_>>();
+
+                    let init_expr = self.handle_enum_call(
+                        variant_name.clone(),
+                        &variant_type.clone(),
+                        &map,
+                        arguments,
                         callee.get_line(),
                     )?;
 
                     *value = Box::from(init_expr);
-                    let concrete_generics = enum_def.generic_params.iter()
-                        .map(|s| map.get(s).unwrap().clone())
-                        .collect::<Vec<_>>();
-
-                    callee_typed.ty = self.infer_ctx.substitute(&Type::Enum(name.clone(), Rc::new(concrete_generics)));
+                    let result = Type::Enum(name.clone(), Rc::new(concrete_generics));
+                    callee_typed.ty = self.infer_ctx.substitute(&result);
 
                     return Ok(callee_typed);
                 }
@@ -461,11 +430,10 @@ impl<'src> TypeChecker<'src> {
                             panic!("Should have errored earlier");
                         };
 
-                        let bound_args = self.sys.bind_arguments(
+                        let bound_args = self.bind_arguments(
                             callee.to_string().as_ref(),
                             &func.params,
-                            inferred_args,
-                            &mut self.infer_ctx,
+                            arguments,
                             func.is_vararg,
                             callee_typed.line,
                         )?;
@@ -670,5 +638,55 @@ impl<'src> TypeChecker<'src> {
                 Ok((id, actual))
             }
         }
+    }
+
+    pub(crate) fn coerce_expression(
+        &mut self,
+        expr: &Expr<'src>,
+        expected: &Type,
+    ) -> Result<TypedExpr, TypeCheckerError> {
+        let mut expr = self.check_expression(expr, Some(expected))?;
+        if self.infer_ctx.unify_types(expected, &expr.ty).is_ok() {
+            let expr_ty = self.infer_ctx.substitute(&expr.ty);
+            if expr_ty.is_concrete() {
+                expr.ty = expr_ty;
+                return Ok(expr);
+            } else {
+                return Err(TypeCheckerError::CannotInferType {
+                    line: expr.line,
+                    uninferred_generics: vec![], // TODO Think how to report error
+                });
+            }
+        }
+
+        let expected_type = if let Type::Optional(inner) = expected {
+            inner
+        } else {
+            expected
+        };
+
+        if let (Type::Interface(iface_name, generics), Some(name)) =
+            (expected_type, expr.ty.get_name())
+            && let Some(idx) = self.sys.get_vtable_idx(name, iface_name.clone())
+        {
+            return Ok(TypedExpr {
+                ty: Type::Interface(iface_name.clone(), generics.clone()),
+                line: expr.line,
+                kind: ExprKind::InterfaceUpcast {
+                    expr: Box::new(expr),
+                    vtable_idx: idx,
+                },
+            });
+        }
+
+        self.infer_ctx
+            .unify_types(expected, &expr.ty)
+            .map(|_| expr.clone())
+            .map_err(|msg| TypeCheckerError::ComplexTypeMismatch {
+                expected: expected.clone(),
+                line: expr.line,
+                message: msg,
+                found: expr.ty.clone(),
+            })
     }
 }

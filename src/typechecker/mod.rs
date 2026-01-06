@@ -9,6 +9,7 @@ use crate::typechecker::types::Type;
 use std::mem::take;
 use std::rc::Rc;
 
+mod arguments;
 mod declarations;
 pub mod error;
 mod expressions;

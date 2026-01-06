@@ -1,12 +1,11 @@
 use crate::typechecker::types::{TupleType, Type};
 use crate::typechecker::Symbol;
-use std::cell::Cell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
 pub struct InferenceContext {
     substitutions: HashMap<u32, Type>,
-    next_id: Cell<u32>, // TODO is this a good idea
+    next_id: u32, // TODO is this a good idea
 }
 impl Default for InferenceContext {
     fn default() -> Self {
@@ -17,14 +16,14 @@ impl InferenceContext {
     pub fn new() -> Self {
         Self {
             substitutions: HashMap::new(),
-            next_id: Cell::new(0),
+            next_id: 0,
         }
     }
 
     pub fn new_type_var(&mut self) -> Type {
-        let id = &self.next_id;
-        id.set(id.get() + 1);
-        Type::Infer(id.get() - 1)
+        let id = self.next_id;
+        self.next_id += 1;
+        Type::Infer(id)
     }
     pub fn is_resolved(&self, id: u32) -> bool {
         self.substitutions.contains_key(&id)
@@ -37,7 +36,7 @@ impl InferenceContext {
                     let resolved = resolved.clone();
                     self.substitute(&resolved)
                 } else {
-                    todo!("Unresolved type variable: {}", id);
+                    ty.clone()
                 }
             }
             Type::Optional(inner) => Type::Optional(Box::new(self.substitute(inner))),
@@ -133,7 +132,6 @@ impl InferenceContext {
 
         match expected_ty {
             Type::Infer(id) => {
-                // TODO remove unwrap
                 if !self.is_resolved(*id) {
                     self.substitutions.insert(*id, provided.clone());
                     Ok(())

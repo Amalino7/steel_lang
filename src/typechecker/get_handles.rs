@@ -1,7 +1,6 @@
-use crate::parser::ast::Literal;
+use crate::parser::ast::{CallArg, Literal};
 use crate::token::Token;
 use crate::typechecker::error::TypeCheckerError;
-use crate::typechecker::inference::InferenceContext;
 use crate::typechecker::type_ast::{ExprKind, TypedExpr};
 use crate::typechecker::type_system::{generics_to_map, TySys, TypeSystem};
 use crate::typechecker::types::{GenericArgs, TupleType, Type};
@@ -33,9 +32,15 @@ impl<'src> TypeChecker<'src> {
 
         let (idx, variant_types) = enum_def.get_variant(variant_name.lexeme)?;
 
-        let map = generics_to_map(&enum_def.generic_params, generics, Some(&mut self.infer_ctx));
+        let map = generics_to_map(
+            &enum_def.generic_params,
+            generics,
+            Some(&mut self.infer_ctx),
+        );
         // TODO expected type???
-        let concrete_generics = enum_def.generic_params.iter()
+        let concrete_generics = enum_def
+            .generic_params
+            .iter()
             .map(|s| map.get(s).unwrap().clone())
             .collect::<Vec<_>>();
 
@@ -62,46 +67,47 @@ impl<'src> TypeChecker<'src> {
 
     // In your TypeChecker impl
     pub(crate) fn handle_enum_call(
-        sys: &TySys,
-        _variant_name: &str, // variable not strictly needed if we switch on type
+        &mut self,
+        _variant_name: Symbol, // variable not strictly needed if we switch on type
         variant_type: &Type,
-        type_params: &[Symbol],
-        generic_args: &GenericArgs,
-        infer_ctx: &mut InferenceContext,
-        inferred_args: Vec<(Option<&str>, TypedExpr, u32)>,
+        map: &HashMap<Symbol, Type>,
+        inferred_args: &Vec<CallArg<'src>>,
         line: u32,
-    ) -> Result<(TypedExpr, HashMap<Symbol, Type>), TypeCheckerError> {
-
-        let map = generics_to_map(type_params, generic_args, Some(infer_ctx));
-
-        let bind_and_process = |raw_params: Vec<(String, Type)>| -> Result<Vec<TypedExpr>, TypeCheckerError> {
-            let concrete_params: Vec<(String, Type)> = raw_params.into_iter()
-                .map(|(name, ty)| (name, TySys::generic_to_concrete(ty, &map)))
+    ) -> Result<TypedExpr, TypeCheckerError> {
+        let bind_and_process = |this: &mut Self,
+                                raw_params: Vec<(String, Type)>|
+         -> Result<Vec<TypedExpr>, TypeCheckerError> {
+            let concrete_params: Vec<(String, Type)> = raw_params
+                .into_iter()
+                .map(|(name, ty)| (name, TySys::generic_to_concrete(ty, map)))
                 .collect();
 
-            sys.bind_arguments(
-                _variant_name,
+            this.bind_arguments(
+                _variant_name.as_ref(),
                 &concrete_params,
                 inferred_args,
-                infer_ctx,
                 false,
-                line
+                line,
             )
         };
 
         let val_expr = match variant_type {
             // Case: MyEnum.Struct(a: 1, b: 2)
             Type::Struct(struct_name, _) => {
-                let struct_def = sys.get_struct(struct_name)
+                let struct_def = self
+                    .sys
+                    .get_struct(struct_name)
                     .expect("Enum variant points to non-existent struct");
+
+                let concrete_struct_generics = struct_def
+                    .generic_params
+                    .iter()
+                    .map(|t| TySys::generic_to_concrete(Type::GenericParam(t.clone()), map))
+                    .collect::<Vec<_>>();
 
                 let params = struct_def.ordered_fields.clone();
 
-                let bound_args = bind_and_process(params)?;
-
-                let concrete_struct_generics = struct_def.generic_params.iter()
-                    .map(|t| TySys::generic_to_concrete(Type::GenericParam(t.clone()), &map))
-                    .collect::<Vec<_>>();
+                let bound_args = bind_and_process(self, params)?;
 
                 TypedExpr {
                     ty: Type::Struct(struct_name.clone(), Rc::new(concrete_struct_generics)),
@@ -115,19 +121,23 @@ impl<'src> TypeChecker<'src> {
 
             // Case: MyEnum.Tuple(1, 2)
             Type::Tuple(tuple_types) => {
-                let params: Vec<(String, Type)> = tuple_types.types.iter()
+                let params: Vec<(String, Type)> = tuple_types
+                    .types
+                    .iter()
                     .enumerate()
                     .map(|(i, t)| (i.to_string(), t.clone()))
                     .collect();
 
-                let bound_args = bind_and_process(params)?;
-                let concrete_tuple_types = tuple_types.types.iter()
-                    .map(|t| TySys::generic_to_concrete(t.clone(), &map))
+                let bound_args = bind_and_process(self, params)?;
+                let concrete_tuple_types = tuple_types
+                    .types
+                    .iter()
+                    .map(|t| TySys::generic_to_concrete(t.clone(), map))
                     .collect::<Vec<_>>();
 
                 TypedExpr {
-                    ty: Type::Tuple(Rc::new(TupleType{
-                        types: concrete_tuple_types
+                    ty: Type::Tuple(Rc::new(TupleType {
+                        types: concrete_tuple_types,
                     })),
                     kind: ExprKind::Tuple {
                         elements: bound_args,
@@ -140,16 +150,16 @@ impl<'src> TypeChecker<'src> {
             _ => {
                 let params = vec![("value".to_string(), variant_type.clone())];
 
-                let mut bound_args = bind_and_process(params)?;
+                let mut bound_args = bind_and_process(self, params)?;
                 bound_args.pop().ok_or(TypeCheckerError::MissingArgument {
                     param_name: "value".into(),
-                    callee: _variant_name.into(),
-                    line
+                    callee: _variant_name.to_string(),
+                    line,
                 })?
             }
         };
 
-        Ok((val_expr, map))
+        Ok(val_expr)
     }
 
     fn handle_static_method_access(

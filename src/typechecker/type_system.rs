@@ -70,6 +70,10 @@ impl TypeSystem {
         }
     }
 
+    pub fn get_vtable_idx(&self, type_name: &str, iface_name: Symbol) -> Option<u32> {
+        self.impls.get(&(type_name.into(), iface_name)).copied()
+    }
+
     pub fn pop_n_generics(&mut self, count: usize) {
         self.active_generics
             .truncate(self.active_generics.len() - count);
@@ -129,7 +133,7 @@ impl TypeSystem {
             s.ordered_fields = vec_fields.into_iter().map(|opt| opt.unwrap()).collect();
         }
     }
-    pub fn define_enum(&mut self, name: &str, variants: HashMap<String, (usize, Type)>) {
+    pub fn define_enum(&mut self, name: &str, variants: HashMap<Symbol, (usize, Type)>) {
         if let Some(e) = self.enums.get_mut(name) {
             e.variants = variants
                 .iter()
@@ -224,7 +228,7 @@ impl TypeSystem {
             left == right
         }
     }
-
+    #[deprecated(note = "please use TypeChecker::coerce_expression")]
     pub fn verify_assignment(
         &self,
         infer_ctx: &mut InferenceContext,
@@ -288,94 +292,6 @@ impl TypeSystem {
             }
             _ => false,
         }
-    }
-
-    pub fn bind_arguments(
-        &self,
-        callee_name: &str,
-        params: &[(String, Type)],
-        args: Vec<(Option<&str>, TypedExpr, u32)>,
-        infer_ctx: &mut InferenceContext,
-        is_vararg: bool,
-        call_line: u32,
-    ) -> Result<Vec<TypedExpr>, TypeCheckerError> {
-        let fixed_len = params.len();
-        let mut fixed: Vec<Option<TypedExpr>> = vec![None; fixed_len];
-        let mut used = vec![false; fixed_len];
-        let mut extras = Vec::new(); // Used for varargs
-        let mut pos_cursor = 0;
-        let mut seen_named = false;
-
-        for (label, expr, line) in args {
-            match label {
-                Some(name) => {
-                    seen_named = true;
-
-                    let idx = self.resolve_named_arg(callee_name, params, name, line)?;
-
-                    if used[idx] {
-                        return Err(TypeCheckerError::DuplicateArgument {
-                            name: params[idx].0.clone(),
-                            line,
-                        });
-                    }
-
-                    let expected = &params[idx].1;
-                    let coerced = self.verify_assignment(infer_ctx, expected, expr, line)?;
-                    fixed[idx] = Some(coerced);
-                    used[idx] = true;
-                }
-
-                None => {
-                    if seen_named {
-                        return Err(TypeCheckerError::PositionalArgumentAfterNamed {
-                            callee: callee_name.to_string(),
-                            message: "positional arguments cannot appear after named arguments",
-                            line,
-                        });
-                    }
-
-                    while pos_cursor < fixed_len && used[pos_cursor] {
-                        pos_cursor += 1;
-                    }
-
-                    if pos_cursor < fixed_len {
-                        let expected = &params[pos_cursor].1;
-                        let coerced = self.verify_assignment(infer_ctx, expected, expr, line)?;
-                        fixed[pos_cursor] = Some(coerced);
-                        used[pos_cursor] = true;
-                        pos_cursor += 1;
-                    } else if is_vararg {
-                        extras.push(self.verify_assignment(
-                            infer_ctx,
-                            &params[pos_cursor - 1].1,
-                            expr,
-                            line,
-                        )?);
-                    } else {
-                        return Err(TypeCheckerError::TooManyArguments {
-                            callee: callee_name.to_string(),
-                            expected: fixed_len,
-                            found: fixed_len + extras.len() + 1,
-                            line,
-                        });
-                    }
-                }
-            }
-        }
-
-        let mut result = Vec::with_capacity(fixed_len + extras.len());
-
-        for (i, opt) in fixed.into_iter().enumerate() {
-            result.push(opt.ok_or_else(|| TypeCheckerError::MissingArgument {
-                param_name: params[i].0.clone(),
-                callee: callee_name.to_string(),
-                line: call_line,
-            })?);
-        }
-
-        result.extend(extras);
-        Ok(result)
     }
 
     pub fn generic_to_concrete(generic_ty: Type, generics_map: &HashMap<Symbol, Type>) -> Type {
@@ -464,7 +380,7 @@ impl TypeSystem {
         }
     }
 
-    fn resolve_named_arg(
+    pub(crate) fn resolve_named_arg(
         &self,
         callee: &str,
         params: &[(String, Type)],

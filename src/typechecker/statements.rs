@@ -19,16 +19,7 @@ impl<'src> TypeChecker<'src> {
                 type_info,
             } => {
                 let declared_type = Type::from_ast(type_info, &self.sys)?;
-
-                let value_node = self.check_expression(value, Some(&declared_type))?;
-                // TODO consider if Unknown is a good usage
-                let coerced_value = self.sys.verify_assignment(
-                    &mut self.infer_ctx,
-                    &declared_type,
-                    value_node,
-                    binding.get_line(),
-                )?;
-
+                let coerced_value = self.coerce_expression(value, &declared_type)?;
                 let final_type = if declared_type == Type::Unknown {
                     coerced_value.ty.clone()
                 } else {
@@ -188,13 +179,7 @@ impl<'src> TypeChecker<'src> {
             }
             Stmt::Return(expr) => {
                 if let FunctionContext::Function(func_return_type) = self.current_function.clone() {
-                    let return_expr = self.check_expression(expr, Some(&func_return_type))?;
-                    let coerced_return = self.sys.verify_assignment(
-                        &mut self.infer_ctx,
-                        &func_return_type,
-                        return_expr,
-                        expr.get_line(),
-                    )?;
+                    let coerced_return = self.coerce_expression(expr, &func_return_type)?;
                     Ok(TypedStmt {
                         kind: StmtKind::Return(coerced_return),
                         line: expr.get_line(),
