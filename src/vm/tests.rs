@@ -1741,7 +1741,7 @@ fn test_generic_enums() {
 
         let list = List.Cons(1, List.Nil);
         {
-            let res = Result.<number, number>.Err(21);
+            let res:Result<number, number> = Result.Err(21);
             let res = Result.map_error(res, to_str.<number>);
             if res is Ok {
                 println(res + 10);
@@ -1753,7 +1753,7 @@ fn test_generic_enums() {
 
         assert(list is Cons, true);
         "#;
-    execute_source(src, false, "run", false);
+    execute_source(src, false, "run", true);
 }
 #[test]
 fn test_complex_generic() {
@@ -1767,7 +1767,7 @@ fn test_complex_generic() {
         }
 
 
-        let box = Box.<number, number>.new(10);
+        let box = Box.<number, never>.new(10);
         println(box.top);
         assert(box.top + 12, 22);
         "#;
@@ -1785,6 +1785,21 @@ fn test_panic() {
             panic("reached bottom!");
         }
         rec(10);
+        "#;
+    execute_source(src, false, "run", true);
+}
+
+#[test]
+fn test_option_enum() {
+    let src = r#"
+        enum Option<T> { Some(T), None }
+        {
+            let opt = Option.Some(10);
+            if opt is Some {
+                println(opt + 10);
+            }
+            assert(opt is Some, true);
+        }
         "#;
     execute_source(src, false, "run", true);
 }

@@ -33,8 +33,8 @@ pub fn get_prelude() -> &'static str {
             }
             func map<NewOk>(self, f: func(Ok): NewOk): Result<NewOk, Err> {
                 match self {
-                    .Ok(val) => {return Result.<NewOk, Err>.Ok(f(val));}
-                    .Err(err) => {return Result.<NewOk, Err>.Err(err);}
+                    .Ok(val) => {return Result.Ok(f(val));}
+                    .Err(err) => {return Result.Err(err);}
                 }
             }
         }

@@ -6,7 +6,7 @@ use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::error::TypeCheckerError::AssignmentToCapturedVariable;
 use crate::typechecker::inference::InferenceContext;
 use crate::typechecker::type_ast::{ExprKind, LogicalOp, TypedExpr, UnaryOp};
-use crate::typechecker::type_system::{generics_to_map, TySys, TypeSystem};
+use crate::typechecker::type_system::{TySys, TypeSystem, generics_to_map};
 use crate::typechecker::types::Type::GenericParam;
 use crate::typechecker::types::{GenericArgs, StructType, TupleType, Type};
 use crate::typechecker::{FunctionContext, Symbol, TypeChecker};
@@ -105,7 +105,6 @@ impl<'src> TypeChecker<'src> {
                     });
                 }
                 let variant_idx = enum_def.variants.get(type_name.lexeme).unwrap();
-
                 Ok(TypedExpr {
                     ty: Type::Boolean,
                     kind: ExprKind::Is {
@@ -402,67 +401,29 @@ impl<'src> TypeChecker<'src> {
 
                 if let Type::Metatype(name, generics) = &callee_typed.ty
                     && let Some(enum_def) = self.sys.get_enum(name)
-                    && let ExprKind::EnumInit {
-                        variant_idx, value, ..
-                    } = &mut callee_typed.kind
+                    && let ExprKind::EnumInit { variant_idx, value, .. } = &mut callee_typed.kind
                 {
-                    todo!("Handle enum init");
-                    // let (variant_name, ty) = &enum_def.ordered_variants[*variant_idx as usize];
-                    // // let (expr, mut map) = self.handle_enum_call(
-                    // //     variant_name,
-                    // //     ty,
-                    // //     &enum_def.generic_params,
-                    // //     generics,
-                    // //     &mut self.infer_ctx,
-                    // //     inferred_args,
-                    // //     callee.get_line(),
-                    // // )?;
-                    // // let res_ty = Type::Enum(
-                    // //     name.clone(),
-                    // //     enum_def
-                    // //         .generic_params
-                    // //         .iter()
-                    // //         .map(|n| Type::GenericParam(n.clone()))
-                    // //         .collect::<Vec<_>>()
-                    // //         .into(),
-                    // // );
-                    // // let err = TypeSystem::unify_types(
-                    // //     expected.unwrap_or(&Type::Unknown),
-                    // //     &mut map,
-                    // //     &res_ty,
-                    // // );
-                    // // if let Err(err) = err {
-                    // //     return Err(TypeCheckerError::ComplexTypeMismatch {
-                    // //         expected: expected.unwrap_or(&Type::Unknown).clone(),
-                    // //         found: expr.ty.clone(),
-                    // //         message: err,
-                    // //         line: callee.get_line(),
-                    // //     });
-                    // // }
-                    //
-                    // *value = Box::from(expr);
-                    // let issue = map.iter().any(|(_, v)| *v == Type::Unknown);
-                    // if issue {
-                    //     return Err(TypeCheckerError::CannotInferType {
-                    //         line: callee.get_line(),
-                    //         uninferred_generics: map
-                    //             .iter()
-                    //             .filter(|(_, v)| **v == Type::Unknown)
-                    //             .map(|(name, _)| name.to_string())
-                    //             .collect(),
-                    //     });
-                    // }
-                    // // TODO handle generics
-                    // callee_typed.ty = Type::Enum(
-                    //     name.clone(),
-                    //     enum_def
-                    //         .generic_params
-                    //         .iter()
-                    //         .map(|s| map.get(s).unwrap().clone())
-                    //         .collect::<Vec<_>>()
-                    //         .into(),
-                    // );
-                    // return Ok(callee_typed);
+                    let (variant_name, variant_type) = &enum_def.ordered_variants[*variant_idx as usize];
+
+                    let (init_expr, map) = Self::handle_enum_call(
+                        &self.sys,
+                        variant_name,
+                        variant_type,
+                        &enum_def.generic_params,
+                        generics,
+                        &mut self.infer_ctx,
+                        inferred_args,
+                        callee.get_line(),
+                    )?;
+
+                    *value = Box::from(init_expr);
+                    let concrete_generics = enum_def.generic_params.iter()
+                        .map(|s| map.get(s).unwrap().clone())
+                        .collect::<Vec<_>>();
+
+                    callee_typed.ty = self.infer_ctx.substitute(&Type::Enum(name.clone(), Rc::new(concrete_generics)));
+
+                    return Ok(callee_typed);
                 }
 
                 let safe = if let ExprKind::MethodGet { safe, .. } = callee_typed.kind {
@@ -499,19 +460,6 @@ impl<'src> TypeChecker<'src> {
                         else {
                             panic!("Should have errored earlier");
                         };
-
-                        // let err = self
-                        //     .sys
-                        //     .get_inference_ctx_mut()
-                        //     .unify_types(expected.unwrap_or(&Type::Unknown), &func.return_type);
-                        // if let Err(err) = err {
-                        //     return Err(TypeCheckerError::ComplexTypeMismatch {
-                        //         expected: expected.unwrap_or(&Type::Unknown).clone(),
-                        //         found: func.return_type.clone(),
-                        //         message: err,
-                        //         line: callee.get_line(),
-                        //     });
-                        // }
 
                         let bound_args = self.sys.bind_arguments(
                             callee.to_string().as_ref(),

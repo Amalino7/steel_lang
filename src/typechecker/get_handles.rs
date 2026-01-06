@@ -3,8 +3,8 @@ use crate::token::Token;
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::inference::InferenceContext;
 use crate::typechecker::type_ast::{ExprKind, TypedExpr};
-use crate::typechecker::type_system::{generics_to_map, TypeSystem};
-use crate::typechecker::types::{GenericArgs, Type};
+use crate::typechecker::type_system::{generics_to_map, TySys, TypeSystem};
+use crate::typechecker::types::{GenericArgs, TupleType, Type};
 use crate::typechecker::{Symbol, TypeChecker};
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -33,8 +33,14 @@ impl<'src> TypeChecker<'src> {
 
         let (idx, variant_types) = enum_def.get_variant(variant_name.lexeme)?;
 
+        let map = generics_to_map(&enum_def.generic_params, generics, Some(&mut self.infer_ctx));
+        // TODO expected type???
+        let concrete_generics = enum_def.generic_params.iter()
+            .map(|s| map.get(s).unwrap().clone())
+            .collect::<Vec<_>>();
+
         let ty = if variant_types == Type::Void {
-            Type::Enum(enum_def.name.clone(), vec![].into())
+            Type::Enum(enum_def.name.clone(), concrete_generics.into())
         } else {
             Type::Metatype(type_name.clone(), generics.clone())
         };
@@ -54,9 +60,10 @@ impl<'src> TypeChecker<'src> {
         })
     }
 
+    // In your TypeChecker impl
     pub(crate) fn handle_enum_call(
-        &self,
-        variant_name: &str,
+        sys: &TySys,
+        _variant_name: &str, // variable not strictly needed if we switch on type
         variant_type: &Type,
         type_params: &[Symbol],
         generic_args: &GenericArgs,
@@ -64,25 +71,40 @@ impl<'src> TypeChecker<'src> {
         inferred_args: Vec<(Option<&str>, TypedExpr, u32)>,
         line: u32,
     ) -> Result<(TypedExpr, HashMap<Symbol, Type>), TypeCheckerError> {
+
         let map = generics_to_map(type_params, generic_args, Some(infer_ctx));
 
-        let bind_args = |args: &[(String, Type)]| -> Result<Vec<TypedExpr>, TypeCheckerError> {
-            todo!("Fix enums")
-            // self.sys
-            //     .bind_arguments(variant_name, &mut map, args, inferred_args, false, line)
+        let bind_and_process = |raw_params: Vec<(String, Type)>| -> Result<Vec<TypedExpr>, TypeCheckerError> {
+            let concrete_params: Vec<(String, Type)> = raw_params.into_iter()
+                .map(|(name, ty)| (name, TySys::generic_to_concrete(ty, &map)))
+                .collect();
+
+            sys.bind_arguments(
+                _variant_name,
+                &concrete_params,
+                inferred_args,
+                infer_ctx,
+                false,
+                line
+            )
         };
 
         let val_expr = match variant_type {
-            Type::Struct(struct_name, empty) => {
-                let struct_def = self
-                    .sys
-                    .get_struct(struct_name)
+            // Case: MyEnum.Struct(a: 1, b: 2)
+            Type::Struct(struct_name, _) => {
+                let struct_def = sys.get_struct(struct_name)
                     .expect("Enum variant points to non-existent struct");
 
-                let bound_args = bind_args(&struct_def.ordered_fields)?;
+                let params = struct_def.ordered_fields.clone();
+
+                let bound_args = bind_and_process(params)?;
+
+                let concrete_struct_generics = struct_def.generic_params.iter()
+                    .map(|t| TySys::generic_to_concrete(Type::GenericParam(t.clone()), &map))
+                    .collect::<Vec<_>>();
 
                 TypedExpr {
-                    ty: Type::Struct(struct_name.clone(), empty.clone()),
+                    ty: Type::Struct(struct_name.clone(), Rc::new(concrete_struct_generics)),
                     kind: ExprKind::StructInit {
                         name: Box::from(struct_name.to_string()),
                         args: bound_args,
@@ -90,32 +112,43 @@ impl<'src> TypeChecker<'src> {
                     line,
                 }
             }
-            // Tuple variant
+
+            // Case: MyEnum.Tuple(1, 2)
             Type::Tuple(tuple_types) => {
-                let params: Vec<(String, Type)> = tuple_types
-                    .types
-                    .iter()
+                let params: Vec<(String, Type)> = tuple_types.types.iter()
                     .enumerate()
                     .map(|(i, t)| (i.to_string(), t.clone()))
                     .collect();
 
-                let bound_args = bind_args(&params)?;
+                let bound_args = bind_and_process(params)?;
+                let concrete_tuple_types = tuple_types.types.iter()
+                    .map(|t| TySys::generic_to_concrete(t.clone(), &map))
+                    .collect::<Vec<_>>();
 
                 TypedExpr {
-                    ty: variant_type.clone(),
+                    ty: Type::Tuple(Rc::new(TupleType{
+                        types: concrete_tuple_types
+                    })),
                     kind: ExprKind::Tuple {
                         elements: bound_args,
                     },
                     line,
                 }
             }
+
+            // Case: MyEnum.Value(5)
             _ => {
-                // One argument
                 let params = vec![("value".to_string(), variant_type.clone())];
-                let mut bound_args = bind_args(&params)?;
-                bound_args.pop().unwrap() // Safe because bind_arguments guarantees match
+
+                let mut bound_args = bind_and_process(params)?;
+                bound_args.pop().ok_or(TypeCheckerError::MissingArgument {
+                    param_name: "value".into(),
+                    callee: _variant_name.into(),
+                    line
+                })?
             }
         };
+
         Ok((val_expr, map))
     }
 
@@ -311,15 +344,6 @@ impl<'src> TypeChecker<'src> {
                         line: field.line,
                     });
                 }
-                // let res = new_ctx.unify_types(&func.params[0].1, lookup_type);
-                // if let Err(err) = res {
-                //     return Err(TypeCheckerError::ComplexTypeMismatch {
-                //         expected: func.params[0].1.clone(),
-                //         found: lookup_type.clone(),
-                //         message: format!("Cannot call this method on this type instance {}", err),
-                //         line: object_expr.line,
-                //     });
-                // }
 
                 let params = func
                     .params

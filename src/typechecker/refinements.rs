@@ -5,6 +5,7 @@ use crate::typechecker::{Symbol, TypeChecker};
 
 type Refinement = (Symbol, Type);
 
+#[derive(Debug)]
 pub(crate) struct BranchRefinements {
     pub(crate) true_path: Vec<Refinement>,
     pub(crate) false_path: Vec<Refinement>,
@@ -63,7 +64,6 @@ impl<'src> TypeChecker<'src> {
                     } else {
                         vec![]
                     };
-
                     let (_, narrowed_type) = &enum_def.ordered_variants[*variant_idx as usize];
                     let final_type =
                         TypeSystem::generic_to_concrete(narrowed_type.clone(), &generics_map);
