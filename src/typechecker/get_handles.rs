@@ -355,6 +355,16 @@ impl<'src> TypeChecker<'src> {
                     });
                 }
 
+                let actual_arg1 = TypeSystem::generic_to_concrete(func.params[0].1.clone(), &pairs);
+                self.infer_ctx
+                    .unify_types(lookup_type, &actual_arg1)
+                    .map_err(|msg| TypeCheckerError::ComplexTypeMismatch {
+                        expected: lookup_type.clone(),
+                        found: actual_arg1,
+                        line: field.line,
+                        message: msg,
+                    })?;
+
                 let params = func
                     .params
                     .iter()
