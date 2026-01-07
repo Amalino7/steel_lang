@@ -196,6 +196,25 @@ impl Type {
         }
     }
 
+
+    pub fn unwrap_optional_safe(&self, safe: bool, line: u32) -> Result<Type, TypeCheckerError> {
+        if safe {
+            match self {
+                Type::Optional(inner) => Ok(inner.as_ref().clone()),
+                _ => {
+                    Err(TypeCheckerError::TypeMismatch {
+                        expected: Type::Optional(Box::new(Type::Any)),
+                        found: self.clone(),
+                        line,
+                        message: "Cannot access safe navigation of non-optional type. Remove ?.",
+                    })
+                }
+            }
+        } else {
+             Ok(self.clone())
+        }
+    }
+
     pub fn wrap_in_optional(self) -> Type {
         match self {
             Type::Optional(_) => self,

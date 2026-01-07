@@ -1,13 +1,12 @@
 use crate::compiler::analysis::ResolvedVar;
 use crate::compiler::analysis::ResolvedVar::Global;
 use crate::parser::ast::{Expr, Literal};
-use crate::token::{Token, TokenType};
+use crate::token::TokenType;
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::error::TypeCheckerError::AssignmentToCapturedVariable;
-use crate::typechecker::inference::InferenceContext;
 use crate::typechecker::type_ast::{ExprKind, LogicalOp, TypedExpr, UnaryOp};
 use crate::typechecker::type_system::{generics_to_map, TySys, TypeSystem};
-use crate::typechecker::types::{GenericArgs, StructType, TupleType, Type};
+use crate::typechecker::types::{TupleType, Type};
 use crate::typechecker::{FunctionContext, Symbol, TypeChecker};
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -403,21 +402,10 @@ impl<'src> TypeChecker<'src> {
                     *safe
                 };
 
-                let lookup_type = if safe {
-                    match &callee_typed.ty {
-                        Type::Optional(inner) => inner.as_ref().clone(),
-                        _ => {
-                            return Err(TypeCheckerError::TypeMismatch {
-                                expected: Type::Optional(Box::new(Type::Any)),
-                                found: callee_typed.ty.clone(),
-                                line: callee_typed.line,
-                                message: "Cannot use safe of non-optional type. Use simply '()'",
-                            });
-                        }
-                    }
-                } else {
-                    callee_typed.ty.clone()
-                };
+                let lookup_type = callee_typed
+                    .ty
+                    .unwrap_optional_safe(safe, callee_typed.line)?;
+
                 // Check for Normal Function Call
                 match lookup_type {
                     Type::Function(func) => {
@@ -490,95 +478,24 @@ impl<'src> TypeChecker<'src> {
                 field,
                 value,
                 safe,
-            } => {
-                let object_typed = self.check_expression(object, None)?;
-                // TODO add target type inference
-                let value = self.check_expression(value, None)?;
-
-                let type_ = if *safe {
-                    match &object_typed.ty {
-                        Type::Optional(inner) => inner.as_ref().clone(),
-                        _ => {
-                            return Err(TypeCheckerError::TypeMismatch {
-                                expected: Type::Optional(Box::new(Type::Any)),
-                                found: object_typed.ty.clone(),
-                                line: field.line,
-                                message: "Cannot access safe property of non-optional type. Use simply '.'",
-                            });
-                        }
-                    }
-                } else {
-                    object_typed.ty.clone()
-                };
-
-                if let Type::Tuple(tuple_type) = &type_ {
-                    let idx = match field.lexeme.parse::<u8>() {
-                        Ok(idx) => idx,
-                        Err(err) => {
-                            return Err(TypeCheckerError::InvalidTupleIndex {
-                                tuple_type: type_,
-                                index: err.to_string(),
-                                line: field.line,
-                            });
-                        }
-                    };
-                    if idx >= tuple_type.types.len() as u8 {
-                        return Err(TypeCheckerError::InvalidTupleIndex {
-                            tuple_type: type_,
-                            index: idx.to_string(),
-                            line: field.line,
-                        });
-                    }
-
-                    return Ok(TypedExpr {
-                        ty: tuple_type.types[idx as usize].clone(),
-                        kind: ExprKind::SetField {
-                            object: Box::from(object_typed),
-                            index: idx,
-                            safe: *safe,
-                            value: Box::new(self.sys.verify_assignment(
-                                &mut self.infer_ctx,
-                                &tuple_type.types[idx as usize],
-                                value,
-                                field.line,
-                            )?),
-                        },
-                        line: field.line,
-                    });
-                }
-
-                if let Type::Struct(struct_def, generics) = type_ {
-                    let struct_def = self
-                        .sys
-                        .get_struct(&struct_def)
-                        .expect("Should have errored earlier");
-
-                    let (field_idx, field_type) = Self::check_field_type(
-                        &self.sys,
-                        struct_def,
-                        field,
-                        &value,
-                        generics,
-                        &mut self.infer_ctx,
-                    )?;
-
+            } => self.with_member_access(
+                object,
+                field,
+                *safe,
+                |this, typed_obj, index, field_type| {
+                    let typed_value = this.coerce_expression(value, &field_type)?;
                     Ok(TypedExpr {
                         ty: field_type,
                         kind: ExprKind::SetField {
+                            object: Box::new(typed_obj),
+                            index,
+                            value: Box::new(typed_value),
                             safe: *safe,
-                            object: Box::new(object_typed),
-                            index: field_idx as u8,
-                            value: Box::new(value),
                         },
                         line: field.line,
                     })
-                } else {
-                    Err(TypeCheckerError::TypeHasNoFields {
-                        found: type_,
-                        line: object_typed.line,
-                    })
-                }
-            }
+                },
+            ),
 
             Expr::ForceUnwrap { expression, line } => {
                 let expected_opt = expected.map(|t| Type::Optional(Box::new(t.clone())));
@@ -604,42 +521,6 @@ impl<'src> TypeChecker<'src> {
         }
     }
 
-    fn check_field_type(
-        type_system: &TypeSystem,
-        struct_def: &StructType,
-        field: &Token,
-        field_value: &TypedExpr,
-        generic_args: GenericArgs,
-        infer_ctx: &mut InferenceContext,
-    ) -> Result<(usize, Type), TypeCheckerError> {
-        // TODO refactor
-        let field_type = struct_def
-            .fields
-            .get(field.lexeme)
-            .map(|id| (*id, struct_def.ordered_fields[*id].1.clone()));
-
-        match field_type {
-            None => Err(TypeCheckerError::UndefinedField {
-                struct_name: struct_def.name.to_string(),
-                field_name: field.lexeme.to_string(),
-                line: field.line,
-            }),
-            Some((id, field_type)) => {
-                let actual = TypeSystem::generic_to_concrete(
-                    field_type,
-                    &generics_to_map(&struct_def.generic_params, &generic_args, None),
-                );
-                type_system.verify_assignment(
-                    infer_ctx,
-                    &actual,
-                    field_value.clone(),
-                    field.line,
-                )?;
-                Ok((id, actual))
-            }
-        }
-    }
-
     pub(crate) fn coerce_expression(
         &mut self,
         expr: &Expr<'src>,
@@ -648,15 +529,15 @@ impl<'src> TypeChecker<'src> {
         let mut expr = self.check_expression(expr, Some(expected))?;
         if self.infer_ctx.unify_types(expected, &expr.ty).is_ok() {
             let expr_ty = self.infer_ctx.substitute(&expr.ty);
-            if expr_ty.is_concrete() {
+            return if expr_ty.is_concrete() {
                 expr.ty = expr_ty;
-                return Ok(expr);
+                Ok(expr)
             } else {
-                return Err(TypeCheckerError::CannotInferType {
+                Err(TypeCheckerError::CannotInferType {
                     line: expr.line,
                     uninferred_generics: vec![], // TODO Think how to report error
-                });
-            }
+                })
+            };
         }
 
         let expected_type = if let Type::Optional(inner) = expected {
@@ -681,12 +562,12 @@ impl<'src> TypeChecker<'src> {
 
         self.infer_ctx
             .unify_types(expected, &expr.ty)
-            .map(|_| expr.clone())
             .map_err(|msg| TypeCheckerError::ComplexTypeMismatch {
                 expected: expected.clone(),
                 line: expr.line,
                 message: msg,
                 found: expr.ty.clone(),
             })
+            .map(|_| expr)
     }
 }

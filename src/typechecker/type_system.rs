@@ -1,7 +1,6 @@
 use crate::token::Token;
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::inference::InferenceContext;
-use crate::typechecker::type_ast::{ExprKind, TypedExpr};
 use crate::typechecker::types::{EnumType, InterfaceType, StructType, TupleType, Type};
 use crate::typechecker::Symbol;
 use std::collections::HashMap;
@@ -228,48 +227,6 @@ impl TypeSystem {
             left == right
         }
     }
-    #[deprecated(note = "please use TypeChecker::coerce_expression")]
-    pub fn verify_assignment(
-        &self,
-        infer_ctx: &mut InferenceContext,
-        expected_type: &Type,
-        expr: TypedExpr,
-        line: u32,
-    ) -> Result<TypedExpr, TypeCheckerError> {
-        let provided_type = &expr.ty;
-        // let provided_type = Self::generic_to_concrete(provided_type.clone(), generics_map); Step not needed
-        let are_equal = infer_ctx.unify_types(expected_type, &provided_type);
-        // TODO rethink interface cast logic
-
-        let expected_type = if let Type::Optional(inner) = expected_type {
-            inner
-        } else {
-            expected_type
-        };
-
-        if let (Type::Interface(iface_name, generics), Some(name)) =
-            (expected_type, expr.ty.get_name())
-            && let Some(idx) = self.impls.get(&(name.into(), iface_name.clone()))
-        {
-            return Ok(TypedExpr {
-                ty: Type::Interface(iface_name.clone(), generics.clone()),
-                line: expr.line,
-                kind: ExprKind::InterfaceUpcast {
-                    expr: Box::new(expr),
-                    vtable_idx: *idx,
-                },
-            });
-        }
-        match are_equal {
-            Ok(_) => Ok(expr),
-            Err(msg) => Err(TypeCheckerError::ComplexTypeMismatch {
-                expected: expected_type.clone(),
-                line,
-                message: msg,
-                found: expr.ty.clone(),
-            }),
-        }
-    }
 
     pub fn implement_method(implementation: &Type, expected: &Type) -> bool {
         match (expected, implementation) {
@@ -395,5 +352,56 @@ impl TypeSystem {
                 callee: callee.to_string(),
                 line,
             })
+    }
+
+    pub(crate) fn resolve_member_type(
+        &self,
+        parent_type: &Type,
+        field: &Token,
+    ) -> Result<(u8, Type), TypeCheckerError> {
+        match parent_type {
+            Type::Tuple(tuple_type) => {
+                let idx = field.lexeme.parse::<u8>().map_err(|_| {
+                    TypeCheckerError::InvalidTupleIndex {
+                        tuple_type: parent_type.clone(),
+                        index: field.lexeme.to_string(),
+                        line: field.line,
+                    }
+                })?;
+
+                if idx as usize >= tuple_type.types.len() {
+                    return Err(TypeCheckerError::InvalidTupleIndex {
+                        tuple_type: parent_type.clone(),
+                        index: idx.to_string(),
+                        line: field.line,
+                    });
+                }
+
+                Ok((idx, tuple_type.types[idx as usize].clone()))
+            }
+            Type::Struct(name, generics) => {
+                let struct_def = self.get_struct(name).expect("Struct def missing after type check");
+
+                let (field_id, raw_type) = struct_def
+                    .fields
+                    .get(field.lexeme)
+                    .map(|id| (*id, struct_def.ordered_fields[*id].1.clone()))
+                    .ok_or_else(|| TypeCheckerError::UndefinedField {
+                        struct_name: struct_def.name.to_string(),
+                        field_name: field.lexeme.to_string(),
+                        line: field.line,
+                    })?;
+                let concrete_type = TypeSystem::generic_to_concrete(
+                    raw_type,
+                    &generics_to_map(&struct_def.generic_params, generics, None),
+                );
+
+                Ok((field_id as u8, concrete_type))
+            }
+            _ => Err(TypeCheckerError::TypeHasNoFields {
+                found: parent_type.clone(),
+                line: field.line,
+            }),
+        }
     }
 }
