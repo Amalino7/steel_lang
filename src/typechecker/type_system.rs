@@ -1,10 +1,12 @@
 use crate::token::Token;
 use crate::typechecker::error::TypeCheckerError;
-use crate::typechecker::type_ast::{ExprKind, TypedExpr};
+use crate::typechecker::inference::InferenceContext;
 use crate::typechecker::types::{EnumType, InterfaceType, StructType, TupleType, Type};
 use crate::typechecker::Symbol;
 use std::collections::HashMap;
 use std::rc::Rc;
+
+pub type TySys = TypeSystem;
 
 pub struct TypeSystem {
     structs: HashMap<Symbol, StructType>,
@@ -12,6 +14,27 @@ pub struct TypeSystem {
     impls: HashMap<(Symbol, Symbol), u32>,
     enums: HashMap<Symbol, EnumType>,
     active_generics: Vec<Symbol>,
+}
+
+pub fn generics_to_map(
+    generics: &[Symbol],
+    generics_provided: &[Type],
+    mut auto_fil: Option<&mut InferenceContext>,
+) -> HashMap<Symbol, Type> {
+    generics
+        .iter()
+        .enumerate()
+        .map(|(idx, s)| {
+            let type_var = generics_provided.get(idx).cloned().unwrap_or_else(|| {
+                if let Some(ctx) = auto_fil.as_mut() {
+                    InferenceContext::new_type_var(ctx)
+                } else {
+                    Type::Unknown
+                }
+            });
+            (s.clone(), type_var)
+        })
+        .collect()
 }
 
 impl TypeSystem {
@@ -32,6 +55,22 @@ impl TypeSystem {
     }
     pub fn get_active_generics(&self) -> Vec<Symbol> {
         self.active_generics.clone()
+    }
+
+    pub fn get_generics_map(&self, ty: &Type) -> HashMap<Symbol, Type> {
+        match ty {
+            Type::Struct(name, args) => {
+                generics_to_map(&self.get_struct(name).unwrap().generic_params, args, None)
+            }
+            Type::Enum(name, args) => {
+                generics_to_map(&self.get_enum(name).unwrap().generic_params, args, None)
+            }
+            _ => HashMap::new(),
+        }
+    }
+
+    pub fn get_vtable_idx(&self, type_name: &str, iface_name: Symbol) -> Option<u32> {
+        self.impls.get(&(type_name.into(), iface_name)).copied()
     }
 
     pub fn pop_n_generics(&mut self, count: usize) {
@@ -93,7 +132,7 @@ impl TypeSystem {
             s.ordered_fields = vec_fields.into_iter().map(|opt| opt.unwrap()).collect();
         }
     }
-    pub fn define_enum(&mut self, name: &str, variants: HashMap<String, (usize, Type)>) {
+    pub fn define_enum(&mut self, name: &str, variants: HashMap<Symbol, (usize, Type)>) {
         if let Some(e) = self.enums.get_mut(name) {
             e.variants = variants
                 .iter()
@@ -189,182 +228,6 @@ impl TypeSystem {
         }
     }
 
-    pub(crate) fn unify_types(
-        expected_ty: &Type,
-        generics_map: &mut HashMap<Symbol, Type>,
-        provided: &Type,
-    ) -> Result<(), String> {
-        fn mismatch(expected: &Type, found: &Type) -> Result<(), String> {
-            Err(format!(
-                "Type mismatch: expected {}, found {}",
-                expected, found
-            ))
-        }
-
-        fn unify_complex(
-            expected_name: &Symbol,
-            expected_generics: &[Type],
-            provided_name: &Symbol,
-            provided_generics: &[Type],
-            generics_map: &mut HashMap<Symbol, Type>,
-        ) -> Result<(), String> {
-            if expected_name != provided_name {
-                return Err(format!(
-                    "Type mismatch: expected {}, found {}",
-                    expected_name, provided_name
-                ));
-            }
-            expected_generics
-                .iter()
-                .zip(provided_generics.iter())
-                .map(|(e, p)| TypeSystem::unify_types(e, generics_map, p))
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(())
-        }
-        if provided == &Type::Never {
-            return Ok(());
-        }
-
-        match expected_ty {
-            Type::Metatype(_, _) => Err("Cannot unify metatypes".into()),
-            Type::Nil | Type::Number | Type::String | Type::Void | Type::Boolean | Type::Never => {
-                if expected_ty == provided {
-                    Ok(())
-                } else {
-                    mismatch(expected_ty, provided)
-                }
-            }
-            Type::Unknown | Type::Any => Ok(()),
-            Type::Optional(expected) => {
-                if provided == &Type::Nil {
-                    Ok(())
-                } else if let Type::Optional(provided) = provided {
-                    Self::unify_types(expected, generics_map, provided)
-                } else {
-                    Self::unify_types(expected, generics_map, provided)
-                }
-            }
-            Type::Function(expected_inner) => {
-                if let Type::Function(provided_inner) = provided {
-                    if provided_inner.is_vararg {
-                        return Err("Cannot use vararg functions as arguments".into());
-                    }
-                    if !provided_inner.type_params.is_empty() {
-                        return Err("Cannot assign a generic function.\n TIP: specify generics using .<Type> notation.".into());
-                    }
-
-                    for (expected_param, provided_param) in expected_inner
-                        .params
-                        .iter()
-                        .zip(provided_inner.params.iter())
-                    {
-                        Self::unify_types(&expected_param.1, generics_map, &provided_param.1)?;
-                    }
-                    Self::unify_types(
-                        &expected_inner.return_type,
-                        generics_map,
-                        &provided_inner.return_type,
-                    )
-                } else {
-                    mismatch(expected_ty, provided)
-                }
-            }
-            Type::Tuple(expected_inner) => {
-                if let Type::Tuple(provided_inner) = provided {
-                    for (expected_param, provided_param) in
-                        expected_inner.types.iter().zip(provided_inner.types.iter())
-                    {
-                        Self::unify_types(expected_param, generics_map, provided_param)?;
-                    }
-                    Ok(())
-                } else {
-                    mismatch(expected_ty, provided)
-                }
-            }
-            Type::GenericParam(name) => {
-                // If it exists in the map or if it must be inferred
-                if let Some(new_ty) = generics_map.get(name) {
-                    if new_ty == &Type::Unknown {
-                        generics_map.insert(name.clone(), provided.clone());
-                        Ok(())
-                    } else if let Type::GenericParam(new_name) = new_ty
-                        && new_name == name
-                    {
-                        Ok(())
-                    } else {
-                        Self::unify_types(&new_ty.clone(), generics_map, provided)
-                    }
-                } else if let Type::GenericParam(provided_name) = provided
-                    && name == provided_name
-                {
-                    Ok(())
-                } else {
-                    mismatch(expected_ty, provided)
-                }
-            }
-            Type::Struct(name, args) => {
-                if let Type::Struct(provided_name, provided_args) = provided {
-                    unify_complex(name, args, provided_name, provided_args, generics_map)
-                } else {
-                    mismatch(expected_ty, provided)
-                }
-            }
-            Type::Interface(name, args) => {
-                if let Type::Interface(provided_name, provided_args) = provided {
-                    unify_complex(name, args, provided_name, provided_args, generics_map)
-                } else {
-                    mismatch(expected_ty, provided)
-                }
-            }
-            Type::Enum(name, args) => {
-                if let Type::Enum(provided_name, provided_args) = provided {
-                    unify_complex(name, args, provided_name, provided_args, generics_map)
-                } else {
-                    mismatch(expected_ty, provided)
-                }
-            }
-        }
-    }
-    pub fn verify_assignment(
-        &self,
-        generics_map: &mut HashMap<Symbol, Type>,
-        expected_type: &Type,
-        expr: TypedExpr,
-        line: u32,
-    ) -> Result<TypedExpr, TypeCheckerError> {
-        let are_equal = Self::unify_types(expected_type, generics_map, &expr.ty);
-        // TODO rethink interface cast logic
-
-        let expected_type = if let Type::Optional(inner) = expected_type {
-            inner
-        } else {
-            expected_type
-        };
-
-        if let (Type::Interface(iface_name, generics), Some(name)) =
-            (expected_type, expr.ty.get_name())
-            && let Some(idx) = self.impls.get(&(name.into(), iface_name.clone()))
-        {
-            return Ok(TypedExpr {
-                ty: Type::Interface(iface_name.clone(), generics.clone()),
-                line: expr.line,
-                kind: ExprKind::InterfaceUpcast {
-                    expr: Box::new(expr),
-                    vtable_idx: *idx,
-                },
-            });
-        }
-        match are_equal {
-            Ok(_) => Ok(expr),
-            Err(msg) => Err(TypeCheckerError::ComplexTypeMismatch {
-                expected: expected_type.clone(),
-                line,
-                message: msg,
-                found: expr.ty.clone(),
-            }),
-        }
-    }
-
     pub fn implement_method(implementation: &Type, expected: &Type) -> bool {
         match (expected, implementation) {
             (Type::Function(func), Type::Function(impls)) => {
@@ -388,94 +251,6 @@ impl TypeSystem {
         }
     }
 
-    pub fn bind_arguments(
-        &self,
-        callee_name: &str,
-        generics_map: &mut HashMap<Symbol, Type>,
-        params: &[(String, Type)],
-        args: Vec<(Option<&str>, TypedExpr, u32)>,
-        is_vararg: bool,
-        call_line: u32,
-    ) -> Result<Vec<TypedExpr>, TypeCheckerError> {
-        let fixed_len = params.len();
-        let mut fixed: Vec<Option<TypedExpr>> = vec![None; fixed_len];
-        let mut used = vec![false; fixed_len];
-        let mut extras = Vec::new(); // Used for varargs
-        let mut pos_cursor = 0;
-        let mut seen_named = false;
-
-        for (label, expr, line) in args {
-            match label {
-                Some(name) => {
-                    seen_named = true;
-
-                    let idx = self.resolve_named_arg(callee_name, params, name, line)?;
-
-                    if used[idx] {
-                        return Err(TypeCheckerError::DuplicateArgument {
-                            name: params[idx].0.clone(),
-                            line,
-                        });
-                    }
-
-                    let expected = &params[idx].1;
-                    let coerced = self.verify_assignment(generics_map, expected, expr, line)?;
-                    fixed[idx] = Some(coerced);
-                    used[idx] = true;
-                }
-
-                None => {
-                    if seen_named {
-                        return Err(TypeCheckerError::PositionalArgumentAfterNamed {
-                            callee: callee_name.to_string(),
-                            message: "positional arguments cannot appear after named arguments",
-                            line,
-                        });
-                    }
-
-                    while pos_cursor < fixed_len && used[pos_cursor] {
-                        pos_cursor += 1;
-                    }
-
-                    if pos_cursor < fixed_len {
-                        let expected = &params[pos_cursor].1;
-                        let coerced = self.verify_assignment(generics_map, expected, expr, line)?;
-                        fixed[pos_cursor] = Some(coerced);
-                        used[pos_cursor] = true;
-                        pos_cursor += 1;
-                    } else if is_vararg {
-                        extras.push(self.verify_assignment(
-                            generics_map,
-                            &params[pos_cursor - 1].1,
-                            expr,
-                            line,
-                        )?);
-                    } else {
-                        return Err(TypeCheckerError::TooManyArguments {
-                            callee: callee_name.to_string(),
-                            expected: fixed_len,
-                            found: fixed_len + extras.len() + 1,
-                            line,
-                        });
-                    }
-                }
-            }
-        }
-
-        let mut result = Vec::with_capacity(fixed_len + extras.len());
-
-        for (i, opt) in fixed.into_iter().enumerate() {
-            result.push(opt.ok_or_else(|| TypeCheckerError::MissingArgument {
-                param_name: params[i].0.clone(),
-                callee: callee_name.to_string(),
-                line: call_line,
-            })?);
-        }
-
-        result.extend(extras);
-        Ok(result)
-    }
-
     pub fn generic_to_concrete(generic_ty: Type, generics_map: &HashMap<Symbol, Type>) -> Type {
         match generic_ty {
             Type::Metatype(_, _) => generic_ty,
@@ -486,11 +261,15 @@ impl TypeSystem {
             | Type::Void
             | Type::Unknown
             | Type::Never
+            | Type::Infer(_)
             | Type::Any => generic_ty,
             Type::Optional(inner) => {
                 Type::Optional(Box::new(Self::generic_to_concrete(*inner, generics_map)))
             }
             Type::Function(func_type) => {
+                if func_type.is_vararg {
+                    return Type::Function(func_type);
+                }
                 let params = func_type
                     .params
                     .iter()
@@ -526,9 +305,10 @@ impl TypeSystem {
             Type::GenericParam(generic) => {
                 if let Some(new_type) = generics_map.get(&generic) {
                     if new_type == &Type::Unknown {
-                        panic!("Generic type not found") // TODO error handling
+                        Type::GenericParam(generic)
+                    } else {
+                        new_type.clone()
                     }
-                    new_type.clone()
                 } else {
                     Type::GenericParam(generic)
                 }
@@ -557,7 +337,7 @@ impl TypeSystem {
         }
     }
 
-    fn resolve_named_arg(
+    pub(crate) fn resolve_named_arg(
         &self,
         callee: &str,
         params: &[(String, Type)],
@@ -572,5 +352,58 @@ impl TypeSystem {
                 callee: callee.to_string(),
                 line,
             })
+    }
+
+    pub(crate) fn resolve_member_type(
+        &self,
+        parent_type: &Type,
+        field: &Token,
+    ) -> Result<(u8, Type), TypeCheckerError> {
+        match parent_type {
+            Type::Tuple(tuple_type) => {
+                let idx = field.lexeme.parse::<u8>().map_err(|_| {
+                    TypeCheckerError::InvalidTupleIndex {
+                        tuple_type: parent_type.clone(),
+                        index: field.lexeme.to_string(),
+                        line: field.line,
+                    }
+                })?;
+
+                if idx as usize >= tuple_type.types.len() {
+                    return Err(TypeCheckerError::InvalidTupleIndex {
+                        tuple_type: parent_type.clone(),
+                        index: idx.to_string(),
+                        line: field.line,
+                    });
+                }
+
+                Ok((idx, tuple_type.types[idx as usize].clone()))
+            }
+            Type::Struct(name, generics) => {
+                let struct_def = self
+                    .get_struct(name)
+                    .expect("Struct def missing after type check");
+
+                let (field_id, raw_type) = struct_def
+                    .fields
+                    .get(field.lexeme)
+                    .map(|id| (*id, struct_def.ordered_fields[*id].1.clone()))
+                    .ok_or_else(|| TypeCheckerError::UndefinedField {
+                        struct_name: struct_def.name.to_string(),
+                        field_name: field.lexeme.to_string(),
+                        line: field.line,
+                    })?;
+                let concrete_type = TypeSystem::generic_to_concrete(
+                    raw_type,
+                    &generics_to_map(&struct_def.generic_params, generics, None),
+                );
+
+                Ok((field_id as u8, concrete_type))
+            }
+            _ => Err(TypeCheckerError::TypeHasNoFields {
+                found: parent_type.clone(),
+                line: field.line,
+            }),
+        }
     }
 }

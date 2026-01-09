@@ -4,13 +4,12 @@ use crate::typechecker::scope_manager::ScopeType;
 use crate::typechecker::type_ast::{StmtKind, TypedRefinements, TypedStmt};
 use crate::typechecker::types::Type;
 use crate::typechecker::{FunctionContext, TypeChecker};
-use std::collections::HashMap;
 
 impl<'src> TypeChecker<'src> {
     pub(crate) fn check_stmt(&mut self, stmt: &Stmt<'src>) -> Result<TypedStmt, TypeCheckerError> {
         match stmt {
             Stmt::Expression(expr) => Ok(TypedStmt {
-                kind: StmtKind::Expression(self.infer_expression(expr)?),
+                kind: StmtKind::Expression(self.check_expression(expr, None)?),
                 line: stmt.get_line(),
                 type_info: Type::Void,
             }),
@@ -19,16 +18,8 @@ impl<'src> TypeChecker<'src> {
                 value,
                 type_info,
             } => {
-                let value_node = self.infer_expression(value)?;
                 let declared_type = Type::from_ast(type_info, &self.sys)?;
-
-                let coerced_value = self.sys.verify_assignment(
-                    &mut HashMap::new(),
-                    &declared_type,
-                    value_node,
-                    binding.get_line(),
-                )?;
-
+                let coerced_value = self.coerce_expression(value, &declared_type)?;
                 let final_type = if declared_type == Type::Unknown {
                     coerced_value.ty.clone()
                 } else {
@@ -74,7 +65,7 @@ impl<'src> TypeChecker<'src> {
                 then_branch,
                 else_branch,
             } => {
-                let cond_typed = self.infer_expression(condition)?;
+                let cond_typed = self.check_expression(condition, Some(&Type::Boolean))?;
 
                 if cond_typed.ty != Type::Boolean {
                     return Err(TypeCheckerError::TypeMismatch {
@@ -144,7 +135,7 @@ impl<'src> TypeChecker<'src> {
                 })
             }
             Stmt::While { condition, body } => {
-                let cond_type = self.infer_expression(condition)?;
+                let cond_type = self.check_expression(condition, Some(&Type::Boolean))?;
                 let body = self.check_stmt(body)?;
                 if cond_type.ty != Type::Boolean {
                     return Err(TypeCheckerError::TypeMismatch {
@@ -187,15 +178,8 @@ impl<'src> TypeChecker<'src> {
                 res
             }
             Stmt::Return(expr) => {
-                let return_expr = self.infer_expression(expr)?;
                 if let FunctionContext::Function(func_return_type) = self.current_function.clone() {
-                    let coerced_return = self.sys.verify_assignment(
-                        &mut HashMap::new(),
-                        &func_return_type,
-                        return_expr,
-                        expr.get_line(),
-                    )?;
-
+                    let coerced_return = self.coerce_expression(expr, &func_return_type)?;
                     Ok(TypedStmt {
                         kind: StmtKind::Return(coerced_return),
                         line: expr.get_line(),

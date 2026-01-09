@@ -397,8 +397,9 @@ impl<'a> Compiler<'a> {
             },
             ExprKind::Try { operand } => {
                 self.compile_expr(operand);
+                self.emit_op(Opcode::Dup, expr.line);
                 self.emit_op(Opcode::CheckEnumTag, expr.line);
-                self.emit_byte(1, expr.line);
+                self.emit_byte(0, expr.line);
                 let jump = self.emit_jump(Opcode::JumpIfFalse, expr.line);
                 // if ok destructure
                 self.emit_op(Opcode::Pop, expr.line);

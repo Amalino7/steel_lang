@@ -14,6 +14,7 @@ pub mod disassembler;
 mod error;
 pub mod gc;
 mod stack;
+#[cfg(test)]
 mod tests;
 pub mod value;
 

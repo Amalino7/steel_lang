@@ -36,28 +36,6 @@ pub struct StructType {
     pub name: Symbol,
     pub generic_params: Vec<Symbol>,
 }
-
-pub fn generics_to_map(generics: &[Symbol], generics_provided: &[Type]) -> HashMap<Symbol, Type> {
-    generics
-        .iter()
-        .enumerate()
-        .map(|(idx, s)| {
-            (
-                s.clone(),
-                generics_provided.get(idx).unwrap_or(&Type::Unknown).clone(),
-            )
-        })
-        .collect()
-}
-
-impl StructType {
-    pub fn get_field(&self, name: &str) -> Option<(usize, Type)> {
-        self.fields
-            .get(name)
-            .map(|idx| (*idx, self.ordered_fields[*idx].1.clone()))
-    }
-}
-
 #[derive(Debug, PartialEq, Clone)]
 pub struct InterfaceType {
     pub methods: HashMap<String, (usize, Type)>,
@@ -67,9 +45,9 @@ pub struct InterfaceType {
 #[derive(Debug, PartialEq, Clone)]
 pub struct EnumType {
     pub name: Symbol,
-    pub variants: HashMap<String, usize>,
+    pub variants: HashMap<Symbol, usize>,
     pub generic_params: Vec<Symbol>,
-    pub ordered_variants: Vec<(String, Type)>, // Void, one arg, tuple, struct
+    pub ordered_variants: Vec<(Symbol, Type)>, // Void, one arg, tuple, struct
 }
 
 impl EnumType {
@@ -95,6 +73,7 @@ pub enum Type {
     Boolean,
     Void,
     Never,
+    Infer(u32),
     Optional(Box<Type>),
     Unknown,
     Function(Rc<FunctionType>),
@@ -127,6 +106,27 @@ fn missing_generics(
 }
 
 impl Type {
+    pub fn is_concrete(&self) -> bool {
+        match self {
+            Type::Infer(_) => false,
+            Type::Optional(inner) => inner.is_concrete(),
+            Type::Function(f) => {
+                f.params.iter().all(|(_, t)| t.is_concrete()) && f.return_type.is_concrete()
+            }
+            Type::Nil | Type::Number | Type::String | Type::Boolean | Type::Void | Type::Never => {
+                true
+            }
+            Type::Unknown => false,
+            Type::Tuple(elements) => elements.types.iter().all(|t| t.is_concrete()),
+            Type::GenericParam(_) => true,
+            Type::Metatype(_, _) => false,
+            Type::Struct(_, args) => args.iter().all(|t| t.is_concrete()),
+            Type::Interface(_, args) => args.iter().all(|t| t.is_concrete()),
+            Type::Enum(_, args) => args.iter().all(|t| t.is_concrete()),
+            Type::Any => true,
+        }
+    }
+
     pub fn from_identifier(
         name: &Token,
         type_system: &TypeSystem,
@@ -187,6 +187,22 @@ impl Type {
         }
     }
 
+    pub fn unwrap_optional_safe(&self, safe: bool, line: u32) -> Result<Type, TypeCheckerError> {
+        if safe {
+            match self {
+                Type::Optional(inner) => Ok(inner.as_ref().clone()),
+                _ => Err(TypeCheckerError::TypeMismatch {
+                    expected: Type::Optional(Box::new(Type::Any)),
+                    found: self.clone(),
+                    line,
+                    message: "Cannot access safe navigation of non-optional type. Remove ?.",
+                }),
+            }
+        } else {
+            Ok(self.clone())
+        }
+    }
+
     pub fn wrap_in_optional(self) -> Type {
         match self {
             Type::Optional(_) => self,
@@ -196,6 +212,7 @@ impl Type {
 
     pub fn get_name(&self) -> Option<&str> {
         match self {
+            Type::Infer(_) => None,
             Type::Interface(name, _) => Some(name),
             Type::Number => Some("number"),
             Type::String => Some("string"),
@@ -380,6 +397,7 @@ fn print_generics(args: &[Type], f: &mut Formatter<'_>) -> std::fmt::Result {
 impl Display for Type {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
+            Type::Infer(n) => write!(f, "T{}", n),
             Type::Metatype(name, generic_args) => {
                 write!(f, "Type {}", name)?;
                 print_generics(generic_args, f)

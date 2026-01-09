@@ -1,6 +1,7 @@
 use crate::parser::ast::Stmt;
 use crate::stdlib::NativeDef;
 use crate::typechecker::error::TypeCheckerError;
+use crate::typechecker::inference::InferenceContext;
 use crate::typechecker::scope_manager::{ScopeManager, ScopeType};
 use crate::typechecker::type_ast::{StmtKind, TypedStmt};
 use crate::typechecker::type_system::TypeSystem;
@@ -8,10 +9,12 @@ use crate::typechecker::types::Type;
 use std::mem::take;
 use std::rc::Rc;
 
+mod arguments;
 mod declarations;
 pub mod error;
 mod expressions;
 mod get_handles;
+mod inference;
 mod operators;
 mod pattern_matching;
 mod refinements;
@@ -35,6 +38,7 @@ pub struct TypeChecker<'src> {
     scopes: ScopeManager,
     natives: &'src [NativeDef],
     errors: Vec<TypeCheckerError>,
+    infer_ctx: InferenceContext,
 }
 
 impl<'src> TypeChecker<'src> {
@@ -47,6 +51,7 @@ impl<'src> TypeChecker<'src> {
             scopes: ScopeManager::new(),
             natives: &[],
             errors: vec![],
+            infer_ctx: InferenceContext::new(),
         }
     }
 
@@ -57,6 +62,7 @@ impl<'src> TypeChecker<'src> {
             scopes: ScopeManager::new(),
             natives,
             errors: vec![],
+            infer_ctx: Default::default(),
         }
     }
 
