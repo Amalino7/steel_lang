@@ -36,15 +36,6 @@ pub struct StructType {
     pub name: Symbol,
     pub generic_params: Vec<Symbol>,
 }
-
-impl StructType {
-    pub fn get_field(&self, name: &str) -> Option<(usize, Type)> {
-        self.fields
-            .get(name)
-            .map(|idx| (*idx, self.ordered_fields[*idx].1.clone()))
-    }
-}
-
 #[derive(Debug, PartialEq, Clone)]
 pub struct InterfaceType {
     pub methods: HashMap<String, (usize, Type)>,
@@ -196,22 +187,19 @@ impl Type {
         }
     }
 
-
     pub fn unwrap_optional_safe(&self, safe: bool, line: u32) -> Result<Type, TypeCheckerError> {
         if safe {
             match self {
                 Type::Optional(inner) => Ok(inner.as_ref().clone()),
-                _ => {
-                    Err(TypeCheckerError::TypeMismatch {
-                        expected: Type::Optional(Box::new(Type::Any)),
-                        found: self.clone(),
-                        line,
-                        message: "Cannot access safe navigation of non-optional type. Remove ?.",
-                    })
-                }
+                _ => Err(TypeCheckerError::TypeMismatch {
+                    expected: Type::Optional(Box::new(Type::Any)),
+                    found: self.clone(),
+                    line,
+                    message: "Cannot access safe navigation of non-optional type. Remove ?.",
+                }),
             }
         } else {
-             Ok(self.clone())
+            Ok(self.clone())
         }
     }
 

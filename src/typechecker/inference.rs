@@ -126,7 +126,7 @@ impl InferenceContext {
                 Ok(())
             } else {
                 let prov = self.substitutions.get(id).unwrap().clone();
-                self.unify_types(&expected_ty, &prov)
+                self.unify_types(expected_ty, &prov)
             };
         }
 

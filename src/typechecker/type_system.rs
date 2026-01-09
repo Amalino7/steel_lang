@@ -27,7 +27,7 @@ pub fn generics_to_map(
         .map(|(idx, s)| {
             let type_var = generics_provided.get(idx).cloned().unwrap_or_else(|| {
                 if let Some(ctx) = auto_fil.as_mut() {
-                    InferenceContext::new_type_var(*ctx)
+                    InferenceContext::new_type_var(ctx)
                 } else {
                     Type::Unknown
                 }
@@ -380,7 +380,9 @@ impl TypeSystem {
                 Ok((idx, tuple_type.types[idx as usize].clone()))
             }
             Type::Struct(name, generics) => {
-                let struct_def = self.get_struct(name).expect("Struct def missing after type check");
+                let struct_def = self
+                    .get_struct(name)
+                    .expect("Struct def missing after type check");
 
                 let (field_id, raw_type) = struct_def
                     .fields

@@ -202,7 +202,7 @@ impl<'src> TypeChecker<'src> {
                 operator,
                 left,
                 right,
-            } => self.check_binary_expression(operator, left, right, expected),
+            } => self.check_binary_expression(operator, left, right),
 
             Expr::Variable { name } => {
                 let var = self.scopes.lookup(name.lexeme);

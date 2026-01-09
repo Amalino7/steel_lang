@@ -128,7 +128,6 @@ impl<'src> TypeChecker<'src> {
         operator: &Token,
         left: &Expr<'src>,
         right: &Expr<'src>,
-        expected_type: Option<&Type>,
     ) -> Result<TypedExpr, TypeCheckerError> {
         // TODO consider complex heuristic
         let left_typed = self.check_expression(left, None)?;
