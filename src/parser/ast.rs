@@ -80,6 +80,25 @@ pub enum Expr<'src> {
     Tuple {
         elements: Vec<Expr<'src>>,
     },
+    List {
+        elements: Vec<Expr<'src>>,
+        bracket_token: Token<'src>,
+    },
+    Map {
+        kv_pairs: Vec<(Expr<'src>, Expr<'src>)>,
+        bracket_token: Token<'src>,
+    },
+    GetIndex {
+        safe: bool,
+        object: Box<Expr<'src>>,
+        index: Box<Expr<'src>>,
+    },
+    SetIndex {
+        safe: bool,
+        object: Box<Expr<'src>>,
+        index: Box<Expr<'src>>,
+        value: Box<Expr<'src>>,
+    },
     ForceUnwrap {
         expression: Box<Expr<'src>>,
         line: u32,
@@ -333,6 +352,29 @@ impl Display for Expr<'_> {
             Expr::ForceUnwrap { expression, .. } => {
                 write!(f, "!!({})", expression)
             }
+            Expr::List { elements, .. } => {
+                write!(f, "[")?;
+                for (i, el) in elements.iter().enumerate() {
+                    write!(f, "{}", el)?;
+                    if i < elements.len() - 1 {
+                        write!(f, ", ")?;
+                    }
+                }
+                write!(f, "]")
+            }
+            Expr::Map { kv_pairs, .. } => {
+                write!(f, "[")?;
+                for (i, (k, v)) in kv_pairs.iter().enumerate() {
+                    write!(f, "{}: {}", k, v)?;
+                    if i < kv_pairs.len() - 1 {
+                        write!(f, ", ")?;
+                    }
+                }
+                write!(f, "]")
+            }
+            Expr::Index { object, index, .. } => {
+                write!(f, "{}[{}]", object, index)
+            }
         }
     }
 }
@@ -549,6 +591,16 @@ impl Expr<'_> {
             Expr::Tuple { elements } => elements[0].get_line(),
             Expr::Is { type_name, .. } => type_name.line,
             Expr::TypeSpecialization { callee, .. } => callee.get_line(),
+            Expr::List {
+                bracket_token: brace_token,
+                ..
+            } => brace_token.line,
+            Expr::Map {
+                bracket_token: brace_token,
+                ..
+            } => brace_token.line,
+            Expr::GetIndex { index, .. } => index.get_line(),
+            Expr::SetIndex { value, .. } => value.get_line(),
         }
     }
 }
