@@ -439,7 +439,6 @@ impl VM {
                     for _ in 0..count {
                         fields.push(self.stack.pop());
                     }
-
                     let name = self.stack.pop();
 
                     let instance = self.alloc_struct(Instance { name, fields }, &current_frame);
@@ -615,11 +614,11 @@ impl VM {
         for vtable in &self.vtables {
             self.gc.mark(*vtable);
         }
-        for global in &self.globals {
+        for &global in &self.globals {
             self.gc.mark_value(global);
         }
         for i in 0..self.stack.top {
-            self.gc.mark_value(&self.stack.buffer[i]);
+            self.gc.mark_value(self.stack.buffer[i]);
         }
 
         self.gc.mark(current_frame.function);
