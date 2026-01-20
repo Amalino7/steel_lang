@@ -2,7 +2,7 @@ use crate::vm::value::{
     BoundMethod, Closure, EnumVariant, Function, Instance, InterfaceObj, VTable, Value,
 };
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::fmt::{Debug, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 use std::ops::Deref;
 use std::ptr::NonNull;
 use std::sync::atomic::AtomicUsize;
@@ -61,6 +61,11 @@ impl<T: Trace> Deref for Gc<T> {
 impl<T: Trace> Debug for Gc<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "Gc({:?})", self.ptr)
+    }
+}
+impl<T: Trace> Display for Gc<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.ptr)
     }
 }
 
@@ -179,7 +184,7 @@ impl GarbageCollector {
 
         #[cfg(not(feature = "stress_gc"))]
         {
-            ALLOCATED.load(Relaxed) - self.live_bytes_after_gc > self.next_gc
+            ALLOCATED.load(Relaxed) > self.next_gc + self.live_bytes_after_gc
         }
     }
 

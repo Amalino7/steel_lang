@@ -324,7 +324,6 @@ fn test_function_recursion() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn test_gc() {
     let src = r#"
             let a = 0;
@@ -1802,6 +1801,75 @@ fn test_option_enum() {
             opt = Option.None;
             assert(opt is None, true);
         }
+        "#;
+    execute_source(src, false, "run", true);
+}
+#[test]
+fn test_structured_equality() {
+    let src = r#"
+        struct Point {x: number, y: number}
+        struct Recurse {other: Recurse?}
+        let r = Recurse(other: nil);
+        assert(r == r, true);
+        r.other = r;
+        assert(r == r, true); // If reference shortcut wasn't used this would stack overflow
+
+        assert(Point(x: 1, y: 2) == Point(x: 1, y: 2), true);
+        assert(("hehe" , 1 ,"a"), ("hehe" , 1 ,"a"));
+
+        let p1 = Point(x: 1, y: 2);
+        let p2 = Point(x: 1, y: 2);
+        println(r);
+        println(p1);
+        println(p2);
+        assert(p1 == p2, true);
+        assert(p1 != p2, false);
+            
+    "#;
+    execute_source(src, false, "run", true);
+}
+
+#[test]
+fn test_poly() {
+    let src = r#"
+    interface Shape {
+    func area(self): number;
+    func perimeter(self): number;
+}
+struct Circle { radius: number }
+impl Circle : Shape {
+    func area(self): number { return 3.14 * self.radius * self.radius; }
+    func perimeter(self): number { return 2 * 3.14 * self.radius; }
+}
+struct Rectangle { width: number, height: number }
+impl Rectangle : Shape {
+    func area(self): number { return self.width * self.height; }
+    func perimeter(self): number { return 2 * (self.width + self.height); }
+}
+func printArea(s: Shape): void {
+    //s.area();
+    assert(s.area(), 78.5); // 5*5 * 3.14
+    //println(s.area());
+}
+func printPerimeter(s: Shape): void {
+    //s.perimeter();
+    assert(s.perimeter(), (10 + 5) * 2 );
+    //println(s.perimeter());
+}
+
+
+// 528 ms
+let i = 0;
+
+
+
+while i < 1000 {
+    let c: Shape = Circle ( radius:5);
+    let r: Shape = Rectangle ( width:10,height:5);
+    printArea(c);
+    printPerimeter(r);
+    i = i + 1;
+}
         "#;
     execute_source(src, false, "run", true);
 }

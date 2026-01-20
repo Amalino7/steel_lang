@@ -18,13 +18,14 @@ mod stack;
 mod tests;
 pub mod value;
 
+#[derive(Debug, Clone, Copy)]
 struct CallFrame {
     slot_offset: usize,
     ip: usize,
     function: Gc<Function>,
 }
 
-const STACK_MAX: usize = 256 * 64;
+const STACK_MAX: usize = 256 * 128;
 
 pub struct VM {
     vtables: Vec<Gc<VTable>>,
@@ -37,7 +38,7 @@ pub struct VM {
 impl VM {
     pub fn new(global_count: usize, garbage_collector: GarbageCollector) -> Self {
         VM {
-            frames: Vec::with_capacity(64),
+            frames: Vec::with_capacity(128),
             gc: garbage_collector,
             stack: Stack::<STACK_MAX>::new(),
             globals: vec![Value::Nil; global_count],
@@ -391,7 +392,7 @@ impl VM {
                     let func_val = self.stack.pop();
                     let function = match func_val {
                         Value::Function(f) => f,
-                        _ => panic!("Expected raw function on stack"),
+                        _ => unreachable!("Expected raw function on stack"),
                     };
 
                     let closure = self.alloc_closure(function, upvalues, &current_frame);
@@ -489,7 +490,7 @@ impl VM {
                     if let Value::Instance(instance) = instance_val {
                         self.stack.push(instance.fields[index]);
                     } else {
-                        panic!("GetField on non-instance");
+                        unreachable!("GetField on non-instance");
                     }
                 }
                 Opcode::SetField => unsafe {
@@ -502,7 +503,7 @@ impl VM {
                         instance.deref_mut().fields[index] = value;
                         self.stack.push(value);
                     } else {
-                        panic!("SetField on non-instance");
+                        unreachable!("SetField on non-instance");
                     }
                 },
                 Opcode::BindMethod => {
@@ -513,7 +514,7 @@ impl VM {
                         let bound = self.gc.alloc(BoundMethod { receiver, method });
                         self.stack.push(Value::BoundMethod(bound));
                     } else {
-                        panic!("BindMethod expected function");
+                        unreachable!("BindMethod expected function");
                     }
                 }
                 Opcode::MakeVTable => {
@@ -526,7 +527,7 @@ impl VM {
                         match v {
                             Value::Function(f) => methods.push(f),
                             Value::Closure(c) => methods.push(c.function),
-                            _ => panic!("MakeVTable expects function/closure values"),
+                            _ => unreachable!("MakeVTable expects function/closure values"),
                         }
                     }
 
