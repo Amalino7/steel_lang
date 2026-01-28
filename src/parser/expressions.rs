@@ -1,87 +1,18 @@
-use crate::parser::TokT;
 use crate::parser::ast::Expr::Tuple;
 use crate::parser::ast::{CallArg, Expr, Literal};
 use crate::parser::error::ParserError;
-use crate::parser::{Parser, match_token_type};
+use crate::parser::TokT;
 use crate::parser::{check_next_token_type, check_token_type};
+use crate::parser::{match_token_type, Parser};
 use crate::token::Token;
 
 impl<'src> Parser<'src> {
     pub(crate) fn expression(&mut self) -> Result<Expr<'src>, ParserError<'src>> {
-        self.null_coalescing()
-    }
-
-    fn null_coalescing(&mut self) -> Result<Expr<'src>, ParserError<'src>> {
-        let mut expr = self.logical_or()?;
-        while match_token_type!(self, TokT::QuestionQuestion) {
-            let op = self.previous_token.clone();
-            let right = self.logical_or()?;
-            expr = Expr::Logical {
-                left: Box::new(expr),
-                operator: op,
-                right: Box::new(right),
-            };
-        }
-        Ok(expr)
-    }
-
-    fn logical_or(&mut self) -> Result<Expr<'src>, ParserError<'src>> {
-        let mut left = self.logical_and()?;
-
-        while match_token_type!(self, TokT::Or) {
-            let operator = self.previous_token.clone();
-            let right = self.logical_and()?;
-            left = Expr::Logical {
-                left: Box::new(left),
-                operator,
-                right: Box::new(right),
-            };
-        }
-        Ok(left)
-    }
-    fn logical_and(&mut self) -> Result<Expr<'src>, ParserError<'src>> {
-        let mut left = self.assignment()?;
-        while match_token_type!(self, TokT::And) {
-            let operator = self.previous_token.clone();
-            let right = self.assignment()?;
-            left = Expr::Logical {
-                left: Box::new(left),
-                operator,
-                right: Box::new(right),
-            };
-        }
-        Ok(left)
-    }
-
-    fn handle_assigment(
-        &mut self,
-        expr: Expr<'src>,
-        value: Expr<'src>,
-    ) -> Result<Expr<'src>, ParserError<'src>> {
-        if let Expr::Variable { name, .. } = expr {
-            Ok(Expr::Assignment {
-                identifier: name,
-                value: Box::new(value),
-            })
-        } else if let Expr::Get {
-            object,
-            field,
-            safe,
-        } = expr
-        {
-            Ok(Expr::Set {
-                safe,
-                object,
-                field,
-                value: Box::new(value),
-            })
-        } else {
-            Err(self.error_current("Invalid assignment target."))
-        }
+        self.assignment()
     }
 
     fn assignment(&mut self) -> Result<Expr<'src>, ParserError<'src>> {
-        let expr = self.equality()?;
+        let expr = self.null_coalescing()?;
 
         if match_token_type!(self, TokT::Equal) {
             let value = self.assignment()?;
@@ -125,6 +56,75 @@ impl<'src> Parser<'src> {
             return Ok(target);
         }
         Ok(expr)
+    }
+
+    fn handle_assigment(
+        &mut self,
+        expr: Expr<'src>,
+        value: Expr<'src>,
+    ) -> Result<Expr<'src>, ParserError<'src>> {
+        if let Expr::Variable { name, .. } = expr {
+            Ok(Expr::Assignment {
+                identifier: name,
+                value: Box::new(value),
+            })
+        } else if let Expr::Get {
+            object,
+            field,
+            safe,
+        } = expr
+        {
+            Ok(Expr::Set {
+                safe,
+                object,
+                field,
+                value: Box::new(value),
+            })
+        } else {
+            Err(self.error_current("Invalid assignment target."))
+        }
+    }
+
+    fn null_coalescing(&mut self) -> Result<Expr<'src>, ParserError<'src>> {
+        let mut expr = self.logical_or()?;
+        while match_token_type!(self, TokT::QuestionQuestion) {
+            let op = self.previous_token.clone();
+            let right = self.logical_or()?;
+            expr = Expr::Logical {
+                left: Box::new(expr),
+                operator: op,
+                right: Box::new(right),
+            };
+        }
+        Ok(expr)
+    }
+
+    fn logical_or(&mut self) -> Result<Expr<'src>, ParserError<'src>> {
+        let mut left = self.logical_and()?;
+
+        while match_token_type!(self, TokT::Or) {
+            let operator = self.previous_token.clone();
+            let right = self.logical_and()?;
+            left = Expr::Logical {
+                left: Box::new(left),
+                operator,
+                right: Box::new(right),
+            };
+        }
+        Ok(left)
+    }
+    fn logical_and(&mut self) -> Result<Expr<'src>, ParserError<'src>> {
+        let mut left = self.equality()?;
+        while match_token_type!(self, TokT::And) {
+            let operator = self.previous_token.clone();
+            let right = self.equality()?;
+            left = Expr::Logical {
+                left: Box::new(left),
+                operator,
+                right: Box::new(right),
+            };
+        }
+        Ok(left)
     }
 
     fn equality(&mut self) -> Result<Expr<'src>, ParserError<'src>> {

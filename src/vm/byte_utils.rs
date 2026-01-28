@@ -24,7 +24,6 @@ pub fn read_16_bytes(bytes: &[u8]) -> usize {
     bytes[1] as usize | (bytes[0] as usize) << 8
 }
 
-//TODO is this the best way to turn byte into instruction?
 #[inline(always)]
 pub fn byte_to_opcode(byte: u8) -> Opcode {
     unsafe { mem::transmute::<u8, Opcode>(byte) }

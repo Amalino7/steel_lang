@@ -37,7 +37,6 @@ impl<'src> TypeChecker<'src> {
             generics,
             Some(&mut self.infer_ctx),
         );
-        // TODO expected type???
         let concrete_generics = enum_def
             .generic_params
             .iter()
@@ -252,7 +251,6 @@ impl<'src> TypeChecker<'src> {
         let ty = match method_ty {
             Type::Function(func) => {
                 let params = func.params.iter().skip(1).cloned().collect();
-                // TODO infer generic from Struct
                 Type::new_function(params, func.return_type.clone(), func.type_params.clone())
             }
             other => other.clone(),

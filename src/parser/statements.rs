@@ -2,8 +2,8 @@ use crate::parser::ast::{
     Binding, Expr, InterfaceSig, Literal, MatchArm, Pattern, Stmt, TypeAst, VariantType,
 };
 use crate::parser::error::ParserError;
-use crate::parser::{Parser, check_token_type, match_token_type};
-use crate::parser::{TokT, check_next_token_type};
+use crate::parser::{check_next_token_type, TokT};
+use crate::parser::{check_token_type, match_token_type, Parser};
 use crate::token::{Token, TokenType};
 
 impl<'src> Parser<'src> {
@@ -291,7 +291,7 @@ impl<'src> Parser<'src> {
                     Ok(type_name)
                 }
             }
-            _ => Err(self.error_current("Expected the field of the return type of the function.")),
+            _ => Err(self.error_current("Expected valid type start.")),
         }
     }
 

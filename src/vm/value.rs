@@ -84,7 +84,9 @@ impl PartialEq for Value {
             (Value::String(l), Value::String(r)) => l == r || l.as_str() == r.as_str(),
             (Value::Boolean(l), Value::Boolean(r)) => l == r,
             (Value::Nil, Value::Nil) => true,
-            (Value::Enum(l), Value::Enum(r)) => l.enum_name == r.enum_name && l.tag == r.tag,
+            (Value::Enum(l), Value::Enum(r)) => {
+                l.enum_name == r.enum_name && l.tag == r.tag && l.payload == r.payload
+            }
             (Value::InterfaceObj(l), Value::InterfaceObj(r)) => l == r || l.data == r.data,
             (Value::Instance(l), Value::Instance(r)) => {
                 if l == r {

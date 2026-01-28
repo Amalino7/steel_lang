@@ -124,7 +124,8 @@ impl<'src> TypeChecker<'src> {
 
                 for (idx, element) in elements.iter().enumerate() {
                     let target_inner = expected_types.and_then(|v| v.get(idx));
-                    let el = self.check_expression(element, target_inner)?;
+                    let el =
+                        self.coerce_expression(element, target_inner.unwrap_or(&Type::Unknown))?;
                     type_vec.push(el.ty.clone());
                     typed_elements.push(el);
                 }

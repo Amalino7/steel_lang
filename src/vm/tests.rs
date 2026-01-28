@@ -1833,43 +1833,38 @@ fn test_structured_equality() {
 fn test_poly() {
     let src = r#"
     interface Shape {
-    func area(self): number;
-    func perimeter(self): number;
-}
-struct Circle { radius: number }
-impl Circle : Shape {
-    func area(self): number { return 3.14 * self.radius * self.radius; }
-    func perimeter(self): number { return 2 * 3.14 * self.radius; }
-}
-struct Rectangle { width: number, height: number }
-impl Rectangle : Shape {
-    func area(self): number { return self.width * self.height; }
-    func perimeter(self): number { return 2 * (self.width + self.height); }
-}
-func printArea(s: Shape): void {
-    //s.area();
-    assert(s.area(), 78.5); // 5*5 * 3.14
-    //println(s.area());
-}
-func printPerimeter(s: Shape): void {
-    //s.perimeter();
-    assert(s.perimeter(), (10 + 5) * 2 );
-    //println(s.perimeter());
-}
+        func area(self): number;
+        func perimeter(self): number;
+    }
+    struct Circle { radius: number }
+    impl Circle : Shape {
+        func area(self): number { return 3.14 * self.radius * self.radius; }
+        func perimeter(self): number { return 2 * 3.14 * self.radius; }
+    }
+    struct Rectangle { width: number, height: number }
+    impl Rectangle : Shape {
+        func area(self): number { return self.width * self.height; }
+        func perimeter(self): number { return 2 * (self.width + self.height); }
+    }
+    func printArea(s: Shape): void {
+        s.area();
+        assert(s.area(), 78.5); // 5*5 * 3.14
+        println(s.area());
+    }
+    func printPerimeter(s: Shape): void {
+        s.perimeter();
+        assert(s.perimeter(), (10 + 5) * 2 );
+        println(s.perimeter());
+    }
 
-
-// 528 ms
-let i = 0;
-
-
-
-while i < 1000 {
-    let c: Shape = Circle ( radius:5);
-    let r: Shape = Rectangle ( width:10,height:5);
-    printArea(c);
-    printPerimeter(r);
-    i = i + 1;
-}
-        "#;
+    let i = 0;
+    while i < 1000 {
+        let c: Shape = Circle(radius:5);
+        let r: Shape = Rectangle(width:10,height:5);
+        printArea(c);
+        printPerimeter(r);
+        i = i + 1;
+    }
+    "#;
     execute_source(src, false, "run", true);
 }
