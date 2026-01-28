@@ -241,7 +241,7 @@ impl<'src> Parser<'src> {
 
                 let index = self.expression()?;
                 self.consume(TokT::RightBracket, "Expected ']' after index.")?;
-                expr = Expr::Index {
+                expr = Expr::GetIndex {
                     safe: true,
                     object: Box::new(expr),
                     index: Box::new(index),
@@ -249,7 +249,7 @@ impl<'src> Parser<'src> {
             } else if match_token_type!(self, TokT::LeftBracket) {
                 let index = self.expression()?;
                 self.consume(TokT::RightBracket, "Expected ']' after index.")?;
-                expr = Expr::Index {
+                expr = Expr::GetIndex {
                     safe: false,
                     object: Box::new(expr),
                     index: Box::new(index),

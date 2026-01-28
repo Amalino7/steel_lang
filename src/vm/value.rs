@@ -50,12 +50,17 @@ impl Function {
         Function { name, chunk }
     }
 }
+#[derive(Debug)]
+pub struct List {
+    pub vec: Vec<Value>,
+}
 
 #[derive(Clone, Debug, Copy)]
 pub enum Value {
     Nil,
     Number(f64),
     Boolean(bool),
+    List(Gc<List>),
     String(Gc<String>),
     Closure(Gc<Closure>),
     Function(Gc<Function>),
@@ -96,6 +101,12 @@ impl PartialEq for Value {
                     && l.fields.len() == r.fields.len()
                     && l.fields.iter().zip(r.fields.iter()).all(|(a, b)| a == b)
             }
+            (Value::List(l), Value::List(r)) => {
+                if l == r {
+                    return true;
+                }
+                l.vec.len() == r.vec.len() && l.vec.iter().zip(r.vec.iter()).all(|(a, b)| a == b)
+            }
             _ => false,
         }
     }
@@ -120,6 +131,13 @@ impl Display for Value {
             ),
             Value::Enum(enum_variant) => write!(f, "<enum {}>", enum_variant.enum_name),
             Value::InterfaceObj(_) => write!(f, "<interface>"),
+            Value::List(list) => {
+                let mut str = String::from("[");
+                for elem in list.vec.iter() {
+                    str.push_str(&format!("{}, ", elem));
+                }
+                write!(f, "{}", str.trim_end_matches(','))
+            }
         }
     }
 }

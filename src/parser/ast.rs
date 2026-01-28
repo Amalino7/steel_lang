@@ -372,9 +372,15 @@ impl Display for Expr<'_> {
                 }
                 write!(f, "]")
             }
-            Expr::Index { object, index, .. } => {
+            Expr::GetIndex { object, index, .. } => {
                 write!(f, "{}[{}]", object, index)
             }
+            Expr::SetIndex {
+                object,
+                index,
+                value,
+                ..
+            } => write!(f, "{}[{}] = {}", object, index, value),
         }
     }
 }

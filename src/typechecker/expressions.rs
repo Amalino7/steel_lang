@@ -461,6 +461,7 @@ impl<'src> TypeChecker<'src> {
                     }),
                 }
             }
+
             Expr::Get {
                 object,
                 field,
@@ -518,6 +519,18 @@ impl<'src> TypeChecker<'src> {
                         message: "Cannot force unwrap non-optional type.",
                     }),
                 }
+            }
+            Expr::List { .. } => {
+                todo!()
+            }
+            Expr::Map { .. } => {
+                todo!()
+            }
+            Expr::GetIndex { .. } => {
+                todo!()
+            }
+            Expr::SetIndex { .. } => {
+                todo!()
             }
         }
     }

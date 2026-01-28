@@ -506,6 +506,46 @@ impl VM {
                         unreachable!("SetField on non-instance");
                     }
                 },
+                Opcode::GetIndex => {
+                    let Value::Number(index) = self.stack.pop() else {
+                        unreachable!("GetIndex expected number");
+                    };
+
+                    let list = self.stack.pop();
+                    let Value::List(list) = list else {
+                        unreachable!("GetIndex on non-list");
+                    };
+
+                    match list.vec.get(index as usize) {
+                        Some(&v) => {
+                            self.stack.push(v);
+                        }
+                        None => {
+                            let error_msg =
+                                format!("Index {} out of bounds. Len: {}", index, list.vec.len());
+                            return Err(self.make_error(error_msg.as_str()));
+                        }
+                    }
+                }
+                Opcode::SetIndex => unsafe {
+                    let value = self.stack.pop();
+
+                    let Value::Number(index) = self.stack.pop() else {
+                        unreachable!("GetIndex expected number");
+                    };
+                    let index = index as usize;
+
+                    let list = self.stack.pop();
+                    let Value::List(mut list) = list else {
+                        unreachable!("GetIndex on non-list");
+                    };
+                    if index >= list.vec.len() {
+                        let error_msg =
+                            format!("Index {} out of bounds. Len: {}", index, list.vec.len());
+                        return Err(self.make_error(error_msg.as_str()));
+                    }
+                    list.deref_mut().vec[index] = value;
+                },
                 Opcode::BindMethod => {
                     let function = self.stack.pop();
                     let receiver = self.stack.pop();

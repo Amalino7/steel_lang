@@ -20,6 +20,9 @@ pub enum Opcode {
 
     Equal, // Generic
 
+    GetIndex,
+    SetIndex,
+
     GreaterString,
     LessString,
 

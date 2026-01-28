@@ -83,6 +83,8 @@ pub enum Type {
     Struct(Symbol, GenericArgs),
     Interface(Symbol, GenericArgs),
     Enum(Symbol, GenericArgs),
+    List(Box<Type>),
+    Map(Box<Type>, Box<Type>),
     Any,
 }
 
@@ -129,6 +131,8 @@ impl Type {
             Type::Interface(_, args) => args.iter().all(|t| t.is_concrete()),
             Type::Enum(_, args) => args.iter().all(|t| t.is_concrete()),
             Type::Any => true,
+            Type::List(inner) => inner.is_concrete(),
+            Type::Map(key, value) => key.is_concrete() && value.is_concrete(),
         }
     }
 
@@ -234,6 +238,8 @@ impl Type {
             Type::Enum(name, _) => Some(name),
             Type::Tuple(_) => None,
             Type::Metatype(_, _) => None,
+            Type::List(_) => Some("List"),
+            Type::Map(_, _) => Some("Map"),
         }
     }
     pub fn new_function(
@@ -413,6 +419,8 @@ impl Display for Type {
             Type::String => write!(f, "string"),
             Type::Void => write!(f, "void"),
             Type::Never => write!(f, "never"),
+            Type::List(inner) => write!(f, "List<{}>", inner),
+            Type::Map(key, value) => write!(f, "Map<{}, {}>", key, value),
             Type::Function(function_type) => {
                 write!(
                     f,

@@ -266,6 +266,13 @@ impl TypeSystem {
             Type::Optional(inner) => {
                 Type::Optional(Box::new(Self::generic_to_concrete(*inner, generics_map)))
             }
+            Type::List(inner) => {
+                Type::List(Box::new(Self::generic_to_concrete(*inner, generics_map)))
+            }
+            Type::Map(key_type, value_type) => Type::Map(
+                Box::new(Self::generic_to_concrete(*key_type, generics_map)),
+                Box::new(Self::generic_to_concrete(*value_type, generics_map)),
+            ),
             Type::Function(func_type) => {
                 if func_type.is_vararg {
                     return Type::Function(func_type);
