@@ -2,8 +2,7 @@ use crate::vm::value::{
     BoundMethod, Closure, EnumVariant, Function, Instance, InterfaceObj, VTable, Value,
 };
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::collections::VecDeque;
-use std::fmt::{Debug, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 use std::ops::Deref;
 use std::ptr::NonNull;
 use std::sync::atomic::AtomicUsize;
@@ -44,7 +43,7 @@ impl<T: Trace> Clone for Gc<T> {
     }
 }
 
-// Cannot guarantee that this won't lead to multiple mutable borrows.
+/// Cannot guarantee that this won't lead to multiple mutable borrows.
 impl<T: Trace> Gc<T> {
     pub(crate) unsafe fn deref_mut(&mut self) -> &mut T {
         unsafe { &mut self.ptr.as_mut().value }
@@ -64,39 +63,46 @@ impl<T: Trace> Debug for Gc<T> {
         write!(f, "Gc({:?})", self.ptr)
     }
 }
+impl<T: Trace> Display for Gc<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.ptr)
+    }
+}
 
 pub struct GarbageCollector {
     next_gc: usize,
+    live_bytes_after_gc: usize,
     objects: Vec<NonNull<HeapHeader>>,
-    gray_stack: VecDeque<NonNull<HeapHeader>>,
+    gray_stack: Vec<NonNull<HeapHeader>>,
 }
 
 impl GarbageCollector {
-    const GROWTH_FACTOR: usize = 2;
-
+    const THRESHOLD_GC: usize = 1024 * 16; //16KB Allocated after last GC
     pub fn new() -> Self {
         Self {
-            next_gc: 1024 * 1024 * 10,
+            next_gc: Self::THRESHOLD_GC,
             objects: Vec::with_capacity(1024),
-            gray_stack: VecDeque::new(),
+            gray_stack: Vec::with_capacity(100),
+            live_bytes_after_gc: 0,
         }
     }
 
     pub fn collect(&mut self) {
-        #[cfg(feature = "debug_gc")]
-        let start_size = ALLOCATED.load(Relaxed);
-
         self.trace_ref();
+        #[cfg(not(feature = "stress_gc"))]
+        let size_before_gc = ALLOCATED.load(Relaxed);
         self.sweep();
+        #[cfg(not(feature = "stress_gc"))]
+        {
+            let live = ALLOCATED.load(Relaxed);
+            let survival_ratio = live as f64 / (size_before_gc as f64);
+            if survival_ratio > 0.8 {
+                self.next_gc *= 2;
+            } else if survival_ratio < 0.3 {
+                self.next_gc = (self.next_gc / 2).max(Self::THRESHOLD_GC);
+            }
 
-        #[cfg(feature = "debug_gc")]
-        println!(
-            "GC Collected: {} bytes",
-            start_size - ALLOCATED.load(Relaxed)
-        );
-
-        if ALLOCATED.load(Relaxed) > self.next_gc {
-            self.grow();
+            self.live_bytes_after_gc = live;
         }
     }
 
@@ -134,35 +140,40 @@ impl GarbageCollector {
     /// Entry point for the VM to mark roots (Stack, Globals)
     pub fn mark<T: Trace + 'static>(&mut self, ptr: Gc<T>) {
         let header = ptr.ptr.cast::<HeapHeader>();
-        self.gray_stack.push_back(header);
+        unsafe {
+            if (*header.as_ptr()).is_marked {
+                return;
+            }
+        }
+        self.gray_stack.push(header);
     }
 
-    pub fn mark_value(&mut self, val: &Value) {
+    pub fn mark_value(&mut self, val: Value) {
         match val {
             Value::Number(_) => {}
             Value::String(str) => {
-                self.mark(*str);
+                self.mark(str);
             }
             Value::Function(gc) => {
-                self.mark(*gc);
+                self.mark(gc);
             }
             Value::NativeFunction(_) => {}
             Value::Boolean(_) => {}
             Value::Nil => {}
             Value::Closure(closure) => {
-                self.mark(*closure);
+                self.mark(closure);
             }
             Value::Instance(instance) => {
-                self.mark(*instance);
+                self.mark(instance);
             }
             Value::BoundMethod(bound_method) => {
-                self.mark(*bound_method);
+                self.mark(bound_method);
             }
             Value::InterfaceObj(interface_obj) => {
-                self.mark(*interface_obj);
+                self.mark(interface_obj);
             }
             Value::Enum(enum_variant) => {
-                self.mark(*enum_variant);
+                self.mark(enum_variant);
             }
         }
     }
@@ -172,20 +183,15 @@ impl GarbageCollector {
         return true;
 
         #[cfg(not(feature = "stress_gc"))]
-        return ALLOCATED.load(Relaxed) > self.next_gc;
-    }
-
-    fn grow(&mut self) {
-        self.next_gc *= Self::GROWTH_FACTOR;
+        {
+            ALLOCATED.load(Relaxed) > self.next_gc + self.live_bytes_after_gc
+        }
     }
 
     fn trace_ref(&mut self) {
-        while let Some(ptr) = self.gray_stack.pop_back() {
+        while let Some(ptr) = self.gray_stack.pop() {
             unsafe {
                 let header = ptr.as_ref();
-                if header.is_marked {
-                    continue;
-                }
                 (*ptr.as_ptr()).is_marked = true;
                 (header.trace_fn)(ptr.as_ptr() as *mut u8, self);
             }
@@ -225,7 +231,7 @@ impl Trace for String {
 }
 impl Trace for Function {
     fn trace(&self, gc: &mut GarbageCollector) {
-        for constant in self.chunk.constants.iter() {
+        for &constant in self.chunk.constants.iter() {
             gc.mark_value(constant)
         }
     }
@@ -234,7 +240,7 @@ impl Trace for Function {
 impl Trace for Closure {
     fn trace(&self, gc: &mut GarbageCollector) {
         gc.mark(self.function);
-        for capture in self.captures.iter() {
+        for &capture in self.captures.iter() {
             gc.mark_value(capture)
         }
     }
@@ -242,23 +248,23 @@ impl Trace for Closure {
 
 impl Trace for Instance {
     fn trace(&self, gc: &mut GarbageCollector) {
-        for field in &self.fields {
+        for &field in self.fields.iter() {
             gc.mark_value(field);
         }
-        gc.mark_value(&self.name);
+        gc.mark_value(self.name);
     }
 }
 
 impl Trace for BoundMethod {
     fn trace(&self, gc: &mut GarbageCollector) {
         gc.mark(self.method);
-        gc.mark_value(&self.receiver);
+        gc.mark_value(self.receiver);
     }
 }
 
 impl Trace for InterfaceObj {
     fn trace(&self, gc: &mut GarbageCollector) {
-        gc.mark_value(&self.data);
+        gc.mark_value(self.data);
         gc.mark(self.vtable);
     }
 }
@@ -273,8 +279,8 @@ impl Trace for VTable {
 
 impl Trace for EnumVariant {
     fn trace(&self, gc: &mut GarbageCollector) {
-        gc.mark_value(&self.enum_name);
-        gc.mark_value(&self.payload);
+        gc.mark_value(self.enum_name);
+        gc.mark_value(self.payload);
     }
 }
 

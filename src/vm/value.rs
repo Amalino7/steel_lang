@@ -81,10 +81,21 @@ impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Value::Number(l), Value::Number(r)) => l == r,
-            (Value::String(l), Value::String(r)) => l.as_str() == r.as_str(),
+            (Value::String(l), Value::String(r)) => l == r || l.as_str() == r.as_str(),
             (Value::Boolean(l), Value::Boolean(r)) => l == r,
             (Value::Nil, Value::Nil) => true,
-            (Value::Enum(l), Value::Enum(r)) => l.enum_name == r.enum_name && l.tag == r.tag,
+            (Value::Enum(l), Value::Enum(r)) => {
+                l.enum_name == r.enum_name && l.tag == r.tag && l.payload == r.payload
+            }
+            (Value::InterfaceObj(l), Value::InterfaceObj(r)) => l == r || l.data == r.data,
+            (Value::Instance(l), Value::Instance(r)) => {
+                if l == r {
+                    return true;
+                }
+                l.name == r.name
+                    && l.fields.len() == r.fields.len()
+                    && l.fields.iter().zip(r.fields.iter()).all(|(a, b)| a == b)
+            }
             _ => false,
         }
     }
@@ -96,11 +107,11 @@ impl Display for Value {
             Value::Number(num) => write!(f, "{}", num),
             Value::String(str) => write!(f, "{}", str.as_str()),
             Value::Boolean(bool) => write!(f, "{}", bool),
-            Value::Nil => write!(f, "Nil"),
+            Value::Nil => write!(f, "nil"),
             Value::Function(func) => write!(f, "<fn {}>", func.name.as_str()),
             Value::NativeFunction(_) => write!(f, "<native fn>"),
-            Value::Closure(closure) => write!(f, "<closure {}>", closure.function.name.as_str()),
-            Value::Instance(instance) => write!(f, "<instance {}>", instance.name),
+            Value::Closure(closure) => write!(f, "<closure {} @>", closure.function.name.as_str()),
+            Value::Instance(instance) => write!(f, "<instance {} @{}>", instance.name, instance),
             Value::BoundMethod(bound_method) => write!(
                 f,
                 "<bound method {} of {}>",
@@ -199,7 +210,7 @@ impl Not for Value {
 
 impl Add for Value {
     type Output = Value;
-
+    #[inline]
     fn add(self, rhs: Self) -> Self::Output {
         match (self, rhs) {
             (Value::Number(l), Value::Number(r)) => Value::Number(l + r),

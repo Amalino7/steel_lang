@@ -126,6 +126,12 @@ pub enum TypeCheckerError {
         line: u32,
         message: String,
     },
+    TooManyGenerics {
+        line: u32,
+        found: usize,
+        expected: usize,
+        type_name: String,
+    },
 }
 
 impl TypeCheckerError {
@@ -159,6 +165,7 @@ impl TypeCheckerError {
             TypeCheckerError::CannotInferType { line, .. } => *line,
             TypeCheckerError::InvalidGenericSpecification { line, .. } => *line,
             TypeCheckerError::ComplexTypeMismatch { line, .. } => *line,
+            TypeCheckerError::TooManyGenerics { line, .. } => *line,
         }
     }
 }
@@ -402,6 +409,19 @@ impl std::fmt::Display for TypeCheckerError {
                     f,
                     "[line {}] Error: Type mismatch expected: '{}' but found '{}'.\n Precise: {}\n",
                     line, expected, found, message
+                )
+            }
+
+            TypeCheckerError::TooManyGenerics {
+                line,
+                found,
+                expected,
+                type_name,
+            } => {
+                write!(
+                    f,
+                    "[line {}] Error: Too many generics. Found {} expected {}.\n {}",
+                    line, found, expected, type_name
                 )
             }
         }

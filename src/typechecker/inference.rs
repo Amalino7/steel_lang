@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 pub struct InferenceContext {
     substitutions: HashMap<u32, Type>,
-    next_id: u32, // TODO is this a good idea
+    next_id: u32,
 }
 impl Default for InferenceContext {
     fn default() -> Self {

@@ -83,7 +83,7 @@ pub enum Type {
     Struct(Symbol, GenericArgs),
     Interface(Symbol, GenericArgs),
     Enum(Symbol, GenericArgs),
-    Any, //TODO replace with generic types, this is for native functions.
+    Any,
 }
 
 fn missing_generics(
@@ -99,7 +99,12 @@ fn missing_generics(
             line,
         })
     } else if generics_provided.len() > generics_expected.len() {
-        todo!()
+        Err(TypeCheckerError::TooManyGenerics {
+            line,
+            found: generics_provided.len(),
+            expected: generics_expected.len(),
+            type_name: type_name.to_string(),
+        })
     } else {
         Ok(())
     }
@@ -140,6 +145,10 @@ impl Type {
 
         let line = name.line;
         let name = name.lexeme;
+
+        let check_generic =
+            |name, generic_params| missing_generics(name, generic_params, &generics, line);
+
         if name == "number" {
             Ok(Type::Number)
         } else if name == "string" {
@@ -151,17 +160,13 @@ impl Type {
         } else if name == "never" {
             Ok(Type::Never)
         } else if let Some(struct_type) = type_system.get_struct(name) {
-            missing_generics(
-                &struct_type.name,
-                &struct_type.generic_params,
-                &generics,
-                line,
-            )?;
+            check_generic(&struct_type.name, &struct_type.generic_params)?;
             Ok(Type::Struct(struct_type.name.clone(), Rc::new(generics)))
         } else if let Some(iface) = type_system.get_interface(name) {
             Ok(Type::Interface(iface.name.clone(), Rc::new(generics)))
         } else if let Some(enum_type) = type_system.get_enum(name) {
-            Ok(Type::Enum(enum_type.name.clone(), Rc::new(generics))) // TODO probably shouldn't be like this
+            check_generic(&enum_type.name, &enum_type.generic_params)?;
+            Ok(Type::Enum(enum_type.name.clone(), Rc::new(generics)))
         } else if let type_name = name.into()
             && type_system.does_generic_exist(&type_name)
         {

@@ -18,7 +18,7 @@ pub enum Opcode {
     EqualString,
     EqualNumber,
 
-    Equal, // Generic TODO remove when not needed
+    Equal, // Generic
 
     GreaterString,
     LessString,
