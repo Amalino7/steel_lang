@@ -1,0 +1,11 @@
+struct Point { x: number,y: number}
+impl Point {
+    func move(self, to: Point) {
+        self.x = to.x;
+        self.y = to.y;
+    }
+}
+let point = Point(y: 1,x: 2);
+println(point.x," ", point.y);
+point.move(to: Point(x: 10, y: 20));
+println(point.x," ", point.y);
