@@ -1,0 +1,25 @@
+enum Message {
+    Quit,
+    Move {
+        x: number,
+        y: number,
+    },
+    ChangeColor {
+        r: number,
+        g: number,
+        b: number,
+    }
+}
+let msg = Message.Move(x: 10, y: 20);
+// msg = Message.Quit;
+// msg = Message.ChangeColor(r: 10, g: 20, b: 30);
+match msg {
+    .Quit => {println("Quit");}
+    .Move(:x, :y) => {println(x, y);}
+    .ChangeColor(a) => {println(a.r, a.g, a.b);}
+}
+msg = Message.ChangeColor(r: 10, g: 20, b: 30);
+match msg {
+    .ChangeColor(a) => {println(a.r, a.g, a.b);}
+    _ => {println("Not a change color");}
+}

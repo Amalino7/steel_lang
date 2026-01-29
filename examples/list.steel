@@ -1,0 +1,15 @@
+let list = [1,2,3,4];
+func print_one(a: number) {
+    print(a);
+    print(", ");
+}
+func square(a:number): number {
+    return a * a;
+}
+list.map(square).each(print_one);
+println("");
+let sum = list
+    .map(square)
+    .sum();
+println(sum);
+println(list.len());

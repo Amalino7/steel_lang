@@ -22,6 +22,7 @@ pub enum Opcode {
 
     GetIndex,
     SetIndex,
+    MakeList,
 
     GreaterString,
     LessString,

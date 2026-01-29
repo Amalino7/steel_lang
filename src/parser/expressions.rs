@@ -80,8 +80,20 @@ impl<'src> Parser<'src> {
                 field,
                 value: Box::new(value),
             })
+        } else if let Expr::GetIndex {
+            safe,
+            object,
+            index,
+        } = expr
+        {
+            Ok(Expr::SetIndex {
+                safe,
+                object,
+                index,
+                value: Box::new(value),
+            })
         } else {
-            Err(self.error_current("Invalid assignment target."))
+            Err(self.error_previous("Invalid assignment target."))
         }
     }
 

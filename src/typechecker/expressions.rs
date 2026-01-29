@@ -521,16 +521,130 @@ impl<'src> TypeChecker<'src> {
                 }
             }
             Expr::List { .. } => {
-                todo!()
+                let Expr::List {
+                    elements,
+                    bracket_token,
+                } = expr
+                else {
+                    unreachable!()
+                };
+
+                let expected_inner = match expected {
+                    Some(Type::List(inner)) => Some(inner.as_ref().clone()),
+                    Some(Type::Optional(inner)) => match inner.as_ref() {
+                        Type::List(list_inner) => Some(list_inner.as_ref().clone()),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+
+                if elements.is_empty() {
+                    let inner = expected_inner.ok_or(TypeCheckerError::CannotInferType {
+                        line: bracket_token.line,
+                        uninferred_generics: vec![],
+                    })?;
+                    return Ok(TypedExpr {
+                        ty: Type::List(Box::new(inner)),
+                        kind: ExprKind::List { elements: vec![] },
+                        line: bracket_token.line,
+                    });
+                }
+
+                let mut typed_elements = Vec::with_capacity(elements.len());
+                let inner_ty = expected_inner.unwrap_or_else(|| self.infer_ctx.new_type_var());
+
+                for element in elements.iter() {
+                    let typed = self.coerce_expression(element, &inner_ty)?;
+                    typed_elements.push(typed);
+                }
+
+                let inferred_inner = self.infer_ctx.substitute(&inner_ty);
+                if !inferred_inner.is_concrete() {
+                    return Err(TypeCheckerError::CannotInferType {
+                        line: bracket_token.line,
+                        uninferred_generics: vec![],
+                    });
+                }
+
+                Ok(TypedExpr {
+                    ty: Type::List(Box::new(inferred_inner)),
+                    kind: ExprKind::List {
+                        elements: typed_elements,
+                    },
+                    line: bracket_token.line,
+                })
             }
             Expr::Map { .. } => {
                 todo!()
             }
-            Expr::GetIndex { .. } => {
-                todo!()
+            Expr::GetIndex {
+                safe,
+                object,
+                index,
+            } => {
+                let object_typed = self.check_expression(object, None)?;
+                let parent_type = object_typed
+                    .ty
+                    .unwrap_optional_safe(*safe, object_typed.line)?;
+
+                let Type::List(inner) = parent_type else {
+                    return Err(TypeCheckerError::TypeMismatch {
+                        expected: Type::List(Box::new(Type::Any)),
+                        found: parent_type,
+                        line: object_typed.line,
+                        message: "Indexing is only supported on lists.",
+                    });
+                };
+
+                let index_typed = self.coerce_expression(index, &Type::Number)?;
+                let mut ty = *inner;
+                if *safe {
+                    ty = ty.wrap_in_optional();
+                }
+
+                Ok(TypedExpr {
+                    ty,
+                    line: object_typed.line,
+                    kind: ExprKind::GetIndex {
+                        object: Box::new(object_typed),
+                        index: Box::new(index_typed),
+                        safe: *safe,
+                    },
+                })
             }
-            Expr::SetIndex { .. } => {
-                todo!()
+            Expr::SetIndex {
+                safe,
+                object,
+                index,
+                value,
+            } => {
+                let object_typed = self.check_expression(object, None)?;
+                let parent_type = object_typed
+                    .ty
+                    .unwrap_optional_safe(*safe, object_typed.line)?;
+
+                let Type::List(inner) = parent_type else {
+                    return Err(TypeCheckerError::TypeMismatch {
+                        expected: Type::List(Box::new(Type::Any)),
+                        found: parent_type,
+                        line: object_typed.line,
+                        message: "Indexing is only supported on lists.",
+                    });
+                };
+
+                let index_typed = self.coerce_expression(index, &Type::Number)?;
+                let value_typed = self.coerce_expression(value, &inner)?;
+
+                Ok(TypedExpr {
+                    ty: *inner,
+                    line: object_typed.line,
+                    kind: ExprKind::SetIndex {
+                        object: Box::new(object_typed),
+                        index: Box::new(index_typed),
+                        value: Box::new(value_typed),
+                        safe: *safe,
+                    },
+                })
             }
         }
     }

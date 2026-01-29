@@ -132,11 +132,14 @@ impl Display for Value {
             Value::Enum(enum_variant) => write!(f, "<enum {}>", enum_variant.enum_name),
             Value::InterfaceObj(_) => write!(f, "<interface>"),
             Value::List(list) => {
-                let mut str = String::from("[");
-                for elem in list.vec.iter() {
-                    str.push_str(&format!("{}, ", elem));
+                write!(f, "[")?;
+                for (i, val) in list.vec.iter().enumerate() {
+                    write!(f, "{}", val)?;
+                    if i != list.vec.len() - 1 {
+                        write!(f, ", ")?;
+                    }
                 }
-                write!(f, "{}", str.trim_end_matches(','))
+                write!(f, "]")
             }
         }
     }

@@ -5,7 +5,7 @@ use crate::vm::error::RuntimeError;
 use crate::vm::gc::{GarbageCollector, Gc};
 use crate::vm::stack::Stack;
 use crate::vm::value::{
-    BoundMethod, Closure, EnumVariant, Function, Instance, InterfaceObj, VTable, Value,
+    BoundMethod, Closure, EnumVariant, Function, Instance, InterfaceObj, List, VTable, Value,
 };
 
 mod byte_utils;
@@ -528,24 +528,37 @@ impl VM {
                     }
                 }
                 Opcode::SetIndex => unsafe {
-                    let value = self.stack.pop();
-
                     let Value::Number(index) = self.stack.pop() else {
-                        unreachable!("GetIndex expected number");
+                        unreachable!("SetIndex expected number");
                     };
                     let index = index as usize;
 
                     let list = self.stack.pop();
                     let Value::List(mut list) = list else {
-                        unreachable!("GetIndex on non-list");
+                        unreachable!("SetIndex on non-list");
                     };
+
+                    let value = self.stack.pop();
                     if index >= list.vec.len() {
                         let error_msg =
                             format!("Index {} out of bounds. Len: {}", index, list.vec.len());
                         return Err(self.make_error(error_msg.as_str()));
                     }
                     list.deref_mut().vec[index] = value;
+                    self.stack.push(value);
                 },
+                Opcode::MakeList => {
+                    let count = chunk.instructions[current_frame.ip] as usize;
+                    current_frame.ip += 1;
+
+                    let mut elements = Vec::with_capacity(count);
+                    for _ in 0..count {
+                        elements.push(self.stack.pop());
+                    }
+
+                    let list = self.alloc_list(List { vec: elements }, &current_frame);
+                    self.stack.push(list);
+                }
                 Opcode::BindMethod => {
                     let function = self.stack.pop();
                     let receiver = self.stack.pop();
@@ -649,6 +662,16 @@ impl VM {
             self.gc.collect();
         }
         Value::Closure(closure)
+    }
+
+    fn alloc_list(&mut self, list: List, current_frame: &CallFrame) -> Value {
+        let list = self.gc.alloc(list);
+        if self.gc.should_collect() {
+            self.gc.mark(list);
+            self.mark_roots(current_frame);
+            self.gc.collect();
+        }
+        Value::List(list)
     }
 
     fn mark_roots(&mut self, current_frame: &CallFrame) {

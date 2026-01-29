@@ -666,6 +666,52 @@ impl<'a> Compiler<'a> {
                 self.emit_op(Opcode::StructAlloc, line);
                 self.emit_byte(elements.len() as u8, line);
             }
+            ExprKind::List { elements } => {
+                for element in elements.iter().rev() {
+                    self.compile_expr(element);
+                }
+                self.emit_op(Opcode::MakeList, line);
+                self.emit_byte(elements.len() as u8, line);
+            }
+            ExprKind::GetIndex {
+                object,
+                index,
+                safe,
+            } => {
+                self.compile_expr(object);
+                if *safe {
+                    let jump = self.emit_jump(Opcode::JumpIfNil, line);
+                    self.compile_expr(index);
+                    self.emit_op(Opcode::GetIndex, line);
+                    self.patch_jump(jump);
+                } else {
+                    self.compile_expr(index);
+                    self.emit_op(Opcode::GetIndex, line);
+                }
+            }
+            ExprKind::SetIndex {
+                object,
+                index,
+                value,
+                safe,
+            } => {
+                self.compile_expr(value);
+                if *safe {
+                    self.compile_expr(object);
+                    let jump_nil = self.emit_jump(Opcode::JumpIfNil, line);
+                    self.compile_expr(index);
+                    self.emit_op(Opcode::SetIndex, line);
+                    let escape_jump = self.emit_jump(Opcode::Jump, line);
+
+                    self.patch_jump(jump_nil);
+                    self.emit_op(Opcode::Pop, line); // Pop object
+                    self.patch_jump(escape_jump);
+                } else {
+                    self.compile_expr(object);
+                    self.compile_expr(index);
+                    self.emit_op(Opcode::SetIndex, line);
+                }
+            }
         }
     }
 

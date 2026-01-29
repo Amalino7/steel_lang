@@ -1,0 +1,35 @@
+struct Zoo {
+aardvark: number,
+ baboon  :number,
+     cat     :number,
+     donkey  :number,
+     elephant:number,
+     fox     :number,
+}
+
+impl Zoo {
+  func ant(self):number{
+    return self.aardvark;
+   }
+   func banana(self):number{
+    return self.baboon;
+    }
+   func tuna(self):number{
+    return self.cat;
+    }
+   func hay(self):number{
+    return self.donkey;
+    }
+   func grass(self):number{
+    return self.elephant;
+    }
+   func mouse(self):number{
+    return self.fox;
+  }
+}
+let zoo = Zoo(aardvark:1, baboon:1, cat:1,donkey:1,elephant:1,fox:1);
+let sum = 0;
+while sum < 100000000 {
+  sum += zoo.ant() + zoo.banana() + zoo.tuna() + zoo.hay() + zoo.grass() + zoo.mouse();
+}
+

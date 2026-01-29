@@ -1,10 +1,26 @@
-use crate::typechecker::types::Type;
+use crate::typechecker::types::{FunctionType, Type};
+use crate::typechecker::Symbol;
 use crate::vm::value::{NativeFn, Value};
+use std::rc::Rc;
 
 pub struct NativeDef {
     pub name: &'static str,
     pub type_: Type,
     pub func: NativeFn,
+}
+
+fn instance_method(
+    params: Vec<(String, Type)>,
+    return_type: Type,
+    type_params: Vec<Symbol>,
+) -> Type {
+    Type::Function(Rc::new(FunctionType {
+        is_static: false,
+        is_vararg: false,
+        params,
+        return_type,
+        type_params,
+    }))
 }
 
 pub fn get_prelude() -> &'static str {
@@ -36,6 +52,50 @@ pub fn get_prelude() -> &'static str {
                     .Ok(val) => {return Result.Ok(f(val));}
                     .Err(err) => {return Result.Err(err);}
                 }
+            }
+        }
+        impl List<number> {
+            func sum(self): number {
+                func add(a: number, b: number): number {return a + b;}
+                return self.fold(0, add);
+            }
+        }
+        impl<T> List<T> {
+            func fold<U>(self, initial: U, f: func(U, T): U): U {
+                let result = initial;
+                let i = 0;
+                while i < self.len() {
+                    result = f(result, self[i]);
+                    i+=1;
+                }
+                return result;
+            }
+            func each(self, f: func(T)): void {
+                let i = 0;
+                while i < self.len() {
+                    f(self[i]);
+                    i += 1;
+                }
+            }
+            func map<U>(self, f: func(T): U): List<U> {
+                let out: List<U> = [];
+                let i = 0;
+                while i < self.len() {
+                    out.push(f(self[i]));
+                    i += 1;
+                }
+                return out;
+            }
+            func filter(self, f: func(T): boolean): List<T> {
+                let out: List<T> = [];
+                let i = 0;
+                while i < self.len() {
+                    if f(self[i]) {
+                        out.push(self[i]);
+                    }
+                    i += 1;
+                }
+                return out;
             }
         }
     "#
@@ -109,6 +169,74 @@ pub fn get_natives() -> Vec<NativeDef> {
             type_: Type::new_function(vec![("_".into(), Type::Number)], Type::Boolean, vec![]),
             func: |args, _| match args[0] {
                 Value::Number(num) => Ok(Value::Boolean(num.is_nan())),
+                _ => unreachable!(),
+            },
+        },
+        NativeDef {
+            name: "List.len",
+            type_: instance_method(
+                vec![(
+                    "self".into(),
+                    Type::List(Box::new(Type::GenericParam("T".into()))),
+                )],
+                Type::Number,
+                vec!["T".into()],
+            ),
+            func: |args, _| match args[0] {
+                Value::List(list) => Ok(Value::Number(list.vec.len() as f64)),
+                _ => unreachable!(),
+            },
+        },
+        NativeDef {
+            name: "List.is_empty",
+            type_: instance_method(
+                vec![(
+                    "self".into(),
+                    Type::List(Box::new(Type::GenericParam("T".into()))),
+                )],
+                Type::Boolean,
+                vec!["T".into()],
+            ),
+            func: |args, _| match args[0] {
+                Value::List(list) => Ok(Value::Boolean(list.vec.is_empty())),
+                _ => unreachable!(),
+            },
+        },
+        NativeDef {
+            name: "List.push",
+            type_: instance_method(
+                vec![
+                    (
+                        "self".into(),
+                        Type::List(Box::new(Type::GenericParam("T".into()))),
+                    ),
+                    ("value".into(), Type::GenericParam("T".into())),
+                ],
+                Type::Void,
+                vec!["T".into()],
+            ),
+            func: |args, _| match args[0] {
+                Value::List(mut list) => unsafe {
+                    list.deref_mut().vec.push(args[1]);
+                    Ok(Value::Nil)
+                },
+                _ => unreachable!(),
+            },
+        },
+        NativeDef {
+            name: "List.pop",
+            type_: instance_method(
+                vec![(
+                    "self".into(),
+                    Type::List(Box::new(Type::GenericParam("T".into()))),
+                )],
+                Type::Optional(Box::new(Type::GenericParam("T".into()))),
+                vec!["T".into()],
+            ),
+            func: |args, _| match args[0] {
+                Value::List(mut list) => unsafe {
+                    Ok(list.deref_mut().vec.pop().unwrap_or(Value::Nil))
+                },
                 _ => unreachable!(),
             },
         },

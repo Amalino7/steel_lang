@@ -89,7 +89,7 @@ pub enum Type {
 }
 
 fn missing_generics(
-    type_name: &Symbol,
+    type_name: &str,
     generics_expected: &[Symbol],
     generics_provided: &[Type],
     line: u32,
@@ -163,6 +163,15 @@ impl Type {
             Ok(Type::Void)
         } else if name == "never" {
             Ok(Type::Never)
+        } else if name == "List" {
+            check_generic(name, &["T".into()])?;
+            Ok(Type::List(Box::new(generics[0].clone())))
+        } else if name == "Map" {
+            check_generic(name, &["K".into(), "V".into()])?;
+            Ok(Type::Map(
+                Box::new(generics[0].clone()),
+                Box::new(generics[1].clone()),
+            ))
         } else if let Some(struct_type) = type_system.get_struct(name) {
             check_generic(&struct_type.name, &struct_type.generic_params)?;
             Ok(Type::Struct(struct_type.name.clone(), Rc::new(generics)))
