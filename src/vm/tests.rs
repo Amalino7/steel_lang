@@ -1720,8 +1720,8 @@ fn test_generic_impl() {
 #[test]
 fn test_generic_enums() {
     let src = r#"
-        enum List<T> {
-            Nil, Cons(T, List<T>)
+        enum LinkedList<T> {
+            Nil, Cons(T, LinkedList<T>)
         }
 
         enum Result<T,E> { Ok(T), Err(E) }
@@ -1738,7 +1738,7 @@ fn test_generic_enums() {
         }
         func wrap(a: number): string { return to_str(a);}
 
-        let list = List.Cons(1, List.Nil);
+        let list = LinkedList.Cons(1, LinkedList.Nil);
         {
             let res: Result<number, number> = Result.Err(21);
             let res = Result.map_error(res, to_str.<number>);

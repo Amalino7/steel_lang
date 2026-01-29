@@ -204,9 +204,13 @@ impl TypeSystem {
             Some(i.name.clone())
         } else if let Some(e) = self.enums.get(name) {
             Some(e.name.clone())
-        } else if name == "string" || name == "number" || name == "boolean" || name == "void" {
-            Some(name.into())
-        } else if name == "List" || name == "Map" {
+        } else if name == "string"
+            || name == "number"
+            || name == "boolean"
+            || name == "void"
+            || name == "List"
+            || name == "Map"
+        {
             Some(name.into())
         } else {
             None
