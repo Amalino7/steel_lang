@@ -13,3 +13,5 @@ let sum = list
     .sum();
 println(sum);
 println(list.len());
+
+println(list.contains(2)," ", list.contains(-60));

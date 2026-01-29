@@ -61,6 +61,15 @@ pub fn get_prelude() -> &'static str {
             }
         }
         impl<T> List<T> {
+            func contains(self, value: T): boolean {
+                let i = 0;
+                let contains = false;
+                while i < self.len() {
+                    contains = contains or (self[i] == value);
+                    i+=1;
+                }
+                return contains;
+            }
             func fold<U>(self, initial: U, f: func(U, T): U): U {
                 let result = initial;
                 let i = 0;
