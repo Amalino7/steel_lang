@@ -1,5 +1,5 @@
 use crate::vm::value::{
-    BoundMethod, Closure, EnumVariant, Function, Instance, InterfaceObj, VTable, Value,
+    BoundMethod, Closure, EnumVariant, Function, Instance, InterfaceObj, List, VTable, Value,
 };
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::fmt::{Debug, Display, Formatter};
@@ -175,6 +175,9 @@ impl GarbageCollector {
             Value::Enum(enum_variant) => {
                 self.mark(enum_variant);
             }
+            Value::List(list) => {
+                self.mark(list);
+            }
         }
     }
 
@@ -281,6 +284,13 @@ impl Trace for EnumVariant {
     fn trace(&self, gc: &mut GarbageCollector) {
         gc.mark_value(self.enum_name);
         gc.mark_value(self.payload);
+    }
+}
+impl Trace for List {
+    fn trace(&self, gc: &mut GarbageCollector) {
+        for e in self.vec.iter() {
+            gc.mark_value(*e);
+        }
     }
 }
 

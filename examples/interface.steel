@@ -1,0 +1,37 @@
+interface Vehicle {
+    func startEngine(self): void;
+    func stopEngine(self): void;
+    func getNumberOfWheels(self): number;
+}
+struct Car {}
+struct Motorcycle {}
+impl Car : Vehicle {
+    func startEngine(self): void {
+        println("Car engine started.");
+    }
+    func stopEngine(self): void {
+        println("Car engine stopped.");
+    }
+    func getNumberOfWheels(self): number {
+        return 4;
+    }
+}
+impl Motorcycle : Vehicle {
+    func startEngine(self): void {
+        println("Motorcycle engine started.");
+    }
+    func stopEngine(self): void {
+        println("Motorcycle engine stopped.");
+    }
+    func getNumberOfWheels(self): number {
+        return 2;
+    }
+}
+
+func vehicleDemo(vehicle: Vehicle): void {
+    vehicle.startEngine();
+    println("This vehicle has ", vehicle.getNumberOfWheels(), " wheels.");
+    vehicle.stopEngine();
+}
+vehicleDemo(Car());
+vehicleDemo(Motorcycle());

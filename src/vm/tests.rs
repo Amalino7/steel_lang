@@ -1868,3 +1868,23 @@ fn test_poly() {
     "#;
     execute_source(src, false, "run", true);
 }
+#[test]
+fn test_list() {
+    let src = r#"
+            func process(a: List<number>): number {
+                return a[0];
+            }
+            let list = [1,2,3,4,5];
+            assert(list[2], 3);
+            println(list[2]);
+            println(list);
+            list[1] = 10;
+            assert(list, [1,10,3,4,5]);
+            assert(process(list), 1);
+            list[2] = 10;
+            process([]);
+            assert(false, true);
+            println(list);
+        "#;
+    execute_source(src, false, "run", true);
+}

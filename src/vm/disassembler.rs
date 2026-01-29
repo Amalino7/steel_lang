@@ -136,6 +136,16 @@ pub fn disassemble_instruction(
             offset += 1;
             println!("SetField {}", bytecode[offset]);
         }
+        Opcode::GetIndex => {
+            println!("GetIndex");
+        }
+        Opcode::SetIndex => {
+            println!("SetIndex");
+        }
+        Opcode::MakeList => {
+            offset += 1;
+            println!("MakeList {}", bytecode[offset]);
+        }
         Opcode::EqualString => println!("EqualString"),
         Opcode::EqualNumber => println!("EqualNumber"),
         Opcode::BindMethod => println!("BindMethod"),

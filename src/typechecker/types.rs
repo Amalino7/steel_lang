@@ -83,11 +83,13 @@ pub enum Type {
     Struct(Symbol, GenericArgs),
     Interface(Symbol, GenericArgs),
     Enum(Symbol, GenericArgs),
+    List(Box<Type>),
+    Map(Box<Type>, Box<Type>),
     Any,
 }
 
 fn missing_generics(
-    type_name: &Symbol,
+    type_name: &str,
     generics_expected: &[Symbol],
     generics_provided: &[Type],
     line: u32,
@@ -129,6 +131,8 @@ impl Type {
             Type::Interface(_, args) => args.iter().all(|t| t.is_concrete()),
             Type::Enum(_, args) => args.iter().all(|t| t.is_concrete()),
             Type::Any => true,
+            Type::List(inner) => inner.is_concrete(),
+            Type::Map(key, value) => key.is_concrete() && value.is_concrete(),
         }
     }
 
@@ -159,6 +163,15 @@ impl Type {
             Ok(Type::Void)
         } else if name == "never" {
             Ok(Type::Never)
+        } else if name == "List" {
+            check_generic(name, &["T".into()])?;
+            Ok(Type::List(Box::new(generics[0].clone())))
+        } else if name == "Map" {
+            check_generic(name, &["K".into(), "V".into()])?;
+            Ok(Type::Map(
+                Box::new(generics[0].clone()),
+                Box::new(generics[1].clone()),
+            ))
         } else if let Some(struct_type) = type_system.get_struct(name) {
             check_generic(&struct_type.name, &struct_type.generic_params)?;
             Ok(Type::Struct(struct_type.name.clone(), Rc::new(generics)))
@@ -234,6 +247,8 @@ impl Type {
             Type::Enum(name, _) => Some(name),
             Type::Tuple(_) => None,
             Type::Metatype(_, _) => None,
+            Type::List(_) => Some("List"),
+            Type::Map(_, _) => Some("Map"),
         }
     }
     pub fn new_function(
@@ -413,6 +428,8 @@ impl Display for Type {
             Type::String => write!(f, "string"),
             Type::Void => write!(f, "void"),
             Type::Never => write!(f, "never"),
+            Type::List(inner) => write!(f, "List<{}>", inner),
+            Type::Map(key, value) => write!(f, "Map<{}, {}>", key, value),
             Type::Function(function_type) => {
                 write!(
                     f,

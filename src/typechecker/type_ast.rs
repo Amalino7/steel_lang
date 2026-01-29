@@ -112,6 +112,20 @@ pub enum ExprKind {
     Tuple {
         elements: Vec<TypedExpr>,
     },
+    List {
+        elements: Vec<TypedExpr>,
+    },
+    GetIndex {
+        object: Box<TypedExpr>,
+        index: Box<TypedExpr>,
+        safe: bool,
+    },
+    SetIndex {
+        object: Box<TypedExpr>,
+        index: Box<TypedExpr>,
+        value: Box<TypedExpr>,
+        safe: bool,
+    },
     Call {
         callee: Box<TypedExpr>, // 8 bytes
         arguments: Vec<TypedExpr>,

@@ -69,6 +69,11 @@ impl InferenceContext {
                 let resolved_args = args.iter().map(|t| self.substitute(t)).collect();
                 Type::Enum(name.clone(), Rc::new(resolved_args))
             }
+            Type::List(inner) => Type::List(Box::new(self.substitute(inner))),
+            Type::Map(key, value) => Type::Map(
+                Box::new(self.substitute(key)),
+                Box::new(self.substitute(value)),
+            ),
             Type::Metatype(_, _)
             | Type::Nil
             | Type::Number
@@ -156,6 +161,21 @@ impl InferenceContext {
                     self.unify_types(expected, provided)
                 } else {
                     self.unify_types(expected, provided)
+                }
+            }
+            Type::List(expected_inner) => {
+                if let Type::List(provided_inner) = provided {
+                    self.unify_types(expected_inner, provided_inner)
+                } else {
+                    mismatch(expected_ty, provided)
+                }
+            }
+            Type::Map(expected_key, expected_value) => {
+                if let Type::Map(provided_key, provided_value) = provided {
+                    self.unify_types(expected_key, provided_key)?;
+                    self.unify_types(expected_value, provided_value)
+                } else {
+                    mismatch(expected_ty, provided)
                 }
             }
             Type::Function(expected_inner) => {

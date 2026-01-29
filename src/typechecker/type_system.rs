@@ -65,6 +65,17 @@ impl TypeSystem {
             Type::Enum(name, args) => {
                 generics_to_map(&self.get_enum(name).unwrap().generic_params, args, None)
             }
+            Type::List(inner) => {
+                let mut map = HashMap::new();
+                map.insert("T".into(), *inner.clone());
+                map
+            }
+            Type::Map(key, value) => {
+                let mut map = HashMap::new();
+                map.insert("K".into(), *key.clone());
+                map.insert("V".into(), *value.clone());
+                map
+            }
             _ => HashMap::new(),
         }
     }
@@ -183,6 +194,8 @@ impl TypeSystem {
             || name == "number"
             || name == "boolean"
             || name == "void"
+            || name == "List"
+            || name == "Map"
     }
     pub fn get_owned_type_name(&self, name: &str) -> Option<Symbol> {
         if let Some(s) = self.structs.get(name) {
@@ -192,6 +205,8 @@ impl TypeSystem {
         } else if let Some(e) = self.enums.get(name) {
             Some(e.name.clone())
         } else if name == "string" || name == "number" || name == "boolean" || name == "void" {
+            Some(name.into())
+        } else if name == "List" || name == "Map" {
             Some(name.into())
         } else {
             None
@@ -205,6 +220,10 @@ impl TypeSystem {
             0
         } else if let Some(e) = self.enums.get(name) {
             e.generic_params.len()
+        } else if name == "List" {
+            1
+        } else if name == "Map" {
+            2
         } else {
             0
         }
@@ -266,6 +285,13 @@ impl TypeSystem {
             Type::Optional(inner) => {
                 Type::Optional(Box::new(Self::generic_to_concrete(*inner, generics_map)))
             }
+            Type::List(inner) => {
+                Type::List(Box::new(Self::generic_to_concrete(*inner, generics_map)))
+            }
+            Type::Map(key_type, value_type) => Type::Map(
+                Box::new(Self::generic_to_concrete(*key_type, generics_map)),
+                Box::new(Self::generic_to_concrete(*value_type, generics_map)),
+            ),
             Type::Function(func_type) => {
                 if func_type.is_vararg {
                     return Type::Function(func_type);

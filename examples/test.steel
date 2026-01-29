@@ -1,0 +1,11 @@
+func fib(n: number): number {
+    if n < 2 {
+        return n;
+    }
+    return fib(n - 1) + fib(n - 2);
+}
+
+// fib 40 -> 15,4790556; -> 4,680
+print(fib(35));
+//print(fib(37)); // -> 1,792
+//print(fib(35)); // 1,45 -> 0,7652519/0,7468387 -> 0,493

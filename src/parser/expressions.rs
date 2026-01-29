@@ -80,8 +80,20 @@ impl<'src> Parser<'src> {
                 field,
                 value: Box::new(value),
             })
+        } else if let Expr::GetIndex {
+            safe,
+            object,
+            index,
+        } = expr
+        {
+            Ok(Expr::SetIndex {
+                safe,
+                object,
+                index,
+                value: Box::new(value),
+            })
         } else {
-            Err(self.error_current("Invalid assignment target."))
+            Err(self.error_previous("Invalid assignment target."))
         }
     }
 
@@ -233,6 +245,27 @@ impl<'src> Parser<'src> {
                     callee: Box::new(expr),
                     generics,
                 };
+            } else if check_token_type!(self, TokT::Dot)
+                && check_next_token_type!(self, TokT::LeftBracket)
+            {
+                self.consume(TokT::Dot, "unreachable")?;
+                self.consume(TokT::LeftBracket, "unreachable")?;
+
+                let index = self.expression()?;
+                self.consume(TokT::RightBracket, "Expected ']' after index.")?;
+                expr = Expr::GetIndex {
+                    safe: true,
+                    object: Box::new(expr),
+                    index: Box::new(index),
+                };
+            } else if match_token_type!(self, TokT::LeftBracket) {
+                let index = self.expression()?;
+                self.consume(TokT::RightBracket, "Expected ']' after index.")?;
+                expr = Expr::GetIndex {
+                    safe: false,
+                    object: Box::new(expr),
+                    index: Box::new(index),
+                };
             } else if match_token_type!(self, TokT::Dot) {
                 if match_token_type!(self, TokT::Number) {
                     let idx = self.previous_token.clone();
@@ -332,6 +365,52 @@ impl<'src> Parser<'src> {
             TokT::Self_ => Ok(Expr::Variable {
                 name: self.previous_token.clone(),
             }),
+            TokT::LeftBracket => {
+                let bracket_token = self.previous_token.clone();
+                if match_token_type!(self, TokT::RightBracket) {
+                    return Ok(Expr::List {
+                        elements: vec![],
+                        bracket_token,
+                    });
+                } else if match_token_type!(self, TokT::Colon) {
+                    self.consume(TokT::RightBracket, "Expected ']' after : in map literal.")?;
+                }
+
+                let first_expr = self.expression()?;
+                // Map [key:value]
+                if match_token_type!(self, TokT::Colon) {
+                    let first_val = self.expression()?;
+                    let mut kv_pairs = vec![(first_expr, first_val)];
+
+                    while match_token_type!(self, TokT::Comma) {
+                        if check_token_type!(self, TokT::RightBracket) {
+                            break;
+                        }
+                        let key = self.expression()?;
+                        self.consume(TokT::Colon, "Expected ':' separating key and value in map.")?;
+                        let value = self.expression()?;
+                        kv_pairs.push((key, value));
+                    }
+                    self.consume(TokT::RightBracket, "Expected ']' after map entries.")?;
+                    Ok(Expr::Map {
+                        kv_pairs,
+                        bracket_token,
+                    })
+                } else {
+                    let mut elements = vec![first_expr];
+                    while match_token_type!(self, TokT::Comma) {
+                        if check_token_type!(self, TokT::RightBracket) {
+                            break;
+                        }
+                        elements.push(self.expression()?);
+                    }
+                    self.consume(TokT::RightBracket, "Expected ']' after list elements.")?;
+                    Ok(Expr::List {
+                        elements,
+                        bracket_token,
+                    })
+                }
+            }
             TokT::LeftParen => {
                 let expr = self.expression()?;
                 let mut tuple_args = vec![];
