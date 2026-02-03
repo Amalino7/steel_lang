@@ -133,14 +133,37 @@ pub enum ExprKind {
         safe: bool,
     },
 }
+
+impl TypedStmt {
+    pub(crate) fn new_blank(span: Span) -> Self {
+        Self {
+            kind: StmtKind::Blank,
+            span,
+            type_info: Type::Void,
+        }
+    }
+}
+
+impl TypedExpr {
+    pub(crate) fn new_blank(span: Span) -> Self {
+        Self {
+            kind: ExprKind::Literal(Literal::Nil),
+            span,
+            ty: Type::Unknown,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct TypedStmt {
     pub kind: StmtKind,
     pub span: Span,
     pub type_info: Type,
 }
+
 #[derive(Debug)]
 pub enum StmtKind {
+    Blank,
     Impl {
         methods: Box<[TypedStmt]>, // optimizes memory layout
         vtables: Box<[Vec<ResolvedVar>]>,

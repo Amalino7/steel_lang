@@ -1,7 +1,7 @@
 use crate::parser::ast::Stmt;
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::scope_manager::ScopeType;
-use crate::typechecker::type_ast::{StmtKind, TypedRefinements, TypedStmt};
+use crate::typechecker::type_ast::{StmtKind, TypedExpr, TypedRefinements, TypedStmt};
 use crate::typechecker::types::Type;
 use crate::typechecker::{FunctionContext, TypeChecker};
 
@@ -18,20 +18,37 @@ impl<'src> TypeChecker<'src> {
                 value,
                 type_info,
             } => {
-                let declared_type = Type::from_ast(type_info, &self.sys)?;
-                let coerced_value = self.coerce_expression(value, &declared_type)?;
+                let declared_type = Type::from_ast(type_info, &self.sys)
+                    .map_err(|err| self.errors.push(err))
+                    .unwrap_or(Type::Unknown);
+
+                let coerced_value = self
+                    .coerce_expression(value, &declared_type)
+                    .map_err(|err| self.errors.push(err));
+
                 let final_type = if declared_type == Type::Unknown {
-                    coerced_value.ty.clone()
+                    coerced_value
+                        .as_ref()
+                        .map(|t| t.ty.clone())
+                        .unwrap_or(Type::Unknown)
                 } else {
                     declared_type
                 };
-                let typed_binding = self.check_binding(binding, &final_type)?;
-
-                Ok(TypedStmt {
-                    kind: StmtKind::Let {
+                let typed_binding = self
+                    .check_binding(binding, &final_type)
+                    .map_err(|err| self.errors.push(err));
+                let kind = if let Ok(typed_binding) = typed_binding
+                    && let Ok(coerced_value) = coerced_value
+                {
+                    StmtKind::Let {
                         binding: typed_binding,
                         value: coerced_value,
-                    },
+                    }
+                } else {
+                    StmtKind::Blank
+                };
+                Ok(TypedStmt {
+                    kind,
                     type_info: Type::Void,
                     span: binding.span(),
                 })
@@ -44,11 +61,15 @@ impl<'src> TypeChecker<'src> {
             } => self.define_impl(impl_block, interfaces, name, methods, generics),
             Stmt::Block { body, brace_token } => {
                 self.scopes.begin_scope(ScopeType::Block);
-                let stmts = body
-                    .iter()
-                    .map(|stmt| self.check_stmt(stmt))
-                    .collect::<Result<Vec<TypedStmt>, TypeCheckerError>>()?;
-
+                let mut stmts = vec![];
+                for s in body {
+                    match self.check_stmt(s) {
+                        Ok(typed) => stmts.push(typed),
+                        Err(e) => {
+                            self.errors.push(e);
+                        }
+                    }
+                }
                 self.scopes.end_scope();
 
                 Ok(TypedStmt {
@@ -65,9 +86,14 @@ impl<'src> TypeChecker<'src> {
                 then_branch,
                 else_branch,
             } => {
-                let cond_typed = self.check_expression(condition, Some(&Type::Boolean))?;
+                let cond_typed = self
+                    .check_expression(condition, Some(&Type::Boolean))
+                    .unwrap_or_else(|e| {
+                        self.errors.push(e);
+                        TypedExpr::new_blank(condition.span())
+                    });
 
-                if cond_typed.ty != Type::Boolean {
+                if cond_typed.ty != Type::Boolean && cond_typed.ty != Type::Unknown {
                     return Err(TypeCheckerError::TypeMismatch {
                         expected: Type::Boolean,
                         found: cond_typed.ty,
@@ -88,7 +114,10 @@ impl<'src> TypeChecker<'src> {
                         typed_refinements.true_path.push(case)
                     }
                 }
-                let then_branch_typed = self.check_stmt(then_branch)?;
+                let then_branch_typed = self.check_stmt(then_branch).unwrap_or_else(|err| {
+                    self.errors.push(err);
+                    TypedStmt::new_blank(stmt.span())
+                });
                 self.scopes.end_scope();
 
                 let else_branch_typed = if let Some(else_branch) = else_branch {
@@ -98,15 +127,15 @@ impl<'src> TypeChecker<'src> {
                             typed_refinements.else_path.push(case)
                         }
                     }
-                    let stmt = self.check_stmt(else_branch)?;
+                    let stmt = self.check_stmt(else_branch);
                     self.scopes.end_scope();
-                    Some(Box::new(stmt))
+                    Some(Box::new(stmt?))
                 } else {
                     None
                 };
 
                 // Guard logic
-                if self.stmt_returns(&then_branch_typed)? {
+                if self.stmt_returns(&then_branch_typed).unwrap_or(false) {
                     for (name, ty) in refinements.false_path {
                         if let Some(case) = self.scopes.refine(&name, ty.clone()) {
                             typed_refinements.after_path.push(case)
@@ -114,7 +143,7 @@ impl<'src> TypeChecker<'src> {
                     }
                 }
                 if let Some(else_branch_typed) = &else_branch_typed
-                    && self.stmt_returns(else_branch_typed)?
+                    && self.stmt_returns(else_branch_typed).unwrap_or(false)
                 {
                     for (name, ty) in refinements.true_path {
                         if let Some(case) = self.scopes.refine(&name, ty.clone()) {
@@ -135,8 +164,12 @@ impl<'src> TypeChecker<'src> {
                 })
             }
             Stmt::While { condition, body } => {
-                let cond_type = self.check_expression(condition, Some(&Type::Boolean))?;
-                let body = self.check_stmt(body)?;
+                let cond_type = self
+                    .check_expression(condition, Some(&Type::Boolean))
+                    .unwrap_or_else(|err| {
+                        self.errors.push(err);
+                        TypedExpr::new_blank(condition.span())
+                    });
                 if cond_type.ty != Type::Boolean {
                     return Err(TypeCheckerError::TypeMismatch {
                         expected: Type::Boolean,
@@ -145,6 +178,8 @@ impl<'src> TypeChecker<'src> {
                         message: "While value must be a boolean.",
                     });
                 }
+
+                let body = self.check_stmt(body)?;
 
                 Ok(TypedStmt {
                     kind: StmtKind::While {

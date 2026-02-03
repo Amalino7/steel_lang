@@ -33,6 +33,5 @@ func vehicleDemo(vehicle: Vehicle): void {
     println("This vehicle has ", vehicle.getNumberOfWheels(), " wheels.");
     vehicle.stopEngine();
 }
-let a = 1 * ("q" + 2);
-vehicleDemo(vehicle: 10 + 3 / 2);
+vehicleDemo(vehicle: Car());
 vehicleDemo(Motorcycle());

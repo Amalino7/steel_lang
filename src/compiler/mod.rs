@@ -43,6 +43,7 @@ impl<'a> Compiler<'a> {
 
                 self.compile_binding(binding, stmt.span.line);
             }
+            StmtKind::Blank => {}
             StmtKind::Block {
                 body: stmts,
                 reserved,
@@ -105,7 +106,8 @@ impl<'a> Compiler<'a> {
                             self.emit_byte(*variant_idx as u8, stmt.span.line);
 
                             // Similar to if
-                            let next_case_jump = self.emit_jump(Opcode::JumpIfFalse, stmt.span.line);
+                            let next_case_jump =
+                                self.emit_jump(Opcode::JumpIfFalse, stmt.span.line);
                             self.emit_op(Opcode::Pop, stmt.span.line);
 
                             self.emit_op(Opcode::DestructureEnum, stmt.span.line);
@@ -541,7 +543,10 @@ impl<'a> Compiler<'a> {
                     self.emit_op(Opcode::Call, callee.span.line);
                     self.emit_byte(
                         arguments.len() as u8,
-                        arguments.last().map(|e| e.span.line).unwrap_or(callee.span.line),
+                        arguments
+                            .last()
+                            .map(|e| e.span.line)
+                            .unwrap_or(callee.span.line),
                     );
 
                     if *safe {
@@ -722,4 +727,3 @@ impl<'a> Compiler<'a> {
         self.chunk().write_op(byte, line as usize);
     }
 }
-

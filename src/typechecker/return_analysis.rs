@@ -14,6 +14,7 @@ impl<'src> TypeChecker<'src> {
     }
     fn check_stmt_returns(&mut self, stmt: &TypedStmt) -> Result<(), TypeCheckerError> {
         match &stmt.kind {
+            StmtKind::Blank => Ok(()),
             StmtKind::Match { cases, .. } => {
                 for case in cases {
                     match case {
@@ -69,6 +70,7 @@ impl<'src> TypeChecker<'src> {
     #[allow(clippy::only_used_in_recursion)]
     pub fn stmt_returns(&mut self, stmt: &TypedStmt) -> Result<bool, TypeCheckerError> {
         Ok(match &stmt.kind {
+            StmtKind::Blank => false,
             StmtKind::Expression(_) => false,
             StmtKind::Let { .. } => false,
             StmtKind::Block { body, .. } => {
