@@ -4,7 +4,7 @@ use crate::parser::ast::{
 use crate::parser::error::ParserError;
 use crate::parser::{check_next_token_type, TokT};
 use crate::parser::{check_token_type, match_token_type, Parser};
-use crate::token::{Token, TokenType};
+use crate::scanner::{Token, TokenType};
 
 impl<'src> Parser<'src> {
     pub(super) fn declaration(&mut self) -> Result<Stmt<'src>, ParserError<'src>> {
@@ -173,7 +173,7 @@ impl<'src> Parser<'src> {
                     param_types.push(TypeAst::Named(
                         Token {
                             token_type: TokenType::Identifier,
-                            line: self.previous_token.line,
+                            span: self.previous_token.span,
                             lexeme: "Self",
                         },
                         vec![],
@@ -196,7 +196,7 @@ impl<'src> Parser<'src> {
             self.type_block()?
         } else {
             TypeAst::Named(
-                Token::new(TokenType::Identifier, self.previous_token.line, "void"),
+                Token::new(TokenType::Identifier, self.previous_token.span, "void"),
                 vec![],
             )
         };
@@ -245,7 +245,7 @@ impl<'src> Parser<'src> {
                     self.type_block()?
                 } else {
                     TypeAst::Named(
-                        Token::new(TokenType::Identifier, self.previous_token.line, "void"),
+                        Token::new(TokenType::Identifier, self.previous_token.span, "void"),
                         vec![],
                     )
                 };
@@ -312,7 +312,7 @@ impl<'src> Parser<'src> {
             } else {
                 Expr::Literal {
                     literal: Literal::Void,
-                    line: self.previous_token.line,
+                    span: self.previous_token.span,
                 }
             };
             Ok(Stmt::Return(val))

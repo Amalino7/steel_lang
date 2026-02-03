@@ -1,4 +1,5 @@
 use crate::parser::ast::Stmt;
+use crate::scanner::Span;
 use crate::stdlib::NativeDef;
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::inference::InferenceContext;
@@ -104,7 +105,7 @@ impl<'src> TypeChecker<'src> {
                     stmts: typed_ast,
                     reserved,
                 },
-                line: 1,
+                span: Span::default(),
                 type_info: Type::Void,
             })
         }
@@ -113,7 +114,7 @@ impl<'src> TypeChecker<'src> {
     fn register_globals(&mut self, natives: &[NativeDef]) {
         for native in natives.iter() {
             self.scopes
-                .declare(native.name.into(), native.type_.clone())
+                .declare(native.name.into(), native.type_.clone(), Span::default())
                 .expect("Failed to register global");
         }
     }

@@ -1,5 +1,5 @@
 use crate::parser::ast::Expr;
-use crate::token::{Token, TokenType};
+use crate::scanner::{Token, TokenType};
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::scope_manager::ScopeType;
 use crate::typechecker::type_ast::{BinaryOp, ExprKind, LogicalOp, TypedExpr, UnaryOp};
@@ -17,6 +17,7 @@ impl<'src> TypeChecker<'src> {
         let typed_operand = self.check_expression(expr, expected_type)?;
         let operand_type = typed_operand.ty.clone();
 
+        let total_span = typed_operand.span.merge(operator.span);
         if operator.token_type == TokenType::Bang {
             if operand_type == Type::Boolean {
                 Ok(TypedExpr {
@@ -25,13 +26,13 @@ impl<'src> TypeChecker<'src> {
                         operator: UnaryOp::Not,
                         operand: Box::new(typed_operand),
                     },
-                    line: operator.line,
+                    span: total_span,
                 })
             } else {
                 Err(TypeCheckerError::TypeMismatch {
                     expected: Type::Boolean,
                     found: operand_type,
-                    line: operator.line,
+                    span: typed_operand.span,
                     message: "Expected boolean but found something else.",
                 })
             }
@@ -43,18 +44,18 @@ impl<'src> TypeChecker<'src> {
                         operator: UnaryOp::Negate,
                         operand: Box::new(typed_operand),
                     },
-                    line: operator.line,
+                    span: total_span,
                 })
             } else {
                 Err(TypeCheckerError::TypeMismatch {
                     expected: Type::Number,
                     found: operand_type,
-                    line: operator.line,
+                    span: typed_operand.span,
                     message: "Expected number but found something else.",
                 })
             }
         } else {
-            unreachable!("Ast should be checked for invalid operators before this point.")
+            unreachable!("Ast should have checked for invalid operators before this point.")
         }
     }
 
@@ -92,7 +93,7 @@ impl<'src> TypeChecker<'src> {
             return Err(TypeCheckerError::TypeMismatch {
                 expected: Type::Boolean,
                 found: left_type.clone(),
-                line: operator.line,
+                span: operator.span,
                 message: "Expected boolean but found something else.",
             });
         }
@@ -101,7 +102,7 @@ impl<'src> TypeChecker<'src> {
             return Err(TypeCheckerError::TypeMismatch {
                 expected: Type::Boolean,
                 found: right_type.clone(),
-                line: operator.line,
+                span: operator.span,
                 message: "Expected boolean but found something else.",
             });
         }
@@ -120,7 +121,7 @@ impl<'src> TypeChecker<'src> {
                 right: Box::new(right_typed),
                 typed_refinements,
             },
-            line: operator.line,
+            span: operator.span,
         })
     }
     pub(crate) fn check_binary_expression(
@@ -135,6 +136,8 @@ impl<'src> TypeChecker<'src> {
 
         let left_type = left_typed.ty.clone();
         let right_type = right_typed.ty.clone();
+
+        let total_span = left_typed.span.merge(right_typed.span);
 
         match operator.token_type {
             TokenType::Minus | TokenType::Slash | TokenType::Star => {
@@ -153,18 +156,19 @@ impl<'src> TypeChecker<'src> {
                             operator: op,
                             right: Box::new(right_typed),
                         },
-                        line: operator.line,
+                        span: total_span,
                     })
                 } else {
+                    let (error_span, found) = if left_type != Type::Number {
+                        (left_typed.span, left_type)
+                    } else {
+                        (right_typed.span, right_type)
+                    };
                     Err(TypeCheckerError::TypeMismatch {
                         expected: Type::Number,
-                        found: if left_type != Type::Number {
-                            left_type
-                        } else {
-                            right_type
-                        },
-                        line: operator.line,
-                        message: "Expected number but found something else.",
+                        found,
+                        span: error_span,
+                        message: "Expected number type for arithmetic operation",
                     })
                 }
             }
@@ -177,7 +181,7 @@ impl<'src> TypeChecker<'src> {
                             operator: BinaryOp::Add,
                             right: Box::new(right_typed),
                         },
-                        line: operator.line,
+                        span: total_span,
                     })
                 } else if left_type == Type::String && right_type == Type::String {
                     Ok(TypedExpr {
@@ -187,13 +191,13 @@ impl<'src> TypeChecker<'src> {
                             operator: BinaryOp::Concat,
                             right: Box::new(right_typed),
                         },
-                        line: operator.line,
+                        span: total_span,
                     })
                 } else {
                     Err(TypeCheckerError::TypeMismatch {
                         expected: left_type,
                         found: right_type,
-                        line: operator.line,
+                        span: total_span,
                         message: "Operands to '+' must be both numbers or both strings.",
                     })
                 }
@@ -224,14 +228,30 @@ impl<'src> TypeChecker<'src> {
                             operator: op,
                             right: Box::new(right_typed),
                         },
-                        line: operator.line,
+                        span: total_span,
                     })
                 } else {
+                    if left_type == Type::Number {
+                        return Err(TypeCheckerError::TypeMismatch {
+                            expected: Type::Number,
+                            found: left_type,
+                            span: right_typed.span,
+                            message: "Expected number for comparison.",
+                        });
+                    }
+                    if left_type == Type::String {
+                        return Err(TypeCheckerError::TypeMismatch {
+                            expected: Type::String,
+                            found: left_type,
+                            span: right_typed.span,
+                            message: "Expected string for comparison.",
+                        });
+                    }
                     Err(TypeCheckerError::TypeMismatch {
-                        expected: Type::Number,
+                        expected: right_type,
                         found: left_type,
-                        line: operator.line,
-                        message: "Expected number but found something else.",
+                        span: left_typed.span,
+                        message: "Cannot compare different types than numbers or strings.",
                     })
                 }
             }
@@ -250,7 +270,7 @@ impl<'src> TypeChecker<'src> {
                             operator: op,
                             right: Box::new(right_typed),
                         },
-                        line: operator.line,
+                        span: total_span,
                     };
 
                     if operator.token_type == TokenType::BangEqual {
@@ -260,7 +280,7 @@ impl<'src> TypeChecker<'src> {
                                 operator: UnaryOp::Not,
                                 operand: Box::new(binary_expr),
                             },
-                            line: operator.line,
+                            span: total_span,
                         })
                     } else {
                         Ok(binary_expr)
@@ -269,7 +289,7 @@ impl<'src> TypeChecker<'src> {
                     Err(TypeCheckerError::TypeMismatch {
                         expected: left_type,
                         found: right_type,
-                        line: operator.line,
+                        span: total_span,
                         message: "Expected the same type but found something else.",
                     })
                 }

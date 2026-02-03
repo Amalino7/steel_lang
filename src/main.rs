@@ -9,24 +9,37 @@ use crate::typechecker::TypeChecker;
 use crate::vm::disassembler::disassemble_chunk;
 use crate::vm::gc::GarbageCollector;
 use crate::vm::VM;
+use ariadne::{Color, Label, Report, ReportKind, Source};
 use std::env::args;
 use std::fs;
+
 mod compiler;
 mod parser;
 mod scanner;
 mod stdlib;
-mod token;
 mod typechecker;
 mod vm;
 
-pub fn execute_source(source: &str, debug: bool, mode: &str, force: bool) {
+pub fn run_file(file_name: &str, source: &str, debug: bool, mode: &str, force: bool) {
     let scanner = Scanner::new(source);
     let mut parser = Parser::new(scanner);
 
     let ast = parser.parse();
-    if !force && let Err(e) = &ast {
-        for err in e {
-            println!("{err}");
+    if !force && let Err(errors) = &ast {
+        for err in errors {
+            let span = err.span();
+            let span_range = span.start..span.end;
+
+            Report::build(ReportKind::Error, file_name, span.start)
+                .with_message("Syntax Error")
+                .with_label(
+                    Label::new((file_name, span_range))
+                        .with_message(err.message())
+                        .with_color(Color::Red),
+                )
+                .finish()
+                .print((file_name, Source::from(source)))
+                .unwrap();
         }
         return;
     }
@@ -47,14 +60,18 @@ pub fn execute_source(source: &str, debug: bool, mode: &str, force: bool) {
     let analysis = typechecker.check(&ast);
     if !force && let Err(e) = &analysis {
         for err in e {
-            println!("{err}");
-            let error_line = err.get_line() as usize - 1;
-            source.lines().enumerate().for_each(|(i, line)| {
-                if error_line == i {
-                    println!("{line}");
-                }
-            });
-            println!("======================");
+            let span = err.span();
+            let span_range = span.start..span.end;
+            Report::build(ReportKind::Error, file_name, span.start)
+                .with_message("Syntactic Error")
+                .with_label(
+                    Label::new((file_name, span_range))
+                        .with_message(err.message())
+                        .with_color(Color::Red),
+                )
+                .finish()
+                .print((file_name, Source::from(source)))
+                .unwrap();
         }
         return;
     }
@@ -99,14 +116,17 @@ pub fn execute_source(source: &str, debug: bool, mode: &str, force: bool) {
         }
     }
 }
+pub fn execute_source(source: &str, debug: bool, mode: &str, force: bool) {
+    run_file("test.steel", source, debug, mode, force);
+}
 
 fn main() {
     let source_path = args().nth(1).expect("No source file provided.");
-    let mut source = fs::read_to_string(source_path).expect("Failed to read source file.");
+    let mut source = fs::read_to_string(source_path.clone()).expect("Failed to read source file.");
     source += stdlib::get_prelude();
     let mode = args().nth(2).unwrap_or_else(|| "run".to_string());
     let force = args().any(|arg| arg == "-f");
     let debug = args().any(|arg| arg == "-d");
 
-    execute_source(source.as_str(), debug, mode.as_str(), force);
+    run_file(&source_path, source.as_str(), debug, mode.as_str(), force);
 }

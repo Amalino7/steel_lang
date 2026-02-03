@@ -1,5 +1,5 @@
 use crate::parser::ast::{CallArg, Expr, Literal};
-use crate::token::Token;
+use crate::scanner::{Span, Token};
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::type_ast::{ExprKind, TypedExpr};
 use crate::typechecker::type_system::{generics_to_map, TySys, TypeSystem};
@@ -57,10 +57,10 @@ impl<'src> TypeChecker<'src> {
                 value: Box::new(TypedExpr {
                     ty: Type::Nil,
                     kind: ExprKind::Literal(Literal::Nil),
-                    line: variant_name.line,
+                    span: variant_name.span,
                 }),
             },
-            line: variant_name.line,
+            span: variant_name.span,
         })
     }
     pub(crate) fn handle_enum_call(
@@ -69,7 +69,7 @@ impl<'src> TypeChecker<'src> {
         variant_type: &Type,
         map: &HashMap<Symbol, Type>,
         inferred_args: &Vec<CallArg<'src>>,
-        line: u32,
+        span: Span,
     ) -> Result<TypedExpr, TypeCheckerError> {
         let bind_and_process = |this: &mut Self,
                                 raw_params: Vec<(String, Type)>|
@@ -80,11 +80,10 @@ impl<'src> TypeChecker<'src> {
                 .collect();
 
             this.bind_arguments(
-                _variant_name.as_ref(),
+                span,
                 &concrete_params,
                 inferred_args,
                 false,
-                line,
             )
         };
 
@@ -112,7 +111,7 @@ impl<'src> TypeChecker<'src> {
                         name: Box::from(struct_name.to_string()),
                         args: bound_args,
                     },
-                    line,
+                    span,
                 }
             }
 
@@ -139,7 +138,7 @@ impl<'src> TypeChecker<'src> {
                     kind: ExprKind::Tuple {
                         elements: bound_args,
                     },
-                    line,
+                    span,
                 }
             }
 
@@ -150,8 +149,7 @@ impl<'src> TypeChecker<'src> {
                 let mut bound_args = bind_and_process(self, params)?;
                 bound_args.pop().ok_or(TypeCheckerError::MissingArgument {
                     param_name: "value".into(),
-                    callee: _variant_name.to_string(),
-                    line,
+                    span,
                 })?
             }
         };
@@ -171,7 +169,7 @@ impl<'src> TypeChecker<'src> {
             self.scopes
                 .lookup(mangled_name.as_str())
                 .ok_or(TypeCheckerError::UndefinedMethod {
-                    line: method_name.line,
+                    span: method_name.span,
                     found: Type::Struct(Rc::from(type_name.to_string()), vec![].into()),
                     method_name: method_name.lexeme.to_string(),
                 })?;
@@ -190,7 +188,7 @@ impl<'src> TypeChecker<'src> {
         Ok(TypedExpr {
             ty,
             kind: ExprKind::GetVar(resolved_var, ctx.name.clone()),
-            line: method_name.line,
+            span: method_name.span,
         })
     }
     pub(crate) fn resolve_instance_access(
@@ -201,7 +199,7 @@ impl<'src> TypeChecker<'src> {
     ) -> Result<TypedExpr, TypeCheckerError> {
         let actual_ty = object_typed
             .ty
-            .unwrap_optional_safe(is_safe, member_token.line)?;
+            .unwrap_optional_safe(is_safe, member_token.span)?;
 
         if let Ok((idx, field_type)) = self.sys.resolve_member_type(&actual_ty, member_token) {
             let mut expr = TypedExpr {
@@ -211,7 +209,7 @@ impl<'src> TypeChecker<'src> {
                     index: idx,
                     safe: is_safe,
                 },
-                line: member_token.line,
+                span: member_token.span,
             };
             if is_safe {
                 expr.ty = expr.ty.wrap_in_optional();
@@ -242,7 +240,7 @@ impl<'src> TypeChecker<'src> {
         let iface = self.sys.get_interface(name).unwrap();
         let Some((idx, method_ty)) = iface.methods.get(member_token.lexeme) else {
             return Err(TypeCheckerError::UndefinedMethod {
-                line: member_token.line,
+                span: member_token.span,
                 found: Type::Interface(iface.name.clone(), generics.clone()),
                 method_name: member_token.lexeme.to_string(),
             });
@@ -263,7 +261,7 @@ impl<'src> TypeChecker<'src> {
                 method_index: *idx as u8,
                 safe: is_safe,
             },
-            line: member_token.line,
+            span: member_token.span,
         })
     }
 
@@ -278,7 +276,7 @@ impl<'src> TypeChecker<'src> {
             .get_name()
             .ok_or_else(|| TypeCheckerError::TypeHasNoFields {
                 found: obj_type.clone(),
-                line: object_expr.line,
+                span: object_expr.span,
             })?;
 
         // Type.method
@@ -288,7 +286,7 @@ impl<'src> TypeChecker<'src> {
             self.scopes
                 .lookup(&mangled_name)
                 .ok_or_else(|| TypeCheckerError::UndefinedMethod {
-                    line: method_token.line,
+                    span: method_token.span,
                     found: obj_type.clone(),
                     method_name: method_token.lexeme.to_string(),
                 })?;
@@ -298,7 +296,7 @@ impl<'src> TypeChecker<'src> {
         {
             return Err(TypeCheckerError::StaticMethodOnInstance {
                 method_name: method_token.lexeme.to_string(),
-                line: method_token.line,
+                span: method_token.span,
             });
         }
 
@@ -312,7 +310,7 @@ impl<'src> TypeChecker<'src> {
                     .map_err(|msg| TypeCheckerError::ComplexTypeMismatch {
                         expected: expected_self,
                         found: obj_type.clone(),
-                        line: method_token.line,
+                        span: method_token.span,
                         message: msg,
                     })?;
 
@@ -353,7 +351,7 @@ impl<'src> TypeChecker<'src> {
                 method: resolved_var,
                 safe,
             },
-            line: method_token.line,
+            span: method_token.span,
         })
     }
     pub(crate) fn with_member_access<F>(
@@ -367,7 +365,7 @@ impl<'src> TypeChecker<'src> {
         F: FnOnce(&mut Self, TypedExpr, u8, Type) -> Result<TypedExpr, TypeCheckerError>,
     {
         let object_typed = self.check_expression(object_expr, None)?;
-        let parent_type = object_typed.ty.unwrap_optional_safe(safe, field.line)?;
+        let parent_type = object_typed.ty.unwrap_optional_safe(safe, field.span)?;
 
         let (index, field_type) = self.sys.resolve_member_type(&parent_type, field)?;
         callback(self, object_typed, index, field_type)

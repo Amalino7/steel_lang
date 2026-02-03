@@ -10,7 +10,7 @@ impl<'src> TypeChecker<'src> {
         match stmt {
             Stmt::Expression(expr) => Ok(TypedStmt {
                 kind: StmtKind::Expression(self.check_expression(expr, None)?),
-                line: stmt.get_line(),
+                span: stmt.span(),
                 type_info: Type::Void,
             }),
             Stmt::Let {
@@ -33,15 +33,15 @@ impl<'src> TypeChecker<'src> {
                         value: coerced_value,
                     },
                     type_info: Type::Void,
-                    line: binding.get_line(),
+                    span: binding.span(),
                 })
             }
-            Stmt::Impl {
+            impl_block @ Stmt::Impl {
                 interfaces,
                 name,
                 methods,
                 generics,
-            } => self.define_impl(interfaces, name, methods, generics),
+            } => self.define_impl(impl_block, interfaces, name, methods, generics),
             Stmt::Block { body, brace_token } => {
                 self.scopes.begin_scope(ScopeType::Block);
                 let stmts = body
@@ -57,7 +57,7 @@ impl<'src> TypeChecker<'src> {
                         reserved: 0, // Only function scopes have reserved
                     },
                     type_info: Type::Void,
-                    line: brace_token.line,
+                    span: stmt.span().merge(brace_token.span),
                 })
             }
             Stmt::If {
@@ -71,7 +71,7 @@ impl<'src> TypeChecker<'src> {
                     return Err(TypeCheckerError::TypeMismatch {
                         expected: Type::Boolean,
                         found: cond_typed.ty,
-                        line: condition.get_line(),
+                        span: condition.span(),
                         message: "If value must be a boolean.",
                     });
                 }
@@ -131,7 +131,7 @@ impl<'src> TypeChecker<'src> {
                         typed_refinements: Box::new(typed_refinements),
                     },
                     type_info: Type::Void,
-                    line: condition.get_line(),
+                    span: stmt.span(),
                 })
             }
             Stmt::While { condition, body } => {
@@ -141,7 +141,7 @@ impl<'src> TypeChecker<'src> {
                     return Err(TypeCheckerError::TypeMismatch {
                         expected: Type::Boolean,
                         found: cond_type.ty,
-                        line: condition.get_line(),
+                        span: condition.span(),
                         message: "While value must be a boolean.",
                     });
                 }
@@ -152,7 +152,7 @@ impl<'src> TypeChecker<'src> {
                         body: Box::new(body),
                     },
                     type_info: Type::Void,
-                    line: condition.get_line(),
+                    span: stmt.span(),
                 })
             }
             Stmt::Function {
@@ -170,7 +170,7 @@ impl<'src> TypeChecker<'src> {
 
                 if !self.scopes.is_global() {
                     self.scopes
-                        .declare(name.lexeme.into(), final_type.clone())?;
+                        .declare(name.lexeme.into(), final_type.clone(), name.span)?;
                 }
 
                 let res = self.check_function(name, params, body, final_type, name.lexeme.into());
@@ -182,13 +182,11 @@ impl<'src> TypeChecker<'src> {
                     let coerced_return = self.coerce_expression(expr, &func_return_type)?;
                     Ok(TypedStmt {
                         kind: StmtKind::Return(coerced_return),
-                        line: expr.get_line(),
+                        span: expr.span(),
                         type_info: Type::Void,
                     })
                 } else {
-                    Err(TypeCheckerError::InvalidReturnOutsideFunction {
-                        line: expr.get_line(),
-                    })
+                    Err(TypeCheckerError::InvalidReturnOutsideFunction { span: expr.span() })
                 }
             }
 
@@ -197,12 +195,12 @@ impl<'src> TypeChecker<'src> {
                 if !self.scopes.is_global() {
                     Err(TypeCheckerError::StructOutsideOfGlobalScope {
                         name: name.lexeme.to_string(),
-                        line: name.line,
+                        span: name.span,
                     })
                 } else {
                     Ok(TypedStmt {
                         kind: StmtKind::StructDecl {},
-                        line: name.line,
+                        span: stmt.span(),
                         type_info: Type::Void,
                     })
                 }
@@ -211,13 +209,13 @@ impl<'src> TypeChecker<'src> {
                 if !self.scopes.is_global() {
                     return Err(TypeCheckerError::StructOutsideOfGlobalScope {
                         name: name.lexeme.to_string(),
-                        line: name.line,
+                        span: name.span,
                     });
                 }
 
                 Ok(TypedStmt {
                     kind: StmtKind::EnumDecl {},
-                    line: name.line,
+                    span: stmt.span(),
                     type_info: Type::Void,
                 })
             }

@@ -21,7 +21,7 @@ impl<'src> TypeChecker<'src> {
                 return Err(TypeCheckerError::TypeMismatch {
                     expected: Type::Enum("Any".into(), vec![].into()),
                     found: value_typed.ty,
-                    line: value_typed.line,
+                    span: value_typed.span,
                     message: "Match value must be an enum type.",
                 });
             }
@@ -52,7 +52,7 @@ impl<'src> TypeChecker<'src> {
                 if !matched_variants.contains(variant.as_ref()) {
                     return Err(TypeCheckerError::UncoveredPattern {
                         variant: variant.to_string(),
-                        line: value_typed.line,
+                        span: value_typed.span,
                     });
                 }
             }
@@ -64,7 +64,7 @@ impl<'src> TypeChecker<'src> {
                 cases: typed_cases,
             },
             type_info: Type::Void,
-            line: value.get_line(),
+            span: value.span(),
         })
     }
     fn handle_match_arm(
@@ -78,7 +78,7 @@ impl<'src> TypeChecker<'src> {
     ) -> Result<(), TypeCheckerError> {
         if *has_fallthrough {
             return Err(TypeCheckerError::UnreachablePattern {
-                line: arm.body.get_line(),
+                span: arm.body.span(),
                 message: "Default case must be the last arm.".to_string(),
             });
         }
@@ -95,7 +95,7 @@ impl<'src> TypeChecker<'src> {
                     return Err(TypeCheckerError::TypeMismatch {
                         expected: Type::Enum(enum_def.name.clone(), vec![].into()),
                         found: value_typed.ty.clone(),
-                        line: value_typed.line,
+                        span: value_typed.span,
                         message: "Match value must be an enum of the same type as the enum being matched against.",
                     });
                 }
@@ -105,12 +105,12 @@ impl<'src> TypeChecker<'src> {
                     .ok_or_else(|| TypeCheckerError::UndefinedField {
                         struct_name: enum_def.name.to_string(),
                         field_name: variant_name.lexeme.to_string(),
-                        line: variant_name.line,
+                        span: variant_name.span,
                     })?;
 
                 if matched_variants.contains(variant_name.lexeme) {
                     return Err(TypeCheckerError::UnreachablePattern {
-                        line: arm.body.get_line(),
+                        span: arm.body.span(),
                         message: format!("Repeated pattern {}", variant_name.lexeme),
                     });
                 }
@@ -126,7 +126,7 @@ impl<'src> TypeChecker<'src> {
                         // TODO potentially warn about unused bindings
                         // self.warnings.push(TypeCheckerWarning::UnusedBinding {
                         //     binding: binding.lexeme.to_string(),
-                        //     line: binding.line,
+                        //     span: binding.span,
                         // });
                     }
                     TypedBinding::Ignored
@@ -174,14 +174,14 @@ impl<'src> TypeChecker<'src> {
                         return Err(TypeCheckerError::TypeMismatch {
                             expected: Type::Struct(name.lexeme.into(), vec![].into()),
                             found: type_to_match.clone(),
-                            line: binding.get_line(),
+                            span: binding.span(),
                             message: "Can only use structure destructure syntax on structs",
                         });
                     }
                     let Some(struct_def) = self.sys.get_struct(struct_name.as_ref()) else {
                         return Err(TypeCheckerError::UndefinedType {
                             name: name.lexeme.to_string(),
-                            line: binding.get_line(),
+                            span: binding.span(),
                             message: "Struct with that name wasn't found.",
                         });
                     };
@@ -191,7 +191,7 @@ impl<'src> TypeChecker<'src> {
                             return Err(TypeCheckerError::UndefinedField {
                                 struct_name: struct_def.name.to_string(),
                                 field_name: field_name.lexeme.to_string(),
-                                line: field_name.line,
+                                span: field_name.span,
                             });
                         };
                         let (_, field_type) = struct_def.ordered_fields[field_idx].clone();
@@ -215,7 +215,7 @@ impl<'src> TypeChecker<'src> {
                     Err(TypeCheckerError::TypeMismatch {
                         expected: Type::Struct("Any".into(), vec![].into()),
                         found: type_to_match.clone(),
-                        line: binding.get_line(),
+                        span: binding.span(),
                         message: "Can only use structure destructure syntax on structs",
                     })
                 }
@@ -228,7 +228,7 @@ impl<'src> TypeChecker<'src> {
                                 types: vec![Type::Any; fields.len()],
                             })),
                             found: type_to_match.clone(),
-                            line: binding.get_line(),
+                            span: binding.span(),
                             message: "Wrong number of tuple destructure.",
                         });
                     }
@@ -243,7 +243,7 @@ impl<'src> TypeChecker<'src> {
                             types: vec![Type::Any; fields.len()],
                         })),
                         found: type_to_match.clone(),
-                        line: binding.get_line(),
+                        span: binding.span(),
                         message: "Can only use tuple destructure on tuples.",
                     })
                 }
@@ -253,7 +253,7 @@ impl<'src> TypeChecker<'src> {
                     return Ok(TypedBinding::Ignored);
                 }
                 self.scopes
-                    .declare(token.lexeme.into(), type_to_match.clone())?;
+                    .declare(token.lexeme.into(), type_to_match.clone(), token.span)?;
                 let (_, resolved) = self.scopes.lookup(token.lexeme).unwrap();
                 Ok(TypedBinding::Variable(resolved))
             }

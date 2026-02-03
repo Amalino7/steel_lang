@@ -1,7 +1,8 @@
 use crate::compiler::analysis::ResolvedVar;
+use crate::scanner::Span;
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::types::Type;
-use crate::typechecker::Symbol;
+use crate::typechecker::{Symbol, TypeChecker};
 use std::collections::HashMap;
 
 #[derive(Clone)]
@@ -38,13 +39,10 @@ pub struct ScopeManager {
     scopes: Vec<Scope>,
     closures: Vec<Symbol>,
 }
-
-// Might use it instead of manual clean-up
-#[allow(dead_code)]
-pub struct ScopeGuard<'a>(pub &'a mut ScopeManager);
+pub struct ScopeGuard<'a>(pub &'a mut TypeChecker<'a>);
 impl<'a> Drop for ScopeGuard<'a> {
     fn drop(&mut self) {
-        self.0.end_scope();
+        self.0.scopes.end_scope();
     }
 }
 
@@ -101,13 +99,18 @@ impl ScopeManager {
         max
     }
 
-    pub fn declare(&mut self, name: Symbol, type_info: Type) -> Result<(), TypeCheckerError> {
+    pub fn declare(
+        &mut self,
+        name: Symbol,
+        type_info: Type,
+        span: Span,
+    ) -> Result<(), TypeCheckerError> {
         let scope = self.scopes.last_mut().expect("No scope active");
 
         if scope.variables.contains_key(&name) && ScopeType::Global == scope.scope_type {
             return Err(TypeCheckerError::Redeclaration {
                 name: name.to_string(),
-                line: 0, // TODO get line
+                span,
             });
         }
 
@@ -154,7 +157,8 @@ impl ScopeManager {
 
             return if let Type::Enum(_, _) = &ctx.type_info {
                 let name = ctx.name.clone();
-                self.declare(name.clone(), new_type).unwrap(); // Shouldn't fail
+                self.declare(name.clone(), new_type, Span::default())
+                    .unwrap(); // Shouldn't fail
                 let (_, new_resolved) = self.lookup(name.as_ref()).unwrap();
                 Some((resolved, new_resolved))
             } else {

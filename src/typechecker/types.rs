@@ -1,5 +1,5 @@
 use crate::parser::ast::TypeAst;
-use crate::token::Token;
+use crate::scanner::{Span, Token};
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::type_system::TypeSystem;
 use crate::typechecker::Symbol;
@@ -92,17 +92,17 @@ fn missing_generics(
     type_name: &str,
     generics_expected: &[Symbol],
     generics_provided: &[Type],
-    line: u32,
+    span: Span,
 ) -> Result<(), TypeCheckerError> {
     if generics_expected.len() > generics_provided.len() {
         Err(TypeCheckerError::MissingGeneric {
             ty_name: type_name.to_string(),
             generic_name: generics_expected[generics_provided.len()].to_string(),
-            line,
+            span,
         })
     } else if generics_provided.len() > generics_expected.len() {
         Err(TypeCheckerError::TooManyGenerics {
-            line,
+            span,
             found: generics_provided.len(),
             expected: generics_expected.len(),
             type_name: type_name.to_string(),
@@ -141,17 +141,24 @@ impl Type {
         type_system: &TypeSystem,
         generics: &[TypeAst],
     ) -> Result<Type, TypeCheckerError> {
+        let span = name.span.merge(
+            generics
+                .last()
+                .map(|t: &TypeAst| t.span())
+                .unwrap_or(name.span),
+        );
+
         let generics: Result<Vec<_>, TypeCheckerError> = generics
             .iter()
             .map(|e| Self::from_ast(e, type_system))
             .collect();
+
         let generics = generics?;
 
-        let line = name.line;
         let name = name.lexeme;
 
         let check_generic =
-            |name, generic_params| missing_generics(name, generic_params, &generics, line);
+            |name, generic_params| missing_generics(name, generic_params, &generics, span);
 
         if name == "number" {
             Ok(Type::Number)
@@ -187,7 +194,7 @@ impl Type {
         } else {
             Err(TypeCheckerError::UndefinedType {
                 name: name.to_string(),
-                line,
+                span,
                 message: "Could not find type with that name.",
             })
         }
@@ -205,14 +212,14 @@ impl Type {
         }
     }
 
-    pub fn unwrap_optional_safe(&self, safe: bool, line: u32) -> Result<Type, TypeCheckerError> {
+    pub fn unwrap_optional_safe(&self, safe: bool, span: Span) -> Result<Type, TypeCheckerError> {
         if safe {
             match self {
                 Type::Optional(inner) => Ok(inner.as_ref().clone()),
                 _ => Err(TypeCheckerError::TypeMismatch {
                     expected: Type::Optional(Box::new(Type::Any)),
                     found: self.clone(),
-                    line,
+                    span,
                     message: "Cannot access safe navigation of non-optional type. Remove ?.",
                 }),
             }

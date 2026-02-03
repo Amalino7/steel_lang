@@ -4,7 +4,7 @@ use crate::parser::error::ParserError;
 use crate::parser::TokT;
 use crate::parser::{check_next_token_type, check_token_type};
 use crate::parser::{match_token_type, Parser};
-use crate::token::Token;
+use crate::scanner::token::Token;
 
 impl<'src> Parser<'src> {
     pub(crate) fn expression(&mut self) -> Result<Expr<'src>, ParserError<'src>> {
@@ -28,28 +28,21 @@ impl<'src> Parser<'src> {
             let left = expr.clone();
             let right = self.assignment()?;
 
-            let binary = match op.token_type {
-                TokT::PlusEqual => Expr::Binary {
-                    left: Box::new(left),
-                    operator: Token::new(TokT::Plus, op.line, op.lexeme),
-                    right: Box::new(right),
+            let new_op = Token {
+                token_type: match op.token_type {
+                    TokT::PlusEqual => TokT::Plus,
+                    TokT::MinusEqual => TokT::Minus,
+                    TokT::StarEqual => TokT::Star,
+                    TokT::SlashEqual => TokT::Slash,
+                    _ => unreachable!(),
                 },
-                TokT::MinusEqual => Expr::Binary {
-                    left: Box::new(left),
-                    operator: Token::new(TokT::Minus, op.line, op.lexeme),
-                    right: Box::new(right),
-                },
-                TokT::StarEqual => Expr::Binary {
-                    left: Box::new(left),
-                    operator: Token::new(TokT::Star, op.line, op.lexeme),
-                    right: Box::new(right),
-                },
-                TokT::SlashEqual => Expr::Binary {
-                    left: Box::new(left),
-                    operator: Token::new(TokT::Slash, op.line, op.lexeme),
-                    right: Box::new(right),
-                },
-                _ => unreachable!(),
+                ..op.clone()
+            };
+
+            let binary = Expr::Binary {
+                left: Box::new(left),
+                operator: new_op,
+                right: Box::new(right),
             };
 
             let target = self.handle_assigment(expr, binary)?;
@@ -305,7 +298,7 @@ impl<'src> Parser<'src> {
             } else if match_token_type!(self, TokT::Bang) {
                 expr = Expr::ForceUnwrap {
                     expression: Box::new(expr),
-                    line: self.previous_token.line,
+                    operator: self.previous_token.clone(),
                 };
             } else {
                 break;
@@ -441,7 +434,7 @@ impl<'src> Parser<'src> {
     fn literal(&mut self, literal: Literal) -> Result<Expr<'src>, ParserError<'src>> {
         Ok(Expr::Literal {
             literal,
-            line: self.previous_token.line,
+            span: self.previous_token.span,
         })
     }
 }

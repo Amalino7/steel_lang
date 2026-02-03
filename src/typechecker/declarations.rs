@@ -1,6 +1,6 @@
 use crate::compiler::analysis::ResolvedVar;
 use crate::parser::ast::{Stmt, TypeAst, VariantType};
-use crate::token::Token;
+use crate::scanner::{Span, Token};
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::scope_manager::ScopeType;
 use crate::typechecker::type_ast::{StmtKind, TypedStmt};
@@ -29,7 +29,7 @@ impl<'src> TypeChecker<'src> {
                         self.sys.get_active_generics(),
                     );
                     self.sys.pop_n_generics(generics.len());
-                    self.declare_function(name.lexeme.into(), type_info, params);
+                    self.declare_function(name.lexeme.into(), name.span, type_info, params);
                 }
                 Stmt::Impl {
                     interfaces,
@@ -43,7 +43,7 @@ impl<'src> TypeChecker<'src> {
                         if interface_type.is_none() {
                             self.errors.push(TypeCheckerError::UndefinedType {
                                 name: interface.lexeme.to_string(),
-                                line: interface.line,
+                                span: interface.span,
                                 message: "Interface does not exist.",
                             });
                         }
@@ -62,7 +62,12 @@ impl<'src> TypeChecker<'src> {
                                     Type::from_method_ast(type_info, &name.0, &name.1, &self.sys);
                                 let mangled_name: Symbol =
                                     format!("{}.{}", name.0.lexeme, func_name.lexeme).into();
-                                self.declare_function(mangled_name, func_type, params);
+                                self.declare_function(
+                                    mangled_name,
+                                    func_name.span,
+                                    func_type,
+                                    params,
+                                );
                                 self.sys.pop_n_generics(generics.len());
                             }
                             _ => unreachable!(),
@@ -97,6 +102,7 @@ impl<'src> TypeChecker<'src> {
     fn declare_function(
         &mut self,
         name: Symbol,
+        span: Span,
         func_type: Result<Type, TypeCheckerError>,
         params: &[Token],
     ) {
@@ -106,7 +112,7 @@ impl<'src> TypeChecker<'src> {
         }
         let func_type = func_type.unwrap().patch_param_names(params);
 
-        let res = self.scopes.declare(name, func_type);
+        let res = self.scopes.declare(name, func_type, span);
 
         if let Err(e) = res {
             self.errors.push(e);
@@ -205,6 +211,7 @@ impl<'src> TypeChecker<'src> {
 
     pub(crate) fn define_impl(
         &mut self,
+        impl_block: &Stmt<'src>,
         interfaces: &[Token],
         (name, target_generics): &(Token, Vec<Token>),
         methods: &[Stmt<'src>],
@@ -281,7 +288,7 @@ impl<'src> TypeChecker<'src> {
                 return Err(TypeCheckerError::DoesNotImplementInterface {
                     missing_methods,
                     interface: interface.lexeme.to_string(),
-                    line: interface.line,
+                    span: impl_block.span(),
                 });
             }
             self.sys
@@ -295,7 +302,7 @@ impl<'src> TypeChecker<'src> {
                 methods: typed_methods.into(),
                 vtables: vtables.into(),
             },
-            line: name.line,
+            span: impl_block.span(),
             type_info: Type::Void,
         })
     }
@@ -315,11 +322,12 @@ impl<'src> TypeChecker<'src> {
             let prev_closures = self.scopes.clear_closures();
             self.scopes.begin_scope(ScopeType::Function);
 
-            self.scopes.declare(name.lexeme.into(), type_.clone())?;
+            self.scopes
+                .declare(name.lexeme.into(), type_.clone(), name.span)?;
             // Declare parameters.
             for (i, param) in params.iter().enumerate() {
                 self.scopes
-                    .declare(param.lexeme.into(), func.params[i].1.clone())?;
+                    .declare(param.lexeme.into(), func.params[i].1.clone(), param.span)?;
             }
 
             let func_body = body
@@ -345,6 +353,10 @@ impl<'src> TypeChecker<'src> {
                     .expect("Variable should exist in upper scope.");
                 captures.push(var_ctx);
             }
+            let function_span = func_body
+                .iter()
+                .fold(name.span, |current, stmt| current.merge(stmt.span));
+
             Ok(TypedStmt {
                 kind: StmtKind::Function {
                     target: func_location,
@@ -354,13 +366,13 @@ impl<'src> TypeChecker<'src> {
                             body: func_body,
                             reserved: reserved as u16,
                         },
-                        line: name.line,
+                        span: function_span,
                         type_info: Type::Void,
                     }),
                     captures: Box::from(captures),
                 },
                 type_info: type_,
-                line: name.line,
+                span: function_span,
             })
         } else {
             unreachable!()

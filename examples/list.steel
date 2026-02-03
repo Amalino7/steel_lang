@@ -2,9 +2,10 @@ let list = [1,2,3,4];
 func print_one(a: number) {
     print(a);
     print(", ");
+    return "s";
 }
 func square(a:number): number {
-    return a * a;
+    return a * "10";
 }
 list.map(square).each(print_one);
 println("");

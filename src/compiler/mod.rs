@@ -36,20 +36,20 @@ impl<'a> Compiler<'a> {
         match &stmt.kind {
             StmtKind::Expression(e) => {
                 self.compile_expr(e);
-                self.emit_op(Opcode::Pop, stmt.line);
+                self.emit_op(Opcode::Pop, stmt.span.line);
             }
             StmtKind::Let { binding, value } => {
                 self.compile_expr(value);
 
-                self.compile_binding(binding, stmt.line);
+                self.compile_binding(binding, stmt.span.line);
             }
             StmtKind::Block {
                 body: stmts,
                 reserved,
             } => {
                 if *reserved != 0 {
-                    self.emit_op(Opcode::Reserve, stmt.line);
-                    self.emit_byte(*reserved as u8, stmt.line);
+                    self.emit_op(Opcode::Reserve, stmt.span.line);
+                    self.emit_byte(*reserved as u8, stmt.span.line);
                 }
                 for stmt in stmts {
                     self.compile_stmt(stmt);
@@ -61,7 +61,7 @@ impl<'a> Compiler<'a> {
                 else_branch,
                 typed_refinements,
             } => {
-                let line = stmt.line;
+                let line = stmt.span.line;
                 self.compile_expr(condition);
                 let then_jump = self.emit_jump(Opcode::JumpIfFalse, line);
                 self.emit_op(Opcode::Pop, line);
@@ -90,9 +90,9 @@ impl<'a> Compiler<'a> {
                 for case in cases.iter() {
                     match case {
                         MatchCase::Variable { binding, body } => {
-                            self.compile_binding(binding, body.line);
+                            self.compile_binding(binding, body.span.line);
                             self.compile_stmt(body);
-                            end_jumps.push(self.emit_jump(Opcode::Jump, stmt.line));
+                            end_jumps.push(self.emit_jump(Opcode::Jump, stmt.span.line));
                         }
                         MatchCase::Named {
                             variant_idx,
@@ -100,34 +100,34 @@ impl<'a> Compiler<'a> {
                             body,
                         } => {
                             // Check if the tag matches the case variant
-                            self.emit_op(Opcode::Dup, stmt.line);
-                            self.emit_op(Opcode::CheckEnumTag, stmt.line);
-                            self.emit_byte(*variant_idx as u8, stmt.line);
+                            self.emit_op(Opcode::Dup, stmt.span.line);
+                            self.emit_op(Opcode::CheckEnumTag, stmt.span.line);
+                            self.emit_byte(*variant_idx as u8, stmt.span.line);
 
                             // Similar to if
-                            let next_case_jump = self.emit_jump(Opcode::JumpIfFalse, stmt.line);
-                            self.emit_op(Opcode::Pop, stmt.line);
+                            let next_case_jump = self.emit_jump(Opcode::JumpIfFalse, stmt.span.line);
+                            self.emit_op(Opcode::Pop, stmt.span.line);
 
-                            self.emit_op(Opcode::DestructureEnum, stmt.line);
-                            self.compile_binding(binding, stmt.line);
+                            self.emit_op(Opcode::DestructureEnum, stmt.span.line);
+                            self.compile_binding(binding, stmt.span.line);
 
                             self.compile_stmt(body);
-                            end_jumps.push(self.emit_jump(Opcode::Jump, stmt.line));
+                            end_jumps.push(self.emit_jump(Opcode::Jump, stmt.span.line));
 
                             self.patch_jump(next_case_jump);
-                            self.emit_op(Opcode::Pop, stmt.line);
+                            self.emit_op(Opcode::Pop, stmt.span.line);
                         }
                     }
                 }
 
                 // Pop original enum
-                self.emit_op(Opcode::Pop, stmt.line);
+                self.emit_op(Opcode::Pop, stmt.span.line);
                 for jump in end_jumps {
                     self.patch_jump(jump);
                 }
             }
             StmtKind::While { condition, body } => {
-                let line = stmt.line;
+                let line = stmt.span.line;
 
                 let loop_start = self.chunk().instructions.len();
                 self.compile_expr(condition);
@@ -136,10 +136,10 @@ impl<'a> Compiler<'a> {
                 self.emit_op(Opcode::Pop, line);
 
                 self.compile_stmt(body);
-                self.emit_jump_back(loop_start, body.line);
+                self.emit_jump_back(loop_start, body.span.line);
 
                 self.patch_jump(exit_jump);
-                self.emit_op(Opcode::Pop, body.line);
+                self.emit_op(Opcode::Pop, body.span.line);
             }
             StmtKind::Impl { methods, vtables } => {
                 for method in methods {
@@ -148,11 +148,11 @@ impl<'a> Compiler<'a> {
 
                 for vtable in vtables.iter() {
                     for method_loc in vtable.iter().rev() {
-                        self.emit_var_access(method_loc, stmt.line);
+                        self.emit_var_access(method_loc, stmt.span.line);
                     }
 
-                    self.emit_op(Opcode::MakeVTable, stmt.line);
-                    self.emit_byte(vtable.len() as u8, stmt.line);
+                    self.emit_op(Opcode::MakeVTable, stmt.span.line);
+                    self.emit_byte(vtable.len() as u8, stmt.span.line);
                 }
             }
             StmtKind::Function {
@@ -161,7 +161,7 @@ impl<'a> Compiler<'a> {
                 body,
                 captures,
             } => {
-                let line = stmt.line;
+                let line = stmt.span.line;
                 let func_compiler = Compiler::new(name.to_string(), self.gc);
 
                 let compiled_fn = func_compiler.compile(body);
@@ -180,10 +180,10 @@ impl<'a> Compiler<'a> {
 
                 match target {
                     ResolvedVar::Local(idx) => {
-                        self.emit_op(Opcode::SetLocal, stmt.line);
-                        self.emit_byte(*idx, stmt.line);
+                        self.emit_op(Opcode::SetLocal, stmt.span.line);
+                        self.emit_byte(*idx, stmt.span.line);
 
-                        self.emit_op(Opcode::Pop, stmt.line);
+                        self.emit_op(Opcode::Pop, stmt.span.line);
                     }
                     ResolvedVar::Global(idx) => {
                         self.emit_op(Opcode::SetGlobal, line);
@@ -198,14 +198,14 @@ impl<'a> Compiler<'a> {
             }
             StmtKind::Return(val) => {
                 self.compile_expr(val);
-                self.emit_op(Opcode::Return, stmt.line);
+                self.emit_op(Opcode::Return, stmt.span.line);
             }
             StmtKind::Global {
                 stmts, reserved, ..
             } => {
                 if *reserved != 0 {
-                    self.emit_op(Opcode::Reserve, stmt.line);
-                    self.emit_byte(*reserved as u8, stmt.line);
+                    self.emit_op(Opcode::Reserve, stmt.span.line);
+                    self.emit_byte(*reserved as u8, stmt.span.line);
                 }
                 for s in stmts {
                     match &s.kind {
@@ -327,7 +327,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn compile_expr(&mut self, expr: &TypedExpr) {
-        let line = expr.line;
+        let line = expr.span.line;
         match &expr.kind {
             ExprKind::Binary {
                 left,
@@ -373,8 +373,8 @@ impl<'a> Compiler<'a> {
                 ..
             } => {
                 self.compile_expr(target);
-                self.emit_op(Opcode::CheckEnumTag, expr.line);
-                self.emit_byte(*variant_idx as u8, expr.line);
+                self.emit_op(Opcode::CheckEnumTag, expr.span.line);
+                self.emit_byte(*variant_idx as u8, expr.span.line);
                 // target !!
             }
             ExprKind::Literal(literal) => match literal {
@@ -397,17 +397,17 @@ impl<'a> Compiler<'a> {
             },
             ExprKind::Try { operand } => {
                 self.compile_expr(operand);
-                self.emit_op(Opcode::Dup, expr.line);
-                self.emit_op(Opcode::CheckEnumTag, expr.line);
-                self.emit_byte(0, expr.line);
-                let jump = self.emit_jump(Opcode::JumpIfFalse, expr.line);
+                self.emit_op(Opcode::Dup, expr.span.line);
+                self.emit_op(Opcode::CheckEnumTag, expr.span.line);
+                self.emit_byte(0, expr.span.line);
+                let jump = self.emit_jump(Opcode::JumpIfFalse, expr.span.line);
                 // if ok destructure
-                self.emit_op(Opcode::Pop, expr.line);
-                self.emit_op(Opcode::DestructureEnum, expr.line);
-                let exit_jump = self.emit_jump(Opcode::Jump, expr.line);
+                self.emit_op(Opcode::Pop, expr.span.line);
+                self.emit_op(Opcode::DestructureEnum, expr.span.line);
+                let exit_jump = self.emit_jump(Opcode::Jump, expr.span.line);
                 self.patch_jump(jump);
-                self.emit_op(Opcode::Pop, expr.line); // condition
-                self.emit_op(Opcode::Return, expr.line); // return enum
+                self.emit_op(Opcode::Pop, expr.span.line); // condition
+                self.emit_op(Opcode::Return, expr.span.line); // return enum
                 self.patch_jump(exit_jump);
             }
             ExprKind::Unary { operator, operand } => {
@@ -538,10 +538,10 @@ impl<'a> Compiler<'a> {
                     for arg in arguments {
                         self.compile_expr(arg);
                     }
-                    self.emit_op(Opcode::Call, callee.line);
+                    self.emit_op(Opcode::Call, callee.span.line);
                     self.emit_byte(
                         arguments.len() as u8,
-                        arguments.last().map(|e| e.line).unwrap_or(callee.line),
+                        arguments.last().map(|e| e.span.line).unwrap_or(callee.span.line),
                     );
 
                     if *safe {
@@ -722,3 +722,4 @@ impl<'a> Compiler<'a> {
         self.chunk().write_op(byte, line as usize);
     }
 }
+

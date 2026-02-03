@@ -1,427 +1,327 @@
+use crate::scanner::Span;
 use crate::typechecker::types::Type;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum TypeCheckerError {
     UndefinedType {
         name: String,
-        line: u32,
+        span: Span,
         message: &'static str,
     },
     UndefinedVariable {
         name: String,
-        line: u32,
+        span: Span,
     },
     CalleeIsNotCallable {
         found: Type,
-        line: u32,
+        span: Span,
     },
     TypeMismatch {
         expected: Type,
         found: Type,
-        line: u32,
+        span: Span,
         message: &'static str,
     },
     ComplexTypeMismatch {
         expected: Type,
         found: Type,
         message: String,
-        line: u32,
+        span: Span,
     },
     InvalidReturnOutsideFunction {
-        line: u32,
+        span: Span,
     },
     UnreachableCode {
-        line: u32,
+        span: Span,
     },
     MissingReturnStatement {
-        line: u32,
+        span: Span, // Point to the closing brace of the function
     },
     AssignmentToCapturedVariable {
         name: String,
-        line: u32,
+        span: Span,
     },
     TypeHasNoFields {
         found: Type,
-        line: u32,
+        span: Span,
     },
     UndefinedField {
         struct_name: String,
         field_name: String,
-        line: u32,
+        span: Span,
     },
     StructOutsideOfGlobalScope {
         name: String,
-        line: u32,
+        span: Span,
     },
     UndefinedMethod {
-        line: u32,
+        span: Span,
         found: Type,
         method_name: String,
     },
     StaticMethodOnInstance {
         method_name: String,
-        line: u32,
+        span: Span,
     },
     Redeclaration {
         name: String,
-        line: u32,
+        span: Span,
     },
     DoesNotImplementInterface {
         missing_methods: Vec<String>,
         interface: String,
-        line: u32,
+        span: Span,
     },
     UncoveredPattern {
         variant: String,
-        line: u32,
+        span: Span,
     },
     TooManyArguments {
-        callee: String,
         expected: usize,
         found: usize,
-        line: u32,
+        span: Span,
     },
     DuplicateArgument {
         name: String,
-        line: u32,
+        span: Span,
     },
     UndefinedParameter {
         param_name: String,
-        callee: String,
-        line: u32,
+        span: Span,
     },
     MissingArgument {
         param_name: String,
-        callee: String,
-        line: u32,
+        span: Span,
     },
     PositionalArgumentAfterNamed {
-        callee: String,
         message: &'static str,
-        line: u32,
+        span: Span,
     },
     InvalidTupleIndex {
         tuple_type: Type,
         index: String,
-        line: u32,
+        span: Span,
     },
     UnreachablePattern {
-        line: u32,
+        span: Span,
         message: String,
     },
     InvalidIsUsage {
-        line: u32,
+        span: Span,
         message: &'static str,
     },
     MissingGeneric {
         ty_name: String,
         generic_name: String,
-        line: u32,
+        span: Span,
     },
     CannotInferType {
-        line: u32,
+        span: Span,
         uninferred_generics: Vec<String>,
     },
     InvalidGenericSpecification {
-        line: u32,
+        span: Span,
         message: String,
     },
     TooManyGenerics {
-        line: u32,
+        span: Span,
         found: usize,
         expected: usize,
         type_name: String,
     },
 }
-
-impl TypeCheckerError {
-    pub fn get_line(&self) -> u32 {
-        match self {
-            TypeCheckerError::UndefinedType { line, .. } => *line,
-            TypeCheckerError::UndefinedVariable { line, .. } => *line,
-            TypeCheckerError::CalleeIsNotCallable { line, .. } => *line,
-            TypeCheckerError::TypeMismatch { line, .. } => *line,
-            TypeCheckerError::InvalidReturnOutsideFunction { line, .. } => *line,
-            TypeCheckerError::UnreachableCode { line, .. } => *line,
-            TypeCheckerError::MissingReturnStatement { line, .. } => *line,
-            TypeCheckerError::AssignmentToCapturedVariable { line, .. } => *line,
-            TypeCheckerError::TypeHasNoFields { line, .. } => *line,
-            TypeCheckerError::UndefinedField { line, .. } => *line,
-            TypeCheckerError::StructOutsideOfGlobalScope { line, .. } => *line,
-            TypeCheckerError::UndefinedMethod { line, .. } => *line,
-            TypeCheckerError::StaticMethodOnInstance { line, .. } => *line,
-            TypeCheckerError::Redeclaration { line, .. } => *line,
-            TypeCheckerError::DoesNotImplementInterface { line, .. } => *line,
-            TypeCheckerError::UncoveredPattern { line, .. } => *line,
-            TypeCheckerError::TooManyArguments { line, .. } => *line,
-            TypeCheckerError::DuplicateArgument { line, .. } => *line,
-            TypeCheckerError::UndefinedParameter { line, .. } => *line,
-            TypeCheckerError::MissingArgument { line, .. } => *line,
-            TypeCheckerError::PositionalArgumentAfterNamed { line, .. } => *line,
-            TypeCheckerError::InvalidTupleIndex { line, .. } => *line,
-            TypeCheckerError::UnreachablePattern { line, .. } => *line,
-            TypeCheckerError::InvalidIsUsage { line, .. } => *line,
-            TypeCheckerError::MissingGeneric { line, .. } => *line,
-            TypeCheckerError::CannotInferType { line, .. } => *line,
-            TypeCheckerError::InvalidGenericSpecification { line, .. } => *line,
-            TypeCheckerError::ComplexTypeMismatch { line, .. } => *line,
-            TypeCheckerError::TooManyGenerics { line, .. } => *line,
-        }
+impl std::fmt::Display for TypeCheckerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message())
     }
 }
 
-impl std::fmt::Display for TypeCheckerError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl TypeCheckerError {
+    // This is the method main.rs will call to tell Ariadne WHERE to point
+    pub fn span(&self) -> Span {
         match self {
-            TypeCheckerError::UndefinedVariable { name, line } => {
-                write!(f, "[line {}] Error: Undefined variable '{}'.", line, name)
+            TypeCheckerError::UndefinedType { span, .. } => *span,
+            TypeCheckerError::UndefinedVariable { span, .. } => *span,
+            TypeCheckerError::CalleeIsNotCallable { span, .. } => *span,
+            TypeCheckerError::TypeMismatch { span, .. } => *span,
+            TypeCheckerError::ComplexTypeMismatch { span, .. } => *span,
+            TypeCheckerError::InvalidReturnOutsideFunction { span, .. } => *span,
+            TypeCheckerError::UnreachableCode { span, .. } => *span,
+            TypeCheckerError::MissingReturnStatement { span, .. } => *span,
+            TypeCheckerError::AssignmentToCapturedVariable { span, .. } => *span,
+            TypeCheckerError::TypeHasNoFields { span, .. } => *span,
+            TypeCheckerError::UndefinedField { span, .. } => *span,
+            TypeCheckerError::StructOutsideOfGlobalScope { span, .. } => *span,
+            TypeCheckerError::UndefinedMethod { span, .. } => *span,
+            TypeCheckerError::StaticMethodOnInstance { span, .. } => *span,
+            TypeCheckerError::Redeclaration { span, .. } => *span,
+            TypeCheckerError::DoesNotImplementInterface { span, .. } => *span,
+            TypeCheckerError::UncoveredPattern { span, .. } => *span,
+            TypeCheckerError::TooManyArguments { span, .. } => *span,
+            TypeCheckerError::DuplicateArgument { span, .. } => *span,
+            TypeCheckerError::UndefinedParameter { span, .. } => *span,
+            TypeCheckerError::MissingArgument { span, .. } => *span,
+            TypeCheckerError::PositionalArgumentAfterNamed { span, .. } => *span,
+            TypeCheckerError::InvalidTupleIndex { span, .. } => *span,
+            TypeCheckerError::UnreachablePattern { span, .. } => *span,
+            TypeCheckerError::InvalidIsUsage { span, .. } => *span,
+            TypeCheckerError::MissingGeneric { span, .. } => *span,
+            TypeCheckerError::CannotInferType { span, .. } => *span,
+            TypeCheckerError::InvalidGenericSpecification { span, .. } => *span,
+            TypeCheckerError::TooManyGenerics { span, .. } => *span,
+        }
+    }
+
+    // This is the method main.rs will call to tell Ariadne WHAT to say
+    pub fn message(&self) -> String {
+        match self {
+            TypeCheckerError::UndefinedVariable { name, .. } => {
+                format!("Undefined variable '{}'.", name)
             }
-            TypeCheckerError::CalleeIsNotCallable { found, line } => {
-                write!(
-                    f,
-                    "[line {}] Error: Cannot call type different from function.\n Found type '{}' where a function was expected.",
-                    line, found
+            TypeCheckerError::CalleeIsNotCallable { found, .. } => {
+                format!(
+                    "Cannot call type different from function. Found type '{}' where a function was expected.",
+                    found
                 )
             }
             TypeCheckerError::TypeMismatch {
                 expected,
                 found,
-                line,
                 message,
+                ..
             } => {
-                write!(
-                    f,
-                    "[line {}] Error: {}.\n Note: Expected '{}' but found '{}'.",
-                    line, message, expected, found
-                )
-            }
-            TypeCheckerError::InvalidReturnOutsideFunction { line } => {
-                write!(
-                    f,
-                    "[line {}] Error: 'return' statement outside of a function body.",
-                    line
-                )
-            }
-            TypeCheckerError::UnreachableCode { line } => {
-                write!(f, "[line {}] Error: Unreachable code detected.", line)
-            }
-            TypeCheckerError::MissingReturnStatement { line } => {
-                write!(f, "[line {}] Error: Missing return statement.", line)
-            }
-            TypeCheckerError::AssignmentToCapturedVariable { name, line } => {
-                write!(
-                    f,
-                    "[line {}] Error: Cannot assign to captured variable '{}'.",
-                    line, name
-                )
-            }
-            TypeCheckerError::UndefinedType {
-                name,
-                line,
-                message,
-            } => {
-                write!(
-                    f,
-                    "[line {}] Error: Undefined type '{}'.\n {}",
-                    line, name, message
-                )
-            }
-            TypeCheckerError::TypeHasNoFields { found, line } => {
-                write!(f, "[line {}] Error: Type '{}' has no fields.", line, found)
-            }
-            TypeCheckerError::UndefinedField {
-                struct_name,
-                field_name,
-                line,
-            } => {
-                write!(
-                    f,
-                    "[line {}] Error: Struct '{}' has no field '{}'.",
-                    line, struct_name, field_name
-                )
-            }
-            TypeCheckerError::StructOutsideOfGlobalScope { name, line } => {
-                write!(
-                    f,
-                    "[line {}] Error: Struct '{}' is outside of global scope.",
-                    line, name
-                )
-            }
-            TypeCheckerError::UndefinedMethod {
-                line,
-                found,
-                method_name,
-            } => {
-                write!(
-                    f,
-                    "[line {}] Error: Undefined method '{}' on type {}.",
-                    line, method_name, found
-                )
-            }
-            TypeCheckerError::StaticMethodOnInstance { method_name, line } => {
-                write!(
-                    f,
-                    "[line {}] Error: Cannot call static method '{}' on instance.",
-                    line, method_name
-                )
-            }
-            TypeCheckerError::Redeclaration { name, line } => {
-                write!(
-                    f,
-                    "[line {}] Error: Redeclaration of type or variable '{}'.",
-                    line, name
-                )
-            }
-            TypeCheckerError::DoesNotImplementInterface {
-                missing_methods,
-                interface,
-                line,
-            } => {
-                write!(
-                    f,
-                    "[line {}] Error: Type does not implement interface '{}'. Missing methods or mismatched types: {}.",
-                    line,
-                    interface,
-                    missing_methods.join(", ")
-                )
-            }
-            TypeCheckerError::UncoveredPattern { variant, line } => {
-                write!(
-                    f,
-                    "[line {}] Error: Uncovered pattern matching variant '{}'.",
-                    line, variant
-                )
-            }
-            TypeCheckerError::DuplicateArgument { name, line } => {
-                write!(
-                    f,
-                    "[line {}] Error: Duplicate argument name '{}'.",
-                    line, name
-                )
-            }
-            TypeCheckerError::UndefinedParameter {
-                param_name,
-                callee,
-                line,
-            } => {
-                write!(
-                    f,
-                    "[line {}] Error: Undefined parameter '{}' in function '{}'.",
-                    line, param_name, callee
-                )
-            }
-
-            TypeCheckerError::TooManyArguments {
-                callee,
-                expected,
-                found,
-                line,
-            } => {
-                write!(
-                    f,
-                    "[line {}] Error: Too many arguments for function '{}'. Expected {} but found {}.",
-                    line, callee, expected, found
-                )
-            }
-            TypeCheckerError::MissingArgument {
-                param_name,
-                callee,
-                line,
-            } => {
-                write!(
-                    f,
-                    "[line {}] Error: Missing argument '{}' in function '{}'.",
-                    line, param_name, callee
-                )
-            }
-            TypeCheckerError::PositionalArgumentAfterNamed {
-                callee,
-                message,
-                line,
-            } => {
-                write!(
-                    f,
-                    "[line {}] Error: Positional argument after named in function '{}'. {}",
-                    line, callee, message
-                )
-            }
-            TypeCheckerError::InvalidTupleIndex {
-                tuple_type,
-                index,
-                line,
-            } => {
-                write!(
-                    f,
-                    "[line {}] Error: Invalid tuple index '{}' of {}.",
-                    line, index, tuple_type
-                )
-            }
-            TypeCheckerError::UnreachablePattern { line, message } => {
-                write!(
-                    f,
-                    "[line {}] Warning: Unreachable Pattern.\n {}",
-                    line, message
-                )
-            }
-            TypeCheckerError::InvalidIsUsage { line, message } => {
-                write!(
-                    f,
-                    "[line {}] Error: Invalid usage of 'is' operator.\n {}",
-                    line, message
-                )
-            }
-            TypeCheckerError::MissingGeneric {
-                ty_name,
-                generic_name,
-                line,
-            } => {
-                write!(
-                    f,
-                    "[line {}] Error: Missing generic on type '{}' name: {}",
-                    line, ty_name, generic_name
-                )
-            }
-            TypeCheckerError::CannotInferType {
-                line,
-                uninferred_generics,
-            } => {
-                write!(
-                    f,
-                    "[line {}] Error: Cannot infer generic type. {} Use explicit annotations.",
-                    line,
-                    uninferred_generics.join(", ")
-                )
-            }
-            TypeCheckerError::InvalidGenericSpecification { line, message } => {
-                write!(
-                    f,
-                    "[line {}] Error: Invalid generic specification.\n {}",
-                    line, message
+                format!(
+                    "{}. Expected '{}' but found '{}'.",
+                    message, expected, found
                 )
             }
             TypeCheckerError::ComplexTypeMismatch {
                 expected,
                 found,
-                line,
                 message,
+                ..
             } => {
-                write!(
-                    f,
-                    "[line {}] Error: Type mismatch expected: '{}' but found '{}'.\n Precise: {}\n",
-                    line, expected, found, message
+                format!(
+                    "Type mismatch. Expected '{}' but found '{}'.\nPrecise: {}",
+                    expected, found, message
                 )
             }
-
+            TypeCheckerError::InvalidReturnOutsideFunction { .. } => {
+                "Return statement outside of a function body.".to_string()
+            }
+            TypeCheckerError::UnreachableCode { .. } => "Unreachable code detected.".to_string(),
+            TypeCheckerError::MissingReturnStatement { .. } => {
+                "Missing return statement.".to_string()
+            }
+            TypeCheckerError::AssignmentToCapturedVariable { name, .. } => {
+                format!("Cannot assign to captured variable '{}'.", name)
+            }
+            TypeCheckerError::UndefinedType { name, message, .. } => {
+                format!("Undefined type '{}'. {}", name, message)
+            }
+            TypeCheckerError::TypeHasNoFields { found, .. } => {
+                format!("Type '{}' has no fields.", found)
+            }
+            TypeCheckerError::UndefinedField {
+                struct_name,
+                field_name,
+                ..
+            } => {
+                format!("Struct '{}' has no field '{}'.", struct_name, field_name)
+            }
+            TypeCheckerError::StructOutsideOfGlobalScope { name, .. } => {
+                format!("Struct '{}' is defined outside of global scope.", name)
+            }
+            TypeCheckerError::UndefinedMethod {
+                method_name, found, ..
+            } => {
+                format!("Undefined method '{}' on type {}.", method_name, found)
+            }
+            TypeCheckerError::StaticMethodOnInstance { method_name, .. } => {
+                format!(
+                    "Cannot call static method '{}' on an instance.",
+                    method_name
+                )
+            }
+            TypeCheckerError::Redeclaration { name, .. } => {
+                format!("Redeclaration of type or variable '{}'.", name)
+            }
+            TypeCheckerError::DoesNotImplementInterface {
+                missing_methods,
+                interface,
+                ..
+            } => {
+                format!(
+                    "Type does not implement interface '{}'. Missing methods or mismatched types: {}.",
+                    interface,
+                    missing_methods.join(", ")
+                )
+            }
+            TypeCheckerError::UncoveredPattern { variant, .. } => {
+                format!("Uncovered pattern matching variant '{}'.", variant)
+            }
+            TypeCheckerError::TooManyArguments {
+                expected, found, ..
+            } => {
+                format!(
+                    "Too many arguments. Expected {} but found {}.",
+                    expected, found
+                )
+            }
+            TypeCheckerError::DuplicateArgument { name, .. } => {
+                format!("Duplicate argument name '{}'.", name)
+            }
+            TypeCheckerError::UndefinedParameter { param_name, .. } => {
+                format!("Undefined parameter '{}'.", param_name)
+            }
+            TypeCheckerError::MissingArgument { param_name, .. } => {
+                format!("Missing argument '{}'.", param_name,)
+            }
+            TypeCheckerError::PositionalArgumentAfterNamed { message, .. } => {
+                format!("Positional argument after named. {}", message)
+            }
+            TypeCheckerError::InvalidTupleIndex {
+                tuple_type, index, ..
+            } => {
+                format!("Invalid tuple index '{}' of {}.", index, tuple_type)
+            }
+            TypeCheckerError::UnreachablePattern { message, .. } => {
+                format!("Unreachable Pattern. {}", message)
+            }
+            TypeCheckerError::InvalidIsUsage { message, .. } => {
+                format!("Invalid usage of 'is' operator. {}", message)
+            }
+            TypeCheckerError::MissingGeneric {
+                ty_name,
+                generic_name,
+                ..
+            } => {
+                format!(
+                    "Missing generic on type '{}'. Name: {}",
+                    ty_name, generic_name
+                )
+            }
+            TypeCheckerError::CannotInferType {
+                uninferred_generics,
+                ..
+            } => {
+                format!(
+                    "Cannot infer generic type for: {}. Use explicit annotations.",
+                    uninferred_generics.join(", ")
+                )
+            }
+            TypeCheckerError::InvalidGenericSpecification { message, .. } => {
+                format!("Invalid generic specification. {}", message)
+            }
             TypeCheckerError::TooManyGenerics {
-                line,
                 found,
                 expected,
                 type_name,
+                ..
             } => {
-                write!(
-                    f,
-                    "[line {}] Error: Too many generics. Found {} expected {}.\n {}",
-                    line, found, expected, type_name
+                format!(
+                    "Too many generics. Found {} expected {} for type '{}'.",
+                    found, expected, type_name
                 )
             }
         }

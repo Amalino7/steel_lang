@@ -50,7 +50,7 @@ impl<'src> TypeChecker<'src> {
                 let does_return = self.stmt_returns(body)?;
 
                 if !does_return && return_type != Type::Void {
-                    Err(TypeCheckerError::MissingReturnStatement { line: stmt.line })
+                    Err(TypeCheckerError::MissingReturnStatement { span: stmt.span })
                 } else {
                     Ok(())
                 }
@@ -75,7 +75,7 @@ impl<'src> TypeChecker<'src> {
                 let mut does_return = false;
                 for stmt in body {
                     if does_return {
-                        return Err(TypeCheckerError::UnreachableCode { line: stmt.line });
+                        return Err(TypeCheckerError::UnreachableCode { span: stmt.span });
                     }
                     does_return |= self.stmt_returns(stmt)?;
                 }

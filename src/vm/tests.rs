@@ -1849,12 +1849,12 @@ fn test_poly() {
     func printArea(s: Shape): void {
         s.area();
         assert(s.area(), 78.5); // 5*5 * 3.14
-        println(s.area());
+        // println(s.area());
     }
     func printPerimeter(s: Shape): void {
         s.perimeter();
         assert(s.perimeter(), (10 + 5) * 2 );
-        println(s.perimeter());
+        // println(s.perimeter());
     }
 
     let i = 0;

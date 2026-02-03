@@ -1,13 +1,14 @@
 use crate::compiler::analysis::ResolvedVar;
 use crate::parser::ast::Literal;
-use crate::typechecker::Symbol;
+use crate::scanner::Span;
 use crate::typechecker::types::Type;
+use crate::typechecker::Symbol;
 
 #[derive(Debug, Clone)]
 pub struct TypedExpr {
     pub ty: Type,
     pub kind: ExprKind,
-    pub line: u32,
+    pub span: Span,
 }
 #[derive(Debug, Clone, PartialEq)]
 pub enum UnaryOp {
@@ -135,7 +136,7 @@ pub enum ExprKind {
 #[derive(Debug)]
 pub struct TypedStmt {
     pub kind: StmtKind,
-    pub line: u32,
+    pub span: Span,
     pub type_info: Type,
 }
 #[derive(Debug)]

@@ -1,4 +1,4 @@
-use crate::token::Token;
+use crate::scanner::{Span, Token};
 use std::fmt;
 use std::fmt::{Debug, Display, Formatter};
 
@@ -42,7 +42,7 @@ pub enum Expr<'src> {
     },
     Literal {
         literal: Literal,
-        line: u32,
+        span: Span,
     },
     Is {
         expression: Box<Expr<'src>>,
@@ -101,7 +101,7 @@ pub enum Expr<'src> {
     },
     ForceUnwrap {
         expression: Box<Expr<'src>>,
-        line: u32,
+        operator: Token<'src>,
     },
 }
 #[derive(Clone, Debug, PartialEq)]
@@ -137,15 +137,6 @@ pub enum Binding<'src> {
     Variable(Token<'src>),
 }
 
-impl<'src> Binding<'src> {
-    pub(crate) fn get_line(&self) -> u32 {
-        match self {
-            Binding::Struct { name, .. } => name.line,
-            Binding::Tuple { fields } => fields[0].get_line(),
-            Binding::Variable(name) => name.line,
-        }
-    }
-}
 impl Display for Binding<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
@@ -581,54 +572,143 @@ impl Display for Stmt<'_> {
 }
 
 impl Expr<'_> {
-    pub fn get_line(&self) -> u32 {
+    pub fn span(&self) -> Span {
         match self {
-            Expr::Unary { operator, .. } => operator.line,
-            Expr::Binary { operator, .. } => operator.line,
-            Expr::Variable { name, .. } => name.line,
-            Expr::Grouping { expression } => expression.get_line(),
-            Expr::Literal { line, .. } => *line,
-            Expr::Assignment { identifier, .. } => identifier.line,
-            Expr::Logical { operator, .. } => operator.line,
-            Expr::Call { callee, .. } => callee.get_line(),
-            Expr::Get { field, .. } => field.line,
-            Expr::Set { value, .. } => value.get_line(),
-            Expr::ForceUnwrap { line, .. } => *line,
-            Expr::Tuple { elements } => elements[0].get_line(),
-            Expr::Is { type_name, .. } => type_name.line,
-            Expr::TypeSpecialization { callee, .. } => callee.get_line(),
+            Expr::Unary {
+                operator,
+                expression,
+            } => operator.span.merge(expression.span()),
+            Expr::Binary { left, right, .. } => left.span().merge(right.span()),
+            Expr::Variable { name } => name.span,
+            Expr::Grouping { expression } => expression.span(),
+            Expr::Literal { span, .. } => *span,
+            Expr::Assignment { identifier, value } => identifier.span.merge(value.span()),
+            Expr::Logical { left, right, .. } => left.span().merge(right.span()),
+            Expr::Call {
+                callee, arguments, ..
+            } => arguments
+                .last()
+                .map(|arg| callee.span().merge(arg.expr.span()))
+                .unwrap_or_else(|| callee.span()),
+            Expr::Get { object, field, .. } => object.span().merge(field.span),
+            Expr::Set { object, value, .. } => object.span().merge(value.span()),
+            Expr::Is {
+                expression,
+                type_name,
+            } => expression.span().merge(type_name.span),
+            Expr::TypeSpecialization { callee, generics } => generics
+                .last()
+                .map(|generic| callee.span().merge(generic.span()))
+                .unwrap_or_else(|| callee.span()),
+            Expr::Tuple { elements } => elements
+                .last()
+                .map(|last| elements[0].span().merge(last.span()))
+                .unwrap_or_else(|| Span::default()),
             Expr::List {
-                bracket_token: brace_token,
-                ..
-            } => brace_token.line,
+                elements,
+                bracket_token,
+            } => elements
+                .last()
+                .map(|last| bracket_token.span.merge(last.span()))
+                .unwrap_or(bracket_token.span),
             Expr::Map {
-                bracket_token: brace_token,
-                ..
-            } => brace_token.line,
-            Expr::GetIndex { index, .. } => index.get_line(),
-            Expr::SetIndex { value, .. } => value.get_line(),
+                kv_pairs,
+                bracket_token,
+            } => kv_pairs
+                .last()
+                .map(|(_, value)| bracket_token.span.merge(value.span()))
+                .unwrap_or(bracket_token.span),
+            Expr::GetIndex { object, index, .. } => object.span().merge(index.span()),
+            Expr::SetIndex { object, value, .. } => object.span().merge(value.span()),
+            Expr::ForceUnwrap { operator, .. } => operator.span,
+        }
+    }
+}
+impl Stmt<'_> {
+    pub fn span(&self) -> Span {
+        match self {
+            Stmt::Expression(expr) => expr.span(),
+            Stmt::Let { binding, value, .. } => binding.span().merge(value.span()),
+            Stmt::Return(expr) => expr.span(),
+            Stmt::Block { body, brace_token } => body
+                .last()
+                .map(|last| brace_token.span.merge(last.span()))
+                .unwrap_or(brace_token.span),
+            Stmt::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                let base = condition.span().merge(then_branch.span());
+                else_branch
+                    .as_ref()
+                    .map(|branch| base.merge(branch.span()))
+                    .unwrap_or(base)
+            }
+            Stmt::While { condition, body } => condition.span().merge(body.span()),
+            Stmt::Function { name, body, .. } => body
+                .last()
+                .map(|last| name.span.merge(last.span()))
+                .unwrap_or(name.span),
+            Stmt::Struct { name, fields, .. } => fields
+                .last()
+                .map(|(field, _)| name.span.merge(field.span))
+                .unwrap_or(name.span),
+            Stmt::Impl { name, methods, .. } => methods
+                .last()
+                .map(|last| name.0.span.merge(last.span()))
+                .unwrap_or(name.0.span),
+            Stmt::Interface { name, methods, .. } => methods
+                .last()
+                .map(|last| name.span.merge(last.name.span))
+                .unwrap_or(name.span),
+            Stmt::Enum { name, variants, .. } => variants
+                .last()
+                .map(|(variant, _)| name.span.merge(variant.span))
+                .unwrap_or(name.span),
+            Stmt::Match { value, arms } => arms
+                .last()
+                .map(|arm| value.span().merge(arm.body.span()))
+                .unwrap_or_else(|| value.span()),
+        }
+    }
+}
+impl Binding<'_> {
+    pub fn span(&self) -> Span {
+        match self {
+            Binding::Struct { name, fields } => fields
+                .last()
+                .map(|(_, binding)| name.span.merge(binding.span()))
+                .unwrap_or(name.span),
+            Binding::Tuple { fields } => fields
+                .last()
+                .map(|last| fields[0].span().merge(last.span()))
+                .unwrap_or_else(|| Span::default()),
+            Binding::Variable(name) => name.span,
         }
     }
 }
 
-impl Stmt<'_> {
-    pub fn get_line(&self) -> u32 {
+impl TypeAst<'_> {
+    pub fn span(&self) -> Span {
         match self {
-            Stmt::Expression(expr) => expr.get_line(),
-            Stmt::Let {
-                binding: identifier,
-                ..
-            } => identifier.get_line(),
-            Stmt::Block { brace_token, .. } => brace_token.line,
-            Stmt::If { condition, .. } => condition.get_line(),
-            Stmt::While { condition, .. } => condition.get_line(),
-            Stmt::Function { name, .. } => name.line,
-            Stmt::Return(expr) => expr.get_line(),
-            Stmt::Struct { name, .. } => name.line,
-            Stmt::Impl { name, .. } => name.0.line,
-            Stmt::Interface { name, .. } => name.line,
-            Stmt::Enum { name, .. } => name.line,
-            Stmt::Match { value, .. } => value.get_line(),
+            TypeAst::Optional(inner) => inner.span(),
+            TypeAst::Named(name, generics) => generics
+                .last()
+                .map(|generic| name.span.merge(generic.span()))
+                .unwrap_or(name.span),
+            TypeAst::Function {
+                param_types,
+                return_type,
+            } => param_types
+                .last()
+                .map(|last| param_types[0].span().merge(last.span()))
+                .unwrap_or_else(|| return_type.span()),
+            TypeAst::Tuple(types) => types
+                .last()
+                .map(|last| types[0].span().merge(last.span()))
+                .unwrap_or_else(|| Span::default()),
+            TypeAst::Infer => Span::default(),
         }
     }
 }
