@@ -170,7 +170,10 @@ pub enum Stmt<'src> {
         value: Expr<'src>,
         type_info: TypeAst<'src>,
     },
-    Return(Expr<'src>),
+    Return {
+        keyword: Token<'src>,
+        value: Expr<'src>,
+    },
     Block {
         brace_token: Token<'src>,
         body: Vec<Stmt<'src>>,
@@ -187,7 +190,7 @@ pub enum Stmt<'src> {
     Function {
         name: Token<'src>,
         params: Vec<Token<'src>>,
-        body: Vec<Stmt<'src>>,
+        body: Box<Stmt<'src>>,
         generics: Vec<Token<'src>>,
         type_: TypeAst<'src>,
     },
@@ -466,20 +469,17 @@ impl Display for Stmt<'_> {
             } => {
                 write!(
                     f,
-                    "func {}({}) do {} end",
+                    "func {}({}) {}",
                     name.lexeme,
                     params
                         .iter()
                         .map(|e| e.lexeme)
                         .collect::<Vec<_>>()
                         .join(","),
-                    body.iter()
-                        .map(|e| e.to_string())
-                        .collect::<Vec<_>>()
-                        .join("\n")
+                    body
                 )
             }
-            Stmt::Return(expr) => write!(f, "return {}", expr),
+            Stmt::Return { value, .. } => write!(f, "return {}", value),
 
             Stmt::Struct {
                 name,
@@ -629,10 +629,10 @@ impl Stmt<'_> {
         match self {
             Stmt::Expression(expr) => expr.span(),
             Stmt::Let { binding, value, .. } => binding.span().merge(value.span()),
-            Stmt::Return(expr) => expr.span(),
+            Stmt::Return { value, keyword } => keyword.span.merge(value.span()),
             Stmt::Block { body, brace_token } => body
-                .last()
-                .map(|last| brace_token.span.merge(last.span()))
+                .first()
+                .map(|first| brace_token.span.merge(first.span()))
                 .unwrap_or(brace_token.span),
             Stmt::If {
                 condition,
@@ -646,10 +646,7 @@ impl Stmt<'_> {
                     .unwrap_or(base)
             }
             Stmt::While { condition, body } => condition.span().merge(body.span()),
-            Stmt::Function { name, body, .. } => body
-                .last()
-                .map(|last| name.span.merge(last.span()))
-                .unwrap_or(name.span),
+            Stmt::Function { name, body, .. } => name.span.merge(body.span()),
             Stmt::Struct { name, fields, .. } => fields
                 .last()
                 .map(|(field, _)| name.span.merge(field.span))

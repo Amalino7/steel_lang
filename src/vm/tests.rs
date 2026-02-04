@@ -72,7 +72,7 @@ fn test_expressions() {
 
     let mut gc = GarbageCollector::new();
     let compiler = Compiler::new("main".to_string(), &mut gc);
-    let function = compiler.compile(&typed_ast);
+    let function = compiler.compile(0, &typed_ast);
 
     let mut vm = VM::new(1, gc);
     vm.run(function).unwrap();
@@ -90,7 +90,7 @@ fn test_cmp() {
 
     let mut gc = GarbageCollector::new();
     let compiler = Compiler::new("main".to_string(), &mut gc);
-    let function = compiler.compile(&typed_ast);
+    let function = compiler.compile(0, &typed_ast);
 
     let mut vm = VM::new(1, gc);
     vm.run(function).unwrap();
@@ -112,7 +112,7 @@ fn test_while_loop() {
 
     let mut gc = GarbageCollector::new();
     let compiler = Compiler::new("main".to_string(), &mut gc);
-    let function = compiler.compile(&typed_ast);
+    let function = compiler.compile(0, &typed_ast);
 
     let mut vm = VM::new(1, gc);
 

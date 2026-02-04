@@ -79,12 +79,7 @@ impl<'src> TypeChecker<'src> {
                 .map(|(name, ty)| (name, TySys::generic_to_concrete(ty, map)))
                 .collect();
 
-            this.bind_arguments(
-                span,
-                &concrete_params,
-                inferred_args,
-                false,
-            )
+            this.bind_arguments(span, &concrete_params, inferred_args, false)
         };
 
         let val_expr = match variant_type {
@@ -204,12 +199,12 @@ impl<'src> TypeChecker<'src> {
         if let Ok((idx, field_type)) = self.sys.resolve_member_type(&actual_ty, member_token) {
             let mut expr = TypedExpr {
                 ty: field_type,
+                span: object_typed.span.merge(member_token.span),
                 kind: ExprKind::GetField {
                     object: Box::new(object_typed),
                     index: idx,
                     safe: is_safe,
                 },
-                span: member_token.span,
             };
             if is_safe {
                 expr.ty = expr.ty.wrap_in_optional();
@@ -256,12 +251,12 @@ impl<'src> TypeChecker<'src> {
         let ty = if is_safe { ty.wrap_in_optional() } else { ty };
         Ok(TypedExpr {
             ty,
+            span: object_typed.span.merge(member_token.span),
             kind: ExprKind::InterfaceMethodGet {
                 object: Box::new(object_typed),
                 method_index: *idx as u8,
                 safe: is_safe,
             },
-            span: member_token.span,
         })
     }
 
@@ -346,12 +341,12 @@ impl<'src> TypeChecker<'src> {
 
         Ok(TypedExpr {
             ty: method_ty,
+            span: object_expr.span.merge(method_token.span),
             kind: ExprKind::MethodGet {
                 object: Box::new(object_expr),
                 method: resolved_var,
                 safe,
             },
-            span: method_token.span,
         })
     }
     pub(crate) fn with_member_access<F>(

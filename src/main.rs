@@ -58,18 +58,9 @@ pub fn run_file(file_name: &str, source: &str, debug: bool, mode: &str, force: b
     let mut typechecker = TypeChecker::new_with_natives(&natives);
 
     let analysis = typechecker.check(&ast);
-    if !force && let Err(e) = &analysis {
-        for err in e {
-            let span = err.span();
-            let span_range = span.start..span.end;
-            Report::build(ReportKind::Error, file_name, span.start)
-                .with_message("Syntactic Error")
-                .with_label(
-                    Label::new((file_name, span_range))
-                        .with_message(err.message())
-                        .with_color(Color::Red),
-                )
-                .finish()
+    if !force && let Err(errors) = &analysis {
+        for err in errors {
+            err.create_report(file_name)
                 .print((file_name, Source::from(source)))
                 .unwrap();
         }
@@ -93,7 +84,7 @@ pub fn run_file(file_name: &str, source: &str, debug: bool, mode: &str, force: b
 
     let mut gc = GarbageCollector::new();
     let compiler = Compiler::new("main".to_string(), &mut gc);
-    let func = compiler.compile(&typed_ast);
+    let func = compiler.compile(0, &typed_ast);
 
     if debug {
         println!("=== Disassembly ===");

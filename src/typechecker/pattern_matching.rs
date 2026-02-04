@@ -132,7 +132,7 @@ impl<'src> TypeChecker<'src> {
                     TypedBinding::Ignored
                 };
 
-                let typed_body = self.check_stmt(&arm.body)?;
+                let typed_body = self.check_stmt(&arm.body);
 
                 self.scopes.end_scope();
 
@@ -147,7 +147,7 @@ impl<'src> TypeChecker<'src> {
                 self.scopes.begin_scope(ScopeType::Block);
                 let typed_binding =
                     self.check_binding(&Binding::Variable(name.clone()), &value_typed.ty)?;
-                let typed_body = self.check_stmt(&arm.body)?;
+                let typed_body = self.check_stmt(&arm.body);
                 self.scopes.end_scope();
                 *has_fallthrough = true;
                 typed_cases.push(MatchCase::Variable {

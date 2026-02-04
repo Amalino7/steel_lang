@@ -1,7 +1,7 @@
 use crate::compiler::analysis::ResolvedVar;
 use crate::parser::ast::{Stmt, TypeAst, VariantType};
 use crate::scanner::{Span, Token};
-use crate::typechecker::error::TypeCheckerError;
+use crate::typechecker::error::{Recoverable, TypeCheckerError};
 use crate::typechecker::scope_manager::ScopeType;
 use crate::typechecker::type_ast::{StmtKind, TypedStmt};
 use crate::typechecker::type_system::TypeSystem;
@@ -216,7 +216,7 @@ impl<'src> TypeChecker<'src> {
         (name, target_generics): &(Token, Vec<Token>),
         methods: &[Stmt<'src>],
         generics: &[Token],
-    ) -> Result<TypedStmt, TypeCheckerError> {
+    ) -> TypedStmt {
         let mut typed_methods = vec![];
 
         self.sys.push_generics(generics);
@@ -242,15 +242,13 @@ impl<'src> TypeChecker<'src> {
                         };
 
                     let primary_mangled = format!("{}.{}", name.lexeme, func_name.lexeme);
-                    let typed_method = self.check_function(
-                        func_name,
-                        params,
-                        body,
-                        type_info,
-                        primary_mangled.into(),
-                    );
+                    if let Some(stmt) = self
+                        .check_function(func_name, params, body, type_info, primary_mangled.into())
+                        .ok_log(&mut self.errors)
+                    {
+                        typed_methods.push(stmt)
+                    }
                     self.sys.pop_n_generics(generics.len());
-                    typed_methods.push(typed_method?);
                 }
                 _ => unreachable!(),
             }
@@ -285,11 +283,12 @@ impl<'src> TypeChecker<'src> {
             }
 
             if !missing_methods.is_empty() {
-                return Err(TypeCheckerError::DoesNotImplementInterface {
-                    missing_methods,
-                    interface: interface.lexeme.to_string(),
-                    span: impl_block.span(),
-                });
+                self.errors
+                    .push(TypeCheckerError::DoesNotImplementInterface {
+                        missing_methods,
+                        interface: interface.lexeme.to_string(),
+                        span: impl_block.span(),
+                    });
             }
             self.sys
                 .define_impl(name.lexeme, interface_type.name.clone());
@@ -297,21 +296,21 @@ impl<'src> TypeChecker<'src> {
             vtables.push(vtable);
         }
 
-        Ok(TypedStmt {
+        TypedStmt {
             kind: StmtKind::Impl {
                 methods: typed_methods.into(),
                 vtables: vtables.into(),
             },
             span: impl_block.span(),
             type_info: Type::Void,
-        })
+        }
     }
 
     pub(crate) fn check_function(
         &mut self,
         name: &Token<'src>,
         params: &Vec<Token<'src>>,
-        body: &Vec<Stmt<'src>>,
+        body: &Stmt<'src>,
         type_: Type,
         full_name: Symbol,
     ) -> Result<TypedStmt, TypeCheckerError> {
@@ -330,10 +329,7 @@ impl<'src> TypeChecker<'src> {
                     .declare(param.lexeme.into(), func.params[i].1.clone(), param.span)?;
             }
 
-            let func_body = body
-                .iter()
-                .map(|stmt| self.check_stmt(stmt))
-                .collect::<Result<Vec<TypedStmt>, TypeCheckerError>>()?;
+            let func_body = self.check_stmt(body);
 
             let reserved = self.scopes.end_scope();
             self.current_function = enclosing_function_context;
@@ -353,23 +349,19 @@ impl<'src> TypeChecker<'src> {
                     .expect("Variable should exist in upper scope.");
                 captures.push(var_ctx);
             }
-            let function_span = func_body
-                .iter()
-                .fold(name.span, |current, stmt| current.merge(stmt.span));
+            let function_span = name.span.merge(func_body.span);
 
             Ok(TypedStmt {
                 kind: StmtKind::Function {
+                    signature: name.span.merge(Span {
+                        end: func_body.span.start,
+                        ..func_body.span
+                    }),
                     target: func_location,
                     name: Box::from(String::from(name.lexeme)),
-                    body: Box::from(TypedStmt {
-                        kind: StmtKind::Block {
-                            body: func_body,
-                            reserved: reserved as u16,
-                        },
-                        span: function_span,
-                        type_info: Type::Void,
-                    }),
+                    body: Box::new(func_body),
                     captures: Box::from(captures),
+                    reserved: reserved as u8,
                 },
                 type_info: type_,
                 span: function_span,

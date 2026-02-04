@@ -126,20 +126,14 @@ impl<'src> Parser<'src> {
 
     fn func_declaration(&mut self, is_method: bool) -> Result<Stmt<'src>, ParserError<'src>> {
         let (name, generics, params, type_) = self.func_signature(is_method)?;
-
-        self.consume(TokT::LeftBrace, "Expected '{' before function body.")?;
-        let mut body = vec![];
-
-        while !match_token_type!(self, TokT::RightBrace) {
-            body.push(self.declaration()?);
-        }
+        let body = self.block()?;
 
         Ok(Stmt::Function {
             generics,
             type_,
             name,
             params,
-            body,
+            body: Box::new(body),
         })
     }
 
@@ -305,7 +299,8 @@ impl<'src> Parser<'src> {
         } else if match_token_type!(self, TokT::Match) {
             self.match_statement()
         } else if match_token_type!(self, TokT::Return) {
-            let val = if !match_token_type!(self, TokT::Semicolon) {
+            let keyword = self.previous_token.clone();
+            let value = if !match_token_type!(self, TokT::Semicolon) {
                 let expr = self.expression()?;
                 self.consume(TokT::Semicolon, "Expected ';' after return value.")?;
                 expr
@@ -315,7 +310,7 @@ impl<'src> Parser<'src> {
                     span: self.previous_token.span,
                 }
             };
-            Ok(Stmt::Return(val))
+            Ok(Stmt::Return { value, keyword })
         } else {
             let expr = self.expression()?;
             self.consume(TokT::Semicolon, "Expected ';' after expression.")?;
@@ -324,13 +319,13 @@ impl<'src> Parser<'src> {
     }
     fn block(&mut self) -> Result<Stmt<'src>, ParserError<'src>> {
         self.consume(TokT::LeftBrace, "Expected '{' before block.")?;
-        let brace_token = self.previous_token.clone();
         let mut statements = vec![];
         while !check_token_type!(self, TokT::RightBrace) {
             statements.push(self.declaration()?);
         }
 
         self.consume(TokT::RightBrace, "Expected '}' after block.")?;
+        let brace_token = self.previous_token.clone();
         Ok(Stmt::Block {
             body: statements,
             brace_token,

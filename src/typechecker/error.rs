@@ -1,5 +1,7 @@
 use crate::scanner::Span;
 use crate::typechecker::types::Type;
+use ariadne::{Color, Label, Report, ReportKind};
+use std::ops::Range;
 
 #[derive(Debug, Clone)]
 pub enum TypeCheckerError {
@@ -35,6 +37,8 @@ pub enum TypeCheckerError {
         span: Span,
     },
     MissingReturnStatement {
+        fn_span: Span, // Signature
+        fn_name: String,
         span: Span, // Point to the closing brace of the function
     },
     AssignmentToCapturedVariable {
@@ -136,7 +140,101 @@ impl std::fmt::Display for TypeCheckerError {
     }
 }
 
+pub trait Recoverable<T> {
+    /// Pushes error to a collection and returns a fallback value.
+    fn recover(self, errors: &mut Vec<TypeCheckerError>, fallback: T) -> T;
+    fn ok_log(self, errors: &mut Vec<TypeCheckerError>) -> Option<T>;
+}
+
+impl<T> Recoverable<T> for Result<T, TypeCheckerError> {
+    fn recover(self, errors: &mut Vec<TypeCheckerError>, fallback: T) -> T {
+        match self {
+            Ok(val) => val,
+            Err(err) => {
+                errors.push(err);
+                fallback
+            }
+        }
+    }
+    fn ok_log(self, errors: &mut Vec<TypeCheckerError>) -> Option<T> {
+        match self {
+            Ok(val) => Some(val),
+            Err(err) => {
+                errors.push(err);
+                None
+            }
+        }
+    }
+}
+
 impl TypeCheckerError {
+    pub fn create_report<'a>(&self, source_id: &'a str) -> Report<'a, (&'a str, Range<usize>)> {
+        let offset = self.span().start;
+
+        let mut report = Report::build(ReportKind::Error, source_id, offset).with_code("TypeError");
+
+        match self {
+            TypeCheckerError::TypeMismatch {
+                expected,
+                found,
+                span,
+                message,
+            } => {
+                let mut labels = vec![];
+
+                labels.push(
+                    Label::new((source_id, span.to_range()))
+                        .with_message(format!(
+                            "Found type '{}' here but expected {}.",
+                            found, expected
+                        ))
+                        .with_color(Color::Red),
+                );
+
+                // // 2. Secondary Label (Yellow): Why we expected something else
+                // if let Some(origin) = expected_span {
+                //     labels.push(
+                //         Label::new(("src.lang", origin.to_range()))
+                //             .with_message(format!("Expected type '{}' because of this", expected))
+                //             .with_color(Color::Yellow),
+                //     );
+                // }
+
+                report = report.with_message(message).with_labels(labels);
+            }
+
+            TypeCheckerError::MissingReturnStatement {
+                span,
+                fn_span,
+                fn_name,
+            } => {
+                report = report
+                    .with_message(format!(
+                        "Function '{}' is missing a return statement",
+                        fn_name
+                    ))
+                    .with_labels(vec![
+                        Label::new((source_id, span.to_range()))
+                            .with_message("Implicitly returns () here")
+                            .with_color(Color::Red),
+                        Label::new((source_id, fn_span.to_range()))
+                            .with_message(format!("'{}' declared here", fn_name))
+                            .with_color(Color::Blue),
+                    ])
+                    .with_note("Functions with a return type must return a value on all paths.");
+            }
+            err => {
+                report = report.with_message(err.message()).with_label(
+                    Label::new((source_id, err.span().to_range()))
+                        .with_message(err.message())
+                        .with_color(Color::Red),
+                );
+            }
+        }
+
+        report.finish()
+    }
+
     // This is the method main.rs will call to tell Ariadne WHERE to point
     pub fn span(&self) -> Span {
         match self {

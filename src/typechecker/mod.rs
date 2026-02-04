@@ -82,14 +82,7 @@ impl<'src> TypeChecker<'src> {
         self.define_enum_variants(ast);
 
         for stmt in ast.iter() {
-            match self.check_stmt(stmt) {
-                Ok(stmt) => {
-                    typed_ast.push(stmt);
-                }
-                Err(e) => {
-                    self.errors.push(e);
-                }
-            }
+            typed_ast.push(self.check_stmt(stmt));
         }
 
         let global_count = self.scopes.global_size();

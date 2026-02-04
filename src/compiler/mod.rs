@@ -25,7 +25,11 @@ impl<'a> Compiler<'a> {
         &mut self.function.chunk
     }
 
-    pub fn compile(mut self, typed_ast: &TypedStmt) -> Function {
+    pub fn compile(mut self, reserved: u8, typed_ast: &TypedStmt) -> Function {
+        if reserved != 0 {
+            self.emit_op(Opcode::Reserve, typed_ast.span.line);
+            self.emit_byte(reserved, typed_ast.span.line);
+        }
         self.compile_stmt(typed_ast);
 
         self.chunk().write_constant(Value::Nil, 0);
@@ -158,15 +162,17 @@ impl<'a> Compiler<'a> {
                 }
             }
             StmtKind::Function {
+                reserved,
                 target,
                 name,
                 body,
                 captures,
+                ..
             } => {
                 let line = stmt.span.line;
                 let func_compiler = Compiler::new(name.to_string(), self.gc);
 
-                let compiled_fn = func_compiler.compile(body);
+                let compiled_fn = func_compiler.compile(*reserved, body);
                 let constant = Value::Function(self.gc.alloc(compiled_fn));
                 self.chunk().write_constant(constant, line as usize);
 
@@ -331,6 +337,7 @@ impl<'a> Compiler<'a> {
     fn compile_expr(&mut self, expr: &TypedExpr) {
         let line = expr.span.line;
         match &expr.kind {
+            ExprKind::NoOp => {}
             ExprKind::Binary {
                 left,
                 right,

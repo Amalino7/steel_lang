@@ -2,8 +2,8 @@ use crate::compiler::analysis::ResolvedVar;
 use crate::compiler::analysis::ResolvedVar::Global;
 use crate::parser::ast::{Expr, Literal};
 use crate::scanner::TokenType;
-use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::error::TypeCheckerError::AssignmentToCapturedVariable;
+use crate::typechecker::error::{Recoverable, TypeCheckerError};
 use crate::typechecker::type_ast::{ExprKind, LogicalOp, TypedExpr, UnaryOp};
 use crate::typechecker::type_system::{generics_to_map, TySys, TypeSystem};
 use crate::typechecker::types::{TupleType, Type};
@@ -171,7 +171,7 @@ impl<'src> TypeChecker<'src> {
                             return Err(TypeCheckerError::TypeMismatch {
                                 expected: func_return_type,
                                 found: provided_err,
-                                span: operator.span,
+                                span: typed_expr.span,
                                 message: "The Result type propagate by try must be compatible with the function return type.",
                             });
                         }
@@ -287,7 +287,7 @@ impl<'src> TypeChecker<'src> {
                         return Err(TypeCheckerError::TypeMismatch {
                             expected: Type::Optional(Box::new(Type::Any)),
                             found: left_typed.ty,
-                            span: operator.span,
+                            span: left_typed.span,
                             message: "Cannot coalesce non-optional type.",
                         });
                     }
@@ -485,13 +485,13 @@ impl<'src> TypeChecker<'src> {
                     let typed_value = this.coerce_expression(value, &field_type)?;
                     Ok(TypedExpr {
                         ty: field_type,
+                        span: typed_value.span.merge(typed_obj.span),
                         kind: ExprKind::SetField {
                             object: Box::new(typed_obj),
                             index,
                             value: Box::new(typed_value),
                             safe: *safe,
                         },
-                        span: expr.span(),
                     })
                 },
             ),
@@ -520,15 +520,10 @@ impl<'src> TypeChecker<'src> {
                     }),
                 }
             }
-            Expr::List { .. } => {
-                let Expr::List {
-                    elements,
-                    bracket_token,
-                } = expr
-                else {
-                    unreachable!()
-                };
-
+            Expr::List {
+                elements,
+                bracket_token,
+            } => {
                 let expected_inner = match expected {
                     Some(Type::List(inner)) => Some(inner.as_ref().clone()),
                     Some(Type::Optional(inner)) => match inner.as_ref() {
@@ -554,7 +549,9 @@ impl<'src> TypeChecker<'src> {
                 let inner_ty = expected_inner.unwrap_or_else(|| self.infer_ctx.new_type_var());
 
                 for element in elements.iter() {
-                    let typed = self.coerce_expression(element, &inner_ty)?;
+                    let typed = self
+                        .coerce_expression(element, &inner_ty)
+                        .recover(&mut self.errors, TypedExpr::new_blank(element.span()));
                     typed_elements.push(typed);
                 }
 
@@ -691,7 +688,7 @@ impl<'src> TypeChecker<'src> {
         self.infer_ctx
             .unify_types(expected, &expr.ty)
             .map_err(|msg| TypeCheckerError::ComplexTypeMismatch {
-                expected: expected.clone(),
+                expected: self.infer_ctx.substitute(expected),
                 span: expr.span,
                 message: msg,
                 found: expr.ty.clone(),

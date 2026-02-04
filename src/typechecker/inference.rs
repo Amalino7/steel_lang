@@ -31,6 +31,7 @@ impl InferenceContext {
 
     pub fn substitute(&mut self, ty: &Type) -> Type {
         match ty {
+            Type::Error => ty.clone(),
             Type::Infer(id) => {
                 if let Some(resolved) = self.substitutions.get(id) {
                     let resolved = resolved.clone();
@@ -119,7 +120,7 @@ impl InferenceContext {
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(())
         }
-        if provided == &Type::Never {
+        if provided == &Type::Never || expected_ty == &Type::Error {
             return Ok(());
         }
 
@@ -136,6 +137,7 @@ impl InferenceContext {
         }
 
         match expected_ty {
+            Type::Error => return Ok(()),
             Type::Infer(id) => {
                 if !self.is_resolved(*id) {
                     self.substitutions.insert(*id, provided.clone());
@@ -186,7 +188,9 @@ impl InferenceContext {
                     if !provided_inner.type_params.is_empty() {
                         return Err("Cannot assign a generic function.\n TIP: specify generics using .<Type> notation.".into());
                     }
-
+                    if expected_inner.params.len() != provided_inner.params.len() {
+                        return mismatch(expected_ty, provided);
+                    }
                     for (expected_param, provided_param) in expected_inner
                         .params
                         .iter()
@@ -201,6 +205,9 @@ impl InferenceContext {
             }
             Type::Tuple(expected_inner) => {
                 if let Type::Tuple(provided_inner) = provided {
+                    if expected_inner.types.len() != provided_inner.types.len() {
+                        return mismatch(expected_ty, provided);
+                    }
                     for (expected_param, provided_param) in
                         expected_inner.types.iter().zip(provided_inner.types.iter())
                     {

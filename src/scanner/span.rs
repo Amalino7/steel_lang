@@ -20,6 +20,9 @@ impl Span {
             line: self.line,
         }
     }
+    pub fn to_range(self) -> Range<usize> {
+        self.start..self.end
+    }
 }
 
 impl From<Span> for Range<usize> {

@@ -39,10 +39,30 @@ pub struct ScopeManager {
     scopes: Vec<Scope>,
     closures: Vec<Symbol>,
 }
-pub struct ScopeGuard<'a>(pub &'a mut TypeChecker<'a>);
-impl<'a> Drop for ScopeGuard<'a> {
+pub struct ScopeGuard<'a, 'src>(&'a mut TypeChecker<'src>);
+
+impl<'a, 'src> ScopeGuard<'a, 'src> {
+    pub fn new(checker: &'a mut TypeChecker<'src>, scope_type: ScopeType) -> Self {
+        checker.scopes.begin_scope(scope_type);
+        ScopeGuard(checker)
+    }
+}
+impl<'a> Drop for ScopeGuard<'a, '_> {
     fn drop(&mut self) {
         self.0.scopes.end_scope();
+    }
+}
+
+impl<'a, 'src> std::ops::Deref for ScopeGuard<'a, 'src> {
+    type Target = TypeChecker<'src>;
+    fn deref(&self) -> &Self::Target {
+        self.0
+    }
+}
+
+impl<'a, 'src> std::ops::DerefMut for ScopeGuard<'a, 'src> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.0
     }
 }
 

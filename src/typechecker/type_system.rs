@@ -285,6 +285,7 @@ impl TypeSystem {
             | Type::Unknown
             | Type::Never
             | Type::Infer(_)
+            | Type::Error
             | Type::Any => generic_ty,
             Type::Optional(inner) => {
                 Type::Optional(Box::new(Self::generic_to_concrete(*inner, generics_map)))

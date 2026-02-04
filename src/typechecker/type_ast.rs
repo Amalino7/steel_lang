@@ -50,6 +50,7 @@ pub enum BinaryOp {
 pub enum ExprKind {
     Literal(Literal),
     GetVar(ResolvedVar, Symbol),
+    NoOp,
     GetField {
         object: Box<TypedExpr>,
         index: u8,
@@ -139,7 +140,7 @@ impl TypedStmt {
         Self {
             kind: StmtKind::Blank,
             span,
-            type_info: Type::Void,
+            type_info: Type::Error,
         }
     }
 }
@@ -147,9 +148,9 @@ impl TypedStmt {
 impl TypedExpr {
     pub(crate) fn new_blank(span: Span) -> Self {
         Self {
-            kind: ExprKind::Literal(Literal::Nil),
+            kind: ExprKind::NoOp,
             span,
-            ty: Type::Unknown,
+            ty: Type::Error,
         }
     }
 }
@@ -200,7 +201,9 @@ pub enum StmtKind {
         body: Box<TypedStmt>,
     },
     Function {
+        reserved: u8,
         target: ResolvedVar,
+        signature: Span,
         name: Box<str>, // reduces memory usage by 8 bytes
         body: Box<TypedStmt>,
         captures: Box<[ResolvedVar]>,

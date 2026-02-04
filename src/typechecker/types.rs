@@ -73,6 +73,7 @@ pub enum Type {
     Boolean,
     Void,
     Never,
+    Error,
     Infer(u32),
     Optional(Box<Type>),
     Unknown,
@@ -115,6 +116,7 @@ fn missing_generics(
 impl Type {
     pub fn is_concrete(&self) -> bool {
         match self {
+            Type::Error => true,
             Type::Infer(_) => false,
             Type::Optional(inner) => inner.is_concrete(),
             Type::Function(f) => {
@@ -237,6 +239,7 @@ impl Type {
 
     pub fn get_name(&self) -> Option<&str> {
         match self {
+            Type::Error => None,
             Type::Infer(_) => None,
             Type::Interface(name, _) => Some(name),
             Type::Number => Some("number"),
@@ -424,6 +427,7 @@ fn print_generics(args: &[Type], f: &mut Formatter<'_>) -> std::fmt::Result {
 impl Display for Type {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
+            Type::Error => write!(f, "Error"),
             Type::Infer(n) => write!(f, "T{}", n),
             Type::Metatype(name, generic_args) => {
                 write!(f, "Type {}", name)?;

@@ -1,3 +1,4 @@
+use crate::scanner::Span;
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::type_ast::{MatchCase, StmtKind, TypedStmt};
 use crate::typechecker::types::Type;
@@ -40,7 +41,12 @@ impl<'src> TypeChecker<'src> {
                 self.check_stmt_returns(then_branch)
             }
             StmtKind::While { body, .. } => self.check_stmt_returns(body),
-            StmtKind::Function { body, .. } => {
+            StmtKind::Function {
+                name,
+                body,
+                signature,
+                ..
+            } => {
                 let return_type = if let Type::Function(func) = &stmt.type_info {
                     func.return_type.clone()
                 } else {
@@ -51,7 +57,14 @@ impl<'src> TypeChecker<'src> {
                 let does_return = self.stmt_returns(body)?;
 
                 if !does_return && return_type != Type::Void {
-                    Err(TypeCheckerError::MissingReturnStatement { span: stmt.span })
+                    Err(TypeCheckerError::MissingReturnStatement {
+                        fn_span: *signature,
+                        fn_name: name.to_string(),
+                        span: Span {
+                            start: body.span.end,
+                            ..body.span
+                        },
+                    })
                 } else {
                     Ok(())
                 }
