@@ -141,7 +141,6 @@ impl<'src> Scanner<'src> {
                     self.advance();
                 }
                 '/' if self.peek_next_char() == '*' => {
-                    let comment_start = self.current;
                     self.advance();
                     self.advance();
                     let mut depth = 1;

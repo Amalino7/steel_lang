@@ -24,11 +24,25 @@ pub enum TypeCheckerError {
         span: Span,
         message: &'static str,
     },
+    TypeMismatchWithOrigin {
+        expected: Type,
+        found: Type,
+        span: Span,
+        message: &'static str,
+        expected_origin: Span,
+    },
     ComplexTypeMismatch {
         expected: Type,
         found: Type,
         message: String,
         span: Span,
+    },
+    ComplexTypeMismatchWithOrigins {
+        expected: Type,
+        found: Type,
+        message: String,
+        span: Span,
+        expected_origin: Option<Span>,
     },
     InvalidReturnOutsideFunction {
         span: Span,
@@ -70,11 +84,13 @@ pub enum TypeCheckerError {
     Redeclaration {
         name: String,
         span: Span,
+        original: Span,
     },
     DoesNotImplementInterface {
         missing_methods: Vec<String>,
         interface: String,
         span: Span,
+        interface_origin: Span,
     },
     UncoveredPattern {
         variant: String,
@@ -84,6 +100,7 @@ pub enum TypeCheckerError {
         expected: usize,
         found: usize,
         span: Span,
+        callee: Span,
     },
     DuplicateArgument {
         name: String,
@@ -134,6 +151,39 @@ pub enum TypeCheckerError {
         type_name: String,
     },
 }
+
+impl TypeCheckerError {
+    pub fn with_origin(self, origin: Span) -> Self {
+        match self {
+            TypeCheckerError::TypeMismatch {
+                expected,
+                found,
+                span,
+                message,
+            } => TypeCheckerError::TypeMismatchWithOrigin {
+                expected,
+                found,
+                span,
+                message,
+                expected_origin: origin,
+            },
+            TypeCheckerError::ComplexTypeMismatch {
+                expected,
+                found,
+                message,
+                span,
+            } => TypeCheckerError::ComplexTypeMismatchWithOrigins {
+                expected,
+                found,
+                message,
+                span,
+                expected_origin: Some(origin),
+            },
+            other => other,
+        }
+    }
+}
+
 impl std::fmt::Display for TypeCheckerError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.message())
@@ -180,25 +230,66 @@ impl TypeCheckerError {
                 span,
                 message,
             } => {
-                let mut labels = vec![];
-
-                labels.push(
+                let labels = vec![
                     Label::new((source_id, span.to_range()))
                         .with_message(format!(
                             "Found type '{}' here but expected {}.",
                             found, expected
                         ))
                         .with_color(Color::Red),
+                ];
+
+                report = report.with_message(message).with_labels(labels);
+            }
+
+            TypeCheckerError::TypeMismatchWithOrigin {
+                expected,
+                found,
+                span,
+                message,
+                expected_origin,
+            } => {
+                let mut labels = vec![
+                    Label::new((source_id, span.to_range()))
+                        .with_message(format!(
+                            "Found type '{}' here but expected {}.",
+                            found, expected
+                        ))
+                        .with_color(Color::Red),
+                ];
+
+                labels.push(
+                    Label::new((source_id, expected_origin.to_range()))
+                        .with_message(format!("Type '{}' originates here.", expected))
+                        .with_color(Color::Yellow),
                 );
 
-                // // 2. Secondary Label (Yellow): Why we expected something else
-                // if let Some(origin) = expected_span {
-                //     labels.push(
-                //         Label::new(("src.lang", origin.to_range()))
-                //             .with_message(format!("Expected type '{}' because of this", expected))
-                //             .with_color(Color::Yellow),
-                //     );
-                // }
+                report = report.with_message(message).with_labels(labels);
+            }
+
+            TypeCheckerError::ComplexTypeMismatchWithOrigins {
+                expected,
+                found,
+                message,
+                span,
+                expected_origin,
+            } => {
+                let mut labels = vec![
+                    Label::new((source_id, span.to_range()))
+                        .with_message(format!(
+                            "Complex type mismatch: expected '{}' but found '{}'.",
+                            expected, found
+                        ))
+                        .with_color(Color::Red),
+                ];
+
+                if let Some(exp_span) = expected_origin {
+                    labels.push(
+                        Label::new((source_id, exp_span.to_range()))
+                            .with_message(format!("Expected type '{}' originated here.", expected))
+                            .with_color(Color::Yellow),
+                    );
+                }
 
                 report = report.with_message(message).with_labels(labels);
             }
@@ -223,6 +314,71 @@ impl TypeCheckerError {
                     ])
                     .with_note("Functions with a return type must return a value on all paths.");
             }
+            TypeCheckerError::DoesNotImplementInterface {
+                missing_methods,
+                interface,
+                span,
+                interface_origin,
+            } => {
+                let mut labels = vec![
+                    Label::new((source_id, span.to_range()))
+                        .with_message(format!(
+                            "Block does not implement interface '{}'. Missing methods: {}",
+                            interface,
+                            missing_methods.join(", ")
+                        ))
+                        .with_color(Color::Red),
+                ];
+                labels.push(
+                    Label::new((source_id, interface_origin.to_range()))
+                        .with_message(format!("Interface '{}' declared here.", interface))
+                        .with_color(Color::Yellow),
+                );
+                report = report
+                    .with_message(format!("Type does not implement interface '{}'", interface))
+                    .with_labels(labels);
+            }
+
+            TypeCheckerError::TooManyArguments {
+                expected,
+                found,
+                span,
+                callee,
+            } => {
+                let labels = vec![
+                    Label::new((source_id, span.to_range()))
+                        .with_message(format!(
+                            "Too many arguments. Expected {} but found {}.",
+                            expected, found
+                        ))
+                        .with_color(Color::Red),
+                    Label::new((source_id, callee.to_range()))
+                        .with_message("Called function is here")
+                        .with_color(Color::Yellow),
+                ];
+                report = report
+                    .with_message("Too many arguments")
+                    .with_labels(labels);
+            }
+            TypeCheckerError::Redeclaration {
+                name,
+                span,
+                original,
+            } => {
+                let mut labels = vec![
+                    Label::new((source_id, span.to_range()))
+                        .with_message(format!("Redeclaration of type or variable '{}'.", name))
+                        .with_color(Color::Red),
+                ];
+                labels.push(
+                    Label::new((source_id, original.to_range()))
+                        .with_message("Previous declaration here.".to_string())
+                        .with_color(Color::Yellow),
+                );
+                report = report
+                    .with_message(format!("Redeclaration of type or variable '{}'", name))
+                    .with_labels(labels);
+            }
             err => {
                 report = report.with_message(err.message()).with_label(
                     Label::new((source_id, err.span().to_range()))
@@ -242,7 +398,9 @@ impl TypeCheckerError {
             TypeCheckerError::UndefinedVariable { span, .. } => *span,
             TypeCheckerError::CalleeIsNotCallable { span, .. } => *span,
             TypeCheckerError::TypeMismatch { span, .. } => *span,
+            TypeCheckerError::TypeMismatchWithOrigin { span, .. } => *span,
             TypeCheckerError::ComplexTypeMismatch { span, .. } => *span,
+            TypeCheckerError::ComplexTypeMismatchWithOrigins { span, .. } => *span,
             TypeCheckerError::InvalidReturnOutsideFunction { span, .. } => *span,
             TypeCheckerError::UnreachableCode { span, .. } => *span,
             TypeCheckerError::MissingReturnStatement { span, .. } => *span,
@@ -293,7 +451,29 @@ impl TypeCheckerError {
                     message, expected, found
                 )
             }
+            TypeCheckerError::TypeMismatchWithOrigin {
+                expected,
+                found,
+                message,
+                ..
+            } => {
+                format!(
+                    "{}. Expected '{}' but found '{}'.",
+                    message, expected, found
+                )
+            }
             TypeCheckerError::ComplexTypeMismatch {
+                expected,
+                found,
+                message,
+                ..
+            } => {
+                format!(
+                    "Type mismatch. Expected '{}' but found '{}'.\nPrecise: {}",
+                    expected, found, message
+                )
+            }
+            TypeCheckerError::ComplexTypeMismatchWithOrigins {
                 expected,
                 found,
                 message,
@@ -344,16 +524,8 @@ impl TypeCheckerError {
             TypeCheckerError::Redeclaration { name, .. } => {
                 format!("Redeclaration of type or variable '{}'.", name)
             }
-            TypeCheckerError::DoesNotImplementInterface {
-                missing_methods,
-                interface,
-                ..
-            } => {
-                format!(
-                    "Type does not implement interface '{}'. Missing methods or mismatched types: {}.",
-                    interface,
-                    missing_methods.join(", ")
-                )
+            TypeCheckerError::DoesNotImplementInterface { interface, .. } => {
+                format!("Type does not implement interface '{}'.", interface,)
             }
             TypeCheckerError::UncoveredPattern { variant, .. } => {
                 format!("Uncovered pattern matching variant '{}'.", variant)

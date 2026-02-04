@@ -1,4 +1,4 @@
-let list = [1,2,"3",4];
+let list = [1,2,3,4];
 func print_one(a: number) {
     print(a);
     print(", ");
@@ -6,6 +6,7 @@ func print_one(a: number) {
 func square(a:number): number {
     return a * a;
 }
+square(1,2);
 list.map(square).each(print_one);
 println("");
 

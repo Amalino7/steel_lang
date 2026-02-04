@@ -359,7 +359,7 @@ impl<'src> TypeChecker<'src> {
     where
         F: FnOnce(&mut Self, TypedExpr, u8, Type) -> Result<TypedExpr, TypeCheckerError>,
     {
-        let object_typed = self.check_expression(object_expr, None)?;
+        let object_typed = self.check_expression(object_expr, &Type::Unknown)?;
         let parent_type = object_typed.ty.unwrap_optional_safe(safe, field.span)?;
 
         let (index, field_type) = self.sys.resolve_member_type(&parent_type, field)?;

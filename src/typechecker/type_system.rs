@@ -93,10 +93,11 @@ impl TypeSystem {
     }
 
     // Only the name exists
-    pub fn declare_struct(&mut self, name: Symbol, generic_params: &[Token]) {
+    pub fn declare_struct(&mut self, origin: Span, name: Symbol, generic_params: &[Token]) {
         self.structs.insert(
             name.clone(),
             StructType {
+                origin,
                 name,
                 fields: HashMap::new(),
                 ordered_fields: vec![],
@@ -105,10 +106,11 @@ impl TypeSystem {
         );
     }
 
-    pub fn declare_enum(&mut self, name: Symbol, generic_params: &[Token]) {
+    pub fn declare_enum(&mut self, origin: Span, name: Symbol, generic_params: &[Token]) {
         self.enums.insert(
             name.clone(),
             EnumType {
+                origin,
                 name,
                 variants: HashMap::new(),
                 ordered_variants: vec![],
@@ -117,10 +119,11 @@ impl TypeSystem {
         );
     }
 
-    pub fn declare_interface(&mut self, name: Symbol) {
+    pub fn declare_interface(&mut self, name: Symbol, origin: Span) {
         self.interfaces.insert(
             name.clone(),
             InterfaceType {
+                origin,
                 name,
                 methods: HashMap::new(),
             },

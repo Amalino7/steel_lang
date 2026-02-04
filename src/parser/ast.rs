@@ -25,6 +25,7 @@ pub enum TypeAst<'src> {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Expr<'src> {
+    Error,
     Unary {
         operator: Token<'src>,
         expression: Box<Expr<'src>>,
@@ -251,6 +252,7 @@ impl Display for Literal {
 impl Display for Expr<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
+            Expr::Error => write!(f, "error"),
             Expr::Tuple { elements } => {
                 write!(f, "(")?;
                 for (i, element) in elements.iter().enumerate() {
@@ -574,6 +576,7 @@ impl Display for Stmt<'_> {
 impl Expr<'_> {
     pub fn span(&self) -> Span {
         match self {
+            Expr::Error => Span::default(),
             Expr::Unary {
                 operator,
                 expression,

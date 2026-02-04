@@ -31,6 +31,7 @@ impl PartialEq for FunctionType {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct StructType {
+    pub origin: Span,
     pub fields: HashMap<String, usize>,
     pub ordered_fields: Vec<(String, Type)>,
     pub name: Symbol,
@@ -40,11 +41,13 @@ pub struct StructType {
 pub struct InterfaceType {
     pub methods: HashMap<String, (usize, Type)>,
     pub name: Symbol,
+    pub origin: Span,
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct EnumType {
     pub name: Symbol,
+    pub origin: Span,
     pub variants: HashMap<Symbol, usize>,
     pub generic_params: Vec<Symbol>,
     pub ordered_variants: Vec<(Symbol, Type)>, // Void, one arg, tuple, struct

@@ -8,12 +8,14 @@ use crate::scanner::Scanner;
 use crate::scanner::TokenType as TokT;
 use crate::scanner::{Token, TokenType};
 use ast::Stmt;
+use std::mem;
 
 pub struct Parser<'src> {
     scanner: Scanner<'src>,
     previous_token: Token<'src>,
     current_token: Token<'src>,
     next_token: Token<'src>,
+    errors: Vec<ParserError<'src>>,
 }
 macro_rules! check_token_type {
     ($parser:expr, $( $token_type:pat $(,)?)*) => {
@@ -58,6 +60,7 @@ impl<'src> Parser<'src> {
             previous_token: start_token.clone(),
             current_token: start_token,
             next_token: next,
+            errors: Vec::new(),
         }
     }
     fn advance(&mut self) -> Result<(), ParserError<'src>> {
@@ -108,18 +111,17 @@ impl<'src> Parser<'src> {
     }
     pub fn parse(&mut self) -> Result<Vec<Stmt<'src>>, Vec<ParserError<'src>>> {
         let mut statements = vec![];
-        let mut errors = vec![];
         while !self.scanner.is_at_end() {
             match self.declaration() {
                 Ok(stmt) => statements.push(stmt),
                 Err(e) => {
-                    errors.push(e);
+                    self.errors.push(e);
                     self.synchronize();
                 }
             }
         }
-        if !errors.is_empty() {
-            Err(errors.clone())
+        if !self.errors.is_empty() {
+            Err(mem::take(&mut self.errors))
         } else {
             Ok(statements)
         }
@@ -133,6 +135,8 @@ impl<'src> Parser<'src> {
             if check_token_type!(
                 self,
                 TokT::Func,
+                TokT::RightBrace,
+                TokT::Match,
                 TokT::Let,
                 TokT::If,
                 TokT::While,

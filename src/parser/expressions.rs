@@ -312,6 +312,13 @@ impl<'src> Parser<'src> {
             args.push(self.parse_call_arg()?);
         }
         while match_token_type!(self, TokT::Comma) {
+            if check_token_type!(self, TokT::RightParen) {
+                self.errors.push(ParserError::UnexpectedToken {
+                    found: self.previous_token.clone(),
+                    message: "Trailing comma is not allowed here.",
+                });
+                break;
+            }
             args.push(self.parse_call_arg()?);
         }
 

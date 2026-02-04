@@ -20,6 +20,11 @@ pub enum ParserError<'src> {
         token: Token<'src>,
         message: &'static str,
     },
+    RichError {
+        primary_span: Span,
+        message: String,
+        context: Vec<(Span, String)>,
+    },
 }
 impl<'src> ParserError<'src> {
     pub fn span(&self) -> Span {
@@ -28,10 +33,12 @@ impl<'src> ParserError<'src> {
             ParserError::UnexpectedToken { found, .. } => found.span,
             ParserError::ParseError { token, .. } => token.span,
             ParserError::MissingToken { after_token, .. } => after_token.span,
+            ParserError::RichError { primary_span, .. } => *primary_span,
         }
     }
     pub fn message(&self) -> String {
         match self {
+            ParserError::RichError { message, .. } => message.to_string(),
             ParserError::ScannerError { token } => {
                 format!("Scanner error: {}", token.lexeme)
             }

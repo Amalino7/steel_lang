@@ -12,7 +12,7 @@ impl<'src> TypeChecker<'src> {
         &mut self,
         operator: &Token,
         expr: &Expr<'src>,
-        expected_type: Option<&Type>,
+        expected_type: &Type,
     ) -> Result<TypedExpr, TypeCheckerError> {
         let typed_operand = self.check_expression(expr, expected_type)?;
         let operand_type = typed_operand.ty.clone();
@@ -65,7 +65,7 @@ impl<'src> TypeChecker<'src> {
         left: &Expr<'src>,
         right: &Expr<'src>,
     ) -> Result<TypedExpr, TypeCheckerError> {
-        let left_typed = self.check_expression(left, Some(&Type::Boolean))?;
+        let left_typed = self.check_expression(left, &Type::Boolean)?;
         let refinements = self.analyze_condition(&left_typed);
 
         self.scopes.begin_scope(ScopeType::Block);
@@ -83,7 +83,7 @@ impl<'src> TypeChecker<'src> {
                 typed_refinements.push(case);
             }
         }
-        let right_typed = self.check_expression(right, Some(&Type::Boolean))?;
+        let right_typed = self.check_expression(right, &Type::Boolean)?;
         self.scopes.end_scope();
 
         let left_type = left_typed.ty.clone();
@@ -131,8 +131,8 @@ impl<'src> TypeChecker<'src> {
         right: &Expr<'src>,
     ) -> Result<TypedExpr, TypeCheckerError> {
         // TODO consider complex heuristic
-        let left_typed = self.check_expression(left, None)?;
-        let right_typed = self.check_expression(right, None)?;
+        let left_typed = self.check_expression(left, &Type::Unknown)?;
+        let right_typed = self.check_expression(right, &Type::Unknown)?;
 
         let left_type = left_typed.ty.clone();
         let right_type = right_typed.ty.clone();

@@ -1,10 +1,10 @@
 use crate::parser::ast::{Binding, Expr, MatchArm, Pattern};
+use crate::typechecker::TypeChecker;
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::scope_manager::ScopeType;
 use crate::typechecker::type_ast::{MatchCase, StmtKind, TypedBinding, TypedExpr, TypedStmt};
-use crate::typechecker::type_system::{generics_to_map, TypeSystem};
+use crate::typechecker::type_system::{TypeSystem, generics_to_map};
 use crate::typechecker::types::{EnumType, TupleType, Type};
-use crate::typechecker::TypeChecker;
 use std::collections::HashSet;
 use std::rc::Rc;
 
@@ -14,7 +14,7 @@ impl<'src> TypeChecker<'src> {
         value: &Expr<'src>,
         arms: &[MatchArm<'src>],
     ) -> Result<TypedStmt, TypeCheckerError> {
-        let value_typed = self.check_expression(value, None)?;
+        let value_typed = self.check_expression(value, &Type::Unknown)?;
         let enum_name = match &value_typed.ty {
             Type::Enum(name, ..) => name,
             _ => {

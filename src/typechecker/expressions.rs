@@ -15,14 +15,14 @@ impl<'src> TypeChecker<'src> {
     pub(crate) fn check_expression(
         &mut self,
         expr: &Expr<'src>,
-        expected: Option<&Type>,
+        expected: &Type,
     ) -> Result<TypedExpr, TypeCheckerError> {
         match expr {
             Expr::TypeSpecialization {
                 callee,
                 generics: generics_provided,
             } => {
-                let mut callee_typed = self.check_expression(callee, None)?;
+                let mut callee_typed = self.check_expression(callee, &Type::Unknown)?;
                 let generic_args = generics_provided
                     .iter()
                     .map(|t| Type::from_ast(t, &self.sys))
@@ -86,7 +86,7 @@ impl<'src> TypeChecker<'src> {
                 expression,
                 type_name,
             } => {
-                let target = self.check_expression(expression, None)?;
+                let target = self.check_expression(expression, &Type::Unknown)?;
                 let Type::Enum(enum_name, _) = &target.ty else {
                     return Err(TypeCheckerError::InvalidIsUsage {
                         span: type_name.span,
@@ -118,10 +118,9 @@ impl<'src> TypeChecker<'src> {
                 let mut typed_elements = Vec::with_capacity(elements.len());
                 let mut type_vec = vec![];
 
-                let expected_types = if let Some(Type::Tuple(t)) = expected {
-                    Some(&t.types)
-                } else {
-                    None
+                let expected_types = match *expected {
+                    Type::Tuple(ref t) => Some(&t.types),
+                    _ => None,
                 };
 
                 for (idx, element) in elements.iter().enumerate() {
@@ -146,7 +145,7 @@ impl<'src> TypeChecker<'src> {
                 expression,
             } if operator.token_type == TokenType::Try => {
                 // TODO add suggested type
-                let mut typed_expr = self.check_expression(expression, None)?;
+                let mut typed_expr = self.check_expression(expression, &Type::Unknown)?;
                 if let Type::Enum(name, instance) = &mut typed_expr.ty
                     && name.as_ref() == "Result"
                 {
@@ -161,7 +160,7 @@ impl<'src> TypeChecker<'src> {
                         &map,
                     );
 
-                    if let FunctionContext::Function(func_return_type) =
+                    if let FunctionContext::Function(func_return_type, _) =
                         self.current_function.clone()
                     {
                         let provided_err =
@@ -277,9 +276,13 @@ impl<'src> TypeChecker<'src> {
                 left,
                 right,
             } if operator.token_type == TokenType::QuestionQuestion => {
-                let wrapped_expected = expected.map(|t| t.clone().wrap_in_optional());
+                let wrapped_expected = if *expected == Type::Unknown {
+                    Type::Unknown
+                } else {
+                    expected.clone().wrap_in_optional()
+                };
 
-                let left_typed = self.check_expression(left, wrapped_expected.as_ref())?;
+                let left_typed = self.check_expression(left, &wrapped_expected)?;
                 let right_typed = self.check_expression(right, expected)?;
                 let left_inner = match &left_typed.ty {
                     Type::Optional(inner) => inner.as_ref(),
@@ -322,7 +325,7 @@ impl<'src> TypeChecker<'src> {
                 arguments,
                 safe,
             } => {
-                let mut callee_typed = self.check_expression(callee, None)?;
+                let mut callee_typed = self.check_expression(callee, &Type::Unknown)?;
                 // Handle Struct constructor
                 if let Type::Metatype(name, generics) = &callee_typed.ty
                     && let Some(struct_def) = self.sys.get_struct(name)
@@ -465,7 +468,7 @@ impl<'src> TypeChecker<'src> {
                 safe,
             } => {
                 //TODO Ignores safe static access probably should be a warning
-                let object_typed = self.check_expression(object, None)?;
+                let object_typed = self.check_expression(object, &Type::Unknown)?;
                 if let Type::Metatype(name, generics) = &object_typed.ty {
                     return self.resolve_static_access(name, field, generics);
                 }
@@ -500,9 +503,13 @@ impl<'src> TypeChecker<'src> {
                 expression,
                 operator,
             } => {
-                let expected_opt = expected.map(|t| Type::Optional(Box::new(t.clone())));
+                let expected_opt = if *expected == Type::Unknown {
+                    Type::Unknown
+                } else {
+                    Type::Optional(Box::new(expected.clone()))
+                };
 
-                let expr_typed = self.check_expression(expression, expected_opt.as_ref())?;
+                let expr_typed = self.check_expression(expression, &expected_opt)?;
                 match expr_typed.ty.clone() {
                     Type::Optional(inner) => Ok(TypedExpr {
                         ty: *inner,
@@ -524,9 +531,10 @@ impl<'src> TypeChecker<'src> {
                 elements,
                 bracket_token,
             } => {
-                let expected_inner = match expected {
-                    Some(Type::List(inner)) => Some(inner.as_ref().clone()),
-                    Some(Type::Optional(inner)) => match inner.as_ref() {
+                let expected_owned = expected.clone();
+                let expected_inner = match expected_owned {
+                    Type::List(inner) => Some(inner.as_ref().clone()),
+                    Type::Optional(inner) => match inner.as_ref() {
                         Type::List(list_inner) => Some(list_inner.as_ref().clone()),
                         _ => None,
                     },
@@ -579,7 +587,7 @@ impl<'src> TypeChecker<'src> {
                 object,
                 index,
             } => {
-                let object_typed = self.check_expression(object, None)?;
+                let object_typed = self.check_expression(object, &Type::Unknown)?;
                 let parent_type = object_typed
                     .ty
                     .unwrap_optional_safe(*safe, object_typed.span)?;
@@ -615,7 +623,7 @@ impl<'src> TypeChecker<'src> {
                 index,
                 value,
             } => {
-                let object_typed = self.check_expression(object, None)?;
+                let object_typed = self.check_expression(object, &Type::Unknown)?;
                 let parent_type = object_typed
                     .ty
                     .unwrap_optional_safe(*safe, object_typed.span)?;
@@ -643,6 +651,10 @@ impl<'src> TypeChecker<'src> {
                     },
                 })
             }
+            Expr::Error => {
+                // Already reported by parser
+                Ok(TypedExpr::new_blank(expr.span()))
+            }
         }
     }
 
@@ -651,7 +663,7 @@ impl<'src> TypeChecker<'src> {
         expr: &Expr<'src>,
         expected: &Type,
     ) -> Result<TypedExpr, TypeCheckerError> {
-        let mut expr = self.check_expression(expr, Some(expected))?;
+        let mut expr = self.check_expression(expr, expected)?;
         if self.infer_ctx.unify_types(expected, &expr.ty).is_ok() {
             let expr_ty = self.infer_ctx.substitute(&expr.ty);
             return if expr_ty.is_concrete() {

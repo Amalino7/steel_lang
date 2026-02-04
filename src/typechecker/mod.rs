@@ -30,7 +30,7 @@ pub mod types;
 #[derive(Debug, PartialEq, Clone)]
 enum FunctionContext {
     None,
-    Function(Type),
+    Function(Type, Span),
 }
 pub type Symbol = Rc<str>;
 pub struct TypeChecker<'src> {

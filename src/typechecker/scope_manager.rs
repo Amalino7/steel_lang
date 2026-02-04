@@ -10,14 +10,16 @@ pub struct VariableContext {
     pub(crate) type_info: Type,
     pub(crate) name: Symbol,
     pub(crate) index: usize,
+    pub(crate) span: Span,
 }
 
 impl VariableContext {
-    fn new(name: Symbol, type_info: Type, index: usize) -> Self {
+    fn new(name: Symbol, type_info: Type, index: usize, span: Span) -> Self {
         VariableContext {
             type_info,
             name,
             index,
+            span,
         }
     }
 }
@@ -128,15 +130,17 @@ impl ScopeManager {
         let scope = self.scopes.last_mut().expect("No scope active");
 
         if scope.variables.contains_key(&name) && ScopeType::Global == scope.scope_type {
+            let prev = scope.variables.get(&name).unwrap();
             return Err(TypeCheckerError::Redeclaration {
                 name: name.to_string(),
                 span,
+                original: prev.span,
             });
         }
 
         scope.variables.insert(
             name.clone(),
-            VariableContext::new(name, type_info, scope.last_index),
+            VariableContext::new(name, type_info, scope.last_index, span),
         );
         scope.last_index += 1;
         scope.max_index = scope.max_index.max(scope.last_index);
@@ -184,10 +188,12 @@ impl ScopeManager {
             } else {
                 let idx = ctx.index;
                 let name = ctx.name.clone();
+                let span = ctx.span;
                 let scope = self.scopes.last_mut().expect("No scope active");
-                scope
-                    .variables
-                    .insert(name.clone(), VariableContext::new(name, new_type, idx));
+                scope.variables.insert(
+                    name.clone(),
+                    VariableContext::new(name, new_type, idx, span),
+                );
                 None
             };
         }

@@ -87,7 +87,7 @@ impl<'src> TypeChecker<'src> {
                             Ok(t) => t,
                             Err(e) => {
                                 self.errors.push(e);
-                                Type::Unknown
+                                Type::Error
                             }
                         };
                         method_map.insert(sig.name.lexeme.to_string(), (i, ty));
@@ -123,11 +123,13 @@ impl<'src> TypeChecker<'src> {
         // declare global types by name
         for stmt in ast.iter() {
             if let Stmt::Struct { name, generics, .. } = stmt {
-                self.sys.declare_struct(name.lexeme.into(), generics);
+                self.sys
+                    .declare_struct(stmt.span(), name.lexeme.into(), generics);
             } else if let Stmt::Interface { name, .. } = stmt {
-                self.sys.declare_interface(name.lexeme.into());
+                self.sys.declare_interface(name.lexeme.into(), stmt.span());
             } else if let Stmt::Enum { name, generics, .. } = stmt {
-                self.sys.declare_enum(name.lexeme.into(), generics);
+                self.sys
+                    .declare_enum(stmt.span(), name.lexeme.into(), generics);
             }
         }
     }
@@ -166,7 +168,7 @@ impl<'src> TypeChecker<'src> {
                                 Ok(ty) => ty,
                                 Err(err) => {
                                     self.errors.push(err);
-                                    Type::Unknown
+                                    Type::Error
                                 }
                             }
                         }
@@ -174,7 +176,8 @@ impl<'src> TypeChecker<'src> {
                             let field_types = self.define_struct_fields(struct_def);
                             let full_name: Symbol =
                                 format!("{}.{}", name.lexeme, v_name.lexeme).into();
-                            self.sys.declare_struct(full_name.clone(), &[]);
+
+                            self.sys.declare_struct(v_name.span, full_name.clone(), &[]);
                             self.sys.define_struct(&full_name, field_types);
                             Type::Struct(full_name, vec![].into())
                         }
@@ -200,8 +203,8 @@ impl<'src> TypeChecker<'src> {
                     field_types.insert(name.lexeme.to_string(), (i, field_type));
                 }
                 Err(err) => {
-                    // Using Unknown to minimize the number of errors.
-                    field_types.insert(name.lexeme.to_string(), (i, Type::Unknown));
+                    // Parsing error - mark field with Error to avoid treating as undecided.
+                    field_types.insert(name.lexeme.to_string(), (i, Type::Error));
                     self.errors.push(err);
                 }
             }
@@ -288,6 +291,7 @@ impl<'src> TypeChecker<'src> {
                         missing_methods,
                         interface: interface.lexeme.to_string(),
                         span: impl_block.span(),
+                        interface_origin: interface_type.origin,
                     });
             }
             self.sys
@@ -316,7 +320,7 @@ impl<'src> TypeChecker<'src> {
     ) -> Result<TypedStmt, TypeCheckerError> {
         let enclosing_function_context = self.current_function.clone();
         if let Type::Function(func) = &type_ {
-            self.current_function = FunctionContext::Function(func.return_type.clone());
+            self.current_function = FunctionContext::Function(func.return_type.clone(), name.span);
 
             let prev_closures = self.scopes.clear_closures();
             self.scopes.begin_scope(ScopeType::Function);

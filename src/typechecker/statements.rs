@@ -10,7 +10,7 @@ impl<'src> TypeChecker<'src> {
         match stmt {
             Stmt::Expression(expr) => {
                 let typed_expr = self
-                    .check_expression(expr, None)
+                    .check_expression(expr, &Type::Unknown)
                     .recover(&mut self.errors, TypedExpr::new_blank(expr.span()));
 
                 TypedStmt {
@@ -26,13 +26,13 @@ impl<'src> TypeChecker<'src> {
             } => {
                 let declared_type = Type::from_ast(type_info, &self.sys)
                     .ok_log(&mut self.errors)
-                    .unwrap_or(Type::Unknown);
+                    .unwrap_or(Type::Error);
 
                 let coerced_value = self
                     .coerce_expression(value, &declared_type)
                     .recover(&mut self.errors, TypedExpr::new_blank(value.span()));
 
-                let final_type = if declared_type == Type::Unknown {
+                let final_type = if declared_type == Type::Error || declared_type == Type::Unknown {
                     coerced_value.ty.clone()
                 } else {
                     declared_type
@@ -84,13 +84,16 @@ impl<'src> TypeChecker<'src> {
                 else_branch,
             } => {
                 let cond_typed = self
-                    .check_expression(condition, Some(&Type::Boolean))
+                    .check_expression(condition, &Type::Boolean)
                     .unwrap_or_else(|e| {
                         self.errors.push(e);
                         TypedExpr::new_blank(condition.span())
                     });
 
-                if cond_typed.ty != Type::Boolean && cond_typed.ty != Type::Unknown {
+                if cond_typed.ty != Type::Boolean
+                    && cond_typed.ty != Type::Unknown
+                    && cond_typed.ty != Type::Error
+                {
                     self.errors.push(TypeCheckerError::TypeMismatch {
                         expected: Type::Boolean,
                         found: cond_typed.ty.clone(),
@@ -158,12 +161,15 @@ impl<'src> TypeChecker<'src> {
             }
             Stmt::While { condition, body } => {
                 let cond_type = self
-                    .check_expression(condition, Some(&Type::Boolean))
+                    .check_expression(condition, &Type::Boolean)
                     .unwrap_or_else(|err| {
                         self.errors.push(err);
                         TypedExpr::new_blank(condition.span())
                     });
-                if cond_type.ty != Type::Boolean {
+                if cond_type.ty != Type::Boolean
+                    && cond_type.ty != Type::Unknown
+                    && cond_type.ty != Type::Error
+                {
                     self.errors.push(TypeCheckerError::TypeMismatch {
                         expected: Type::Boolean,
                         found: cond_type.ty.clone(),
@@ -213,10 +219,18 @@ impl<'src> TypeChecker<'src> {
                 res
             }
             Stmt::Return { value, keyword } => {
-                if let FunctionContext::Function(func_return_type) = self.current_function.clone() {
-                    let coerced_return = self
-                        .coerce_expression(value, &func_return_type)
-                        .recover(&mut self.errors, TypedExpr::new_blank(value.span()));
+                if let FunctionContext::Function(func_return_type, func_span) =
+                    self.current_function.clone()
+                {
+                    let coerced_return = match self.coerce_expression(value, &func_return_type) {
+                        Ok(v) => v,
+                        Err(err) => {
+                            let wrapped = err.with_origin(func_span);
+                            self.errors.push(wrapped);
+                            TypedExpr::new_blank(value.span())
+                        }
+                    };
+
                     TypedStmt {
                         span: coerced_return.span.merge(keyword.span),
                         kind: StmtKind::Return(coerced_return),
