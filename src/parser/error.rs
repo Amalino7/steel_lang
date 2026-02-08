@@ -1,4 +1,5 @@
-use crate::token::{Token, TokenType};
+use crate::scanner::Span;
+use crate::scanner::{Token, TokenType};
 use std::fmt::{Display, Formatter};
 
 #[derive(Debug, Clone)]
@@ -19,39 +20,41 @@ pub enum ParserError<'src> {
         token: Token<'src>,
         message: &'static str,
     },
+    RichError {
+        primary_span: Span,
+        message: String,
+        context: Vec<(Span, String)>,
+    },
+}
+impl<'src> ParserError<'src> {
+    pub fn span(&self) -> Span {
+        match self {
+            ParserError::ScannerError { token } => token.span,
+            ParserError::UnexpectedToken { found, .. } => found.span,
+            ParserError::ParseError { token, .. } => token.span,
+            ParserError::MissingToken { after_token, .. } => after_token.span,
+            ParserError::RichError { primary_span, .. } => *primary_span,
+        }
+    }
+    pub fn message(&self) -> String {
+        match self {
+            ParserError::RichError { message, .. } => message.to_string(),
+            ParserError::ScannerError { token } => {
+                format!("Scanner error: {}", token.lexeme)
+            }
+            ParserError::UnexpectedToken { message, .. } => message.to_string(),
+            ParserError::MissingToken {
+                expected, message, ..
+            } => {
+                format!("Missing '{}'. {}", expected, message)
+            }
+            ParserError::ParseError { message, .. } => message.to_string(),
+        }
+    }
 }
 
 impl Display for ParserError<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ParserError::UnexpectedToken { found, message } => {
-                write!(
-                    f,
-                    "[line {}] Error at '{}'.\n{}\n",
-                    found.line, found.lexeme, message
-                )
-            }
-            ParserError::MissingToken {
-                expected,
-                message,
-                after_token,
-            } => {
-                write!(
-                    f,
-                    "[line {}] Error at '{}'. Missing '{}' but found '{}' instead.\nNote: {}",
-                    after_token.line, after_token.lexeme, expected, after_token.token_type, message
-                )
-            }
-            ParserError::ParseError { token, message } => {
-                write!(
-                    f,
-                    "[line {}] Error at '{}'. {}",
-                    token.line, token.lexeme, message
-                )
-            }
-            ParserError::ScannerError { token } => {
-                write!(f, "[line {}] Error: {}", token.line, token.lexeme)
-            }
-        }
+        write!(f, "{}", self.message())
     }
 }

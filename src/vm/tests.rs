@@ -3,10 +3,10 @@ use crate::execute_source;
 use crate::parser::Parser;
 use crate::scanner::Scanner;
 use crate::typechecker::TypeChecker;
+use crate::vm::VM;
 use crate::vm::bytecode::{Chunk, Opcode};
 use crate::vm::gc::GarbageCollector;
 use crate::vm::value::{Function, Value};
-use crate::vm::VM;
 
 #[test]
 fn test_simple_add() {
@@ -72,7 +72,7 @@ fn test_expressions() {
 
     let mut gc = GarbageCollector::new();
     let compiler = Compiler::new("main".to_string(), &mut gc);
-    let function = compiler.compile(&typed_ast);
+    let function = compiler.compile(0, &typed_ast);
 
     let mut vm = VM::new(1, gc);
     vm.run(function).unwrap();
@@ -90,7 +90,7 @@ fn test_cmp() {
 
     let mut gc = GarbageCollector::new();
     let compiler = Compiler::new("main".to_string(), &mut gc);
-    let function = compiler.compile(&typed_ast);
+    let function = compiler.compile(0, &typed_ast);
 
     let mut vm = VM::new(1, gc);
     vm.run(function).unwrap();
@@ -112,7 +112,7 @@ fn test_while_loop() {
 
     let mut gc = GarbageCollector::new();
     let compiler = Compiler::new("main".to_string(), &mut gc);
-    let function = compiler.compile(&typed_ast);
+    let function = compiler.compile(0, &typed_ast);
 
     let mut vm = VM::new(1, gc);
 
@@ -1849,12 +1849,12 @@ fn test_poly() {
     func printArea(s: Shape): void {
         s.area();
         assert(s.area(), 78.5); // 5*5 * 3.14
-        println(s.area());
+        // println(s.area());
     }
     func printPerimeter(s: Shape): void {
         s.perimeter();
         assert(s.perimeter(), (10 + 5) * 2 );
-        println(s.perimeter());
+        // println(s.perimeter());
     }
 
     let i = 0;

@@ -1,3 +1,4 @@
+use crate::scanner::Span;
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::type_ast::{MatchCase, StmtKind, TypedStmt};
 use crate::typechecker::types::Type;
@@ -14,6 +15,7 @@ impl<'src> TypeChecker<'src> {
     }
     fn check_stmt_returns(&mut self, stmt: &TypedStmt) -> Result<(), TypeCheckerError> {
         match &stmt.kind {
+            StmtKind::Blank => Ok(()),
             StmtKind::Match { cases, .. } => {
                 for case in cases {
                     match case {
@@ -39,7 +41,12 @@ impl<'src> TypeChecker<'src> {
                 self.check_stmt_returns(then_branch)
             }
             StmtKind::While { body, .. } => self.check_stmt_returns(body),
-            StmtKind::Function { body, .. } => {
+            StmtKind::Function {
+                name,
+                body,
+                signature,
+                ..
+            } => {
                 let return_type = if let Type::Function(func) = &stmt.type_info {
                     func.return_type.clone()
                 } else {
@@ -50,7 +57,14 @@ impl<'src> TypeChecker<'src> {
                 let does_return = self.stmt_returns(body)?;
 
                 if !does_return && return_type != Type::Void {
-                    Err(TypeCheckerError::MissingReturnStatement { line: stmt.line })
+                    Err(TypeCheckerError::MissingReturnStatement {
+                        fn_span: *signature,
+                        fn_name: name.to_string(),
+                        span: Span {
+                            start: body.span.end,
+                            ..body.span
+                        },
+                    })
                 } else {
                     Ok(())
                 }
@@ -69,13 +83,14 @@ impl<'src> TypeChecker<'src> {
     #[allow(clippy::only_used_in_recursion)]
     pub fn stmt_returns(&mut self, stmt: &TypedStmt) -> Result<bool, TypeCheckerError> {
         Ok(match &stmt.kind {
+            StmtKind::Blank => false,
             StmtKind::Expression(_) => false,
             StmtKind::Let { .. } => false,
             StmtKind::Block { body, .. } => {
                 let mut does_return = false;
                 for stmt in body {
                     if does_return {
-                        return Err(TypeCheckerError::UnreachableCode { line: stmt.line });
+                        return Err(TypeCheckerError::UnreachableCode { span: stmt.span });
                     }
                     does_return |= self.stmt_returns(stmt)?;
                 }

@@ -1,13 +1,14 @@
 use crate::compiler::analysis::ResolvedVar;
 use crate::parser::ast::Literal;
-use crate::typechecker::Symbol;
+use crate::scanner::Span;
 use crate::typechecker::types::Type;
+use crate::typechecker::Symbol;
 
 #[derive(Debug, Clone)]
 pub struct TypedExpr {
     pub ty: Type,
     pub kind: ExprKind,
-    pub line: u32,
+    pub span: Span,
 }
 #[derive(Debug, Clone, PartialEq)]
 pub enum UnaryOp {
@@ -49,6 +50,7 @@ pub enum BinaryOp {
 pub enum ExprKind {
     Literal(Literal),
     GetVar(ResolvedVar, Symbol),
+    NoOp,
     GetField {
         object: Box<TypedExpr>,
         index: u8,
@@ -132,14 +134,37 @@ pub enum ExprKind {
         safe: bool,
     },
 }
+
+impl TypedStmt {
+    pub(crate) fn new_blank(span: Span) -> Self {
+        Self {
+            kind: StmtKind::Blank,
+            span,
+            type_info: Type::Error,
+        }
+    }
+}
+
+impl TypedExpr {
+    pub(crate) fn new_blank(span: Span) -> Self {
+        Self {
+            kind: ExprKind::NoOp,
+            span,
+            ty: Type::Error,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct TypedStmt {
     pub kind: StmtKind,
-    pub line: u32,
+    pub span: Span,
     pub type_info: Type,
 }
+
 #[derive(Debug)]
 pub enum StmtKind {
+    Blank,
     Impl {
         methods: Box<[TypedStmt]>, // optimizes memory layout
         vtables: Box<[Vec<ResolvedVar>]>,
@@ -176,7 +201,9 @@ pub enum StmtKind {
         body: Box<TypedStmt>,
     },
     Function {
+        reserved: u8,
         target: ResolvedVar,
+        signature: Span,
         name: Box<str>, // reduces memory usage by 8 bytes
         body: Box<TypedStmt>,
         captures: Box<[ResolvedVar]>,

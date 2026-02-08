@@ -1,4 +1,4 @@
-use crate::token::Token;
+use crate::scanner::{Span, Token};
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::inference::InferenceContext;
 use crate::typechecker::types::{EnumType, InterfaceType, StructType, TupleType, Type};
@@ -93,10 +93,11 @@ impl TypeSystem {
     }
 
     // Only the name exists
-    pub fn declare_struct(&mut self, name: Symbol, generic_params: &[Token]) {
+    pub fn declare_struct(&mut self, origin: Span, name: Symbol, generic_params: &[Token]) {
         self.structs.insert(
             name.clone(),
             StructType {
+                origin,
                 name,
                 fields: HashMap::new(),
                 ordered_fields: vec![],
@@ -105,10 +106,11 @@ impl TypeSystem {
         );
     }
 
-    pub fn declare_enum(&mut self, name: Symbol, generic_params: &[Token]) {
+    pub fn declare_enum(&mut self, origin: Span, name: Symbol, generic_params: &[Token]) {
         self.enums.insert(
             name.clone(),
             EnumType {
+                origin,
                 name,
                 variants: HashMap::new(),
                 ordered_variants: vec![],
@@ -117,10 +119,11 @@ impl TypeSystem {
         );
     }
 
-    pub fn declare_interface(&mut self, name: Symbol) {
+    pub fn declare_interface(&mut self, name: Symbol, origin: Span) {
         self.interfaces.insert(
             name.clone(),
             InterfaceType {
+                origin,
                 name,
                 methods: HashMap::new(),
             },
@@ -285,6 +288,7 @@ impl TypeSystem {
             | Type::Unknown
             | Type::Never
             | Type::Infer(_)
+            | Type::Error
             | Type::Any => generic_ty,
             Type::Optional(inner) => {
                 Type::Optional(Box::new(Self::generic_to_concrete(*inner, generics_map)))
@@ -369,18 +373,16 @@ impl TypeSystem {
 
     pub(crate) fn resolve_named_arg(
         &self,
-        callee: &str,
         params: &[(String, Type)],
         name: &str,
-        line: u32,
+        span: Span,
     ) -> Result<usize, TypeCheckerError> {
         params
             .iter()
             .position(|(pname, _)| pname == name)
             .ok_or_else(|| TypeCheckerError::UndefinedParameter {
                 param_name: name.to_string(),
-                callee: callee.to_string(),
-                line,
+                span,
             })
     }
 
@@ -395,7 +397,7 @@ impl TypeSystem {
                     TypeCheckerError::InvalidTupleIndex {
                         tuple_type: parent_type.clone(),
                         index: field.lexeme.to_string(),
-                        line: field.line,
+                        span: field.span,
                     }
                 })?;
 
@@ -403,7 +405,7 @@ impl TypeSystem {
                     return Err(TypeCheckerError::InvalidTupleIndex {
                         tuple_type: parent_type.clone(),
                         index: idx.to_string(),
-                        line: field.line,
+                        span: field.span,
                     });
                 }
 
@@ -421,7 +423,7 @@ impl TypeSystem {
                     .ok_or_else(|| TypeCheckerError::UndefinedField {
                         struct_name: struct_def.name.to_string(),
                         field_name: field.lexeme.to_string(),
-                        line: field.line,
+                        span: field.span,
                     })?;
                 let concrete_type = TypeSystem::generic_to_concrete(
                     raw_type,
@@ -432,7 +434,7 @@ impl TypeSystem {
             }
             _ => Err(TypeCheckerError::TypeHasNoFields {
                 found: parent_type.clone(),
-                line: field.line,
+                span: field.span,
             }),
         }
     }

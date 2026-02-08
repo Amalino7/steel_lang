@@ -1,4 +1,5 @@
 use crate::parser::ast::Stmt;
+use crate::scanner::Span;
 use crate::stdlib::NativeDef;
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::inference::InferenceContext;
@@ -29,7 +30,7 @@ pub mod types;
 #[derive(Debug, PartialEq, Clone)]
 enum FunctionContext {
     None,
-    Function(Type),
+    Function(Type, Span),
 }
 pub type Symbol = Rc<str>;
 pub struct TypeChecker<'src> {
@@ -81,14 +82,7 @@ impl<'src> TypeChecker<'src> {
         self.define_enum_variants(ast);
 
         for stmt in ast.iter() {
-            match self.check_stmt(stmt) {
-                Ok(stmt) => {
-                    typed_ast.push(stmt);
-                }
-                Err(e) => {
-                    self.errors.push(e);
-                }
-            }
+            typed_ast.push(self.check_stmt(stmt));
         }
 
         let global_count = self.scopes.global_size();
@@ -104,7 +98,7 @@ impl<'src> TypeChecker<'src> {
                     stmts: typed_ast,
                     reserved,
                 },
-                line: 1,
+                span: Span::default(),
                 type_info: Type::Void,
             })
         }
@@ -113,7 +107,7 @@ impl<'src> TypeChecker<'src> {
     fn register_globals(&mut self, natives: &[NativeDef]) {
         for native in natives.iter() {
             self.scopes
-                .declare(native.name.into(), native.type_.clone())
+                .declare(native.name.into(), native.type_.clone(), Span::default())
                 .expect("Failed to register global");
         }
     }

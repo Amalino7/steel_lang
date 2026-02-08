@@ -1,7 +1,8 @@
 use crate::compiler::analysis::ResolvedVar;
+use crate::scanner::Span;
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::types::Type;
-use crate::typechecker::Symbol;
+use crate::typechecker::{Symbol, TypeChecker};
 use std::collections::HashMap;
 
 #[derive(Clone)]
@@ -9,14 +10,16 @@ pub struct VariableContext {
     pub(crate) type_info: Type,
     pub(crate) name: Symbol,
     pub(crate) index: usize,
+    pub(crate) span: Span,
 }
 
 impl VariableContext {
-    fn new(name: Symbol, type_info: Type, index: usize) -> Self {
+    fn new(name: Symbol, type_info: Type, index: usize, span: Span) -> Self {
         VariableContext {
             type_info,
             name,
             index,
+            span,
         }
     }
 }
@@ -38,13 +41,30 @@ pub struct ScopeManager {
     scopes: Vec<Scope>,
     closures: Vec<Symbol>,
 }
+pub struct ScopeGuard<'a, 'src>(&'a mut TypeChecker<'src>);
 
-// Might use it instead of manual clean-up
-#[allow(dead_code)]
-pub struct ScopeGuard<'a>(pub &'a mut ScopeManager);
-impl<'a> Drop for ScopeGuard<'a> {
+impl<'a, 'src> ScopeGuard<'a, 'src> {
+    pub fn new(checker: &'a mut TypeChecker<'src>, scope_type: ScopeType) -> Self {
+        checker.scopes.begin_scope(scope_type);
+        ScopeGuard(checker)
+    }
+}
+impl<'a> Drop for ScopeGuard<'a, '_> {
     fn drop(&mut self) {
-        self.0.end_scope();
+        self.0.scopes.end_scope();
+    }
+}
+
+impl<'a, 'src> std::ops::Deref for ScopeGuard<'a, 'src> {
+    type Target = TypeChecker<'src>;
+    fn deref(&self) -> &Self::Target {
+        self.0
+    }
+}
+
+impl<'a, 'src> std::ops::DerefMut for ScopeGuard<'a, 'src> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.0
     }
 }
 
@@ -101,19 +121,26 @@ impl ScopeManager {
         max
     }
 
-    pub fn declare(&mut self, name: Symbol, type_info: Type) -> Result<(), TypeCheckerError> {
+    pub fn declare(
+        &mut self,
+        name: Symbol,
+        type_info: Type,
+        span: Span,
+    ) -> Result<(), TypeCheckerError> {
         let scope = self.scopes.last_mut().expect("No scope active");
 
         if scope.variables.contains_key(&name) && ScopeType::Global == scope.scope_type {
+            let prev = scope.variables.get(&name).unwrap();
             return Err(TypeCheckerError::Redeclaration {
                 name: name.to_string(),
-                line: 0, // TODO get line
+                span,
+                original: prev.span,
             });
         }
 
         scope.variables.insert(
             name.clone(),
-            VariableContext::new(name, type_info, scope.last_index),
+            VariableContext::new(name, type_info, scope.last_index, span),
         );
         scope.last_index += 1;
         scope.max_index = scope.max_index.max(scope.last_index);
@@ -154,16 +181,19 @@ impl ScopeManager {
 
             return if let Type::Enum(_, _) = &ctx.type_info {
                 let name = ctx.name.clone();
-                self.declare(name.clone(), new_type).unwrap(); // Shouldn't fail
+                self.declare(name.clone(), new_type, Span::default())
+                    .unwrap(); // Shouldn't fail
                 let (_, new_resolved) = self.lookup(name.as_ref()).unwrap();
                 Some((resolved, new_resolved))
             } else {
                 let idx = ctx.index;
                 let name = ctx.name.clone();
+                let span = ctx.span;
                 let scope = self.scopes.last_mut().expect("No scope active");
-                scope
-                    .variables
-                    .insert(name.clone(), VariableContext::new(name, new_type, idx));
+                scope.variables.insert(
+                    name.clone(),
+                    VariableContext::new(name, new_type, idx, span),
+                );
                 None
             };
         }

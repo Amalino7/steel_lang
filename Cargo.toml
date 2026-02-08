@@ -10,3 +10,4 @@ debug_gc = []
 stress_gc = []
 
 [dependencies]
+ariadne = "0.4.0"

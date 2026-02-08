@@ -4,7 +4,7 @@ use crate::parser::ast::{
 use crate::parser::error::ParserError;
 use crate::parser::{check_next_token_type, TokT};
 use crate::parser::{check_token_type, match_token_type, Parser};
-use crate::token::{Token, TokenType};
+use crate::scanner::{Token, TokenType};
 
 impl<'src> Parser<'src> {
     pub(super) fn declaration(&mut self) -> Result<Stmt<'src>, ParserError<'src>> {
@@ -126,20 +126,14 @@ impl<'src> Parser<'src> {
 
     fn func_declaration(&mut self, is_method: bool) -> Result<Stmt<'src>, ParserError<'src>> {
         let (name, generics, params, type_) = self.func_signature(is_method)?;
-
-        self.consume(TokT::LeftBrace, "Expected '{' before function body.")?;
-        let mut body = vec![];
-
-        while !match_token_type!(self, TokT::RightBrace) {
-            body.push(self.declaration()?);
-        }
+        let body = self.block()?;
 
         Ok(Stmt::Function {
             generics,
             type_,
             name,
             params,
-            body,
+            body: Box::new(body),
         })
     }
 
@@ -173,7 +167,7 @@ impl<'src> Parser<'src> {
                     param_types.push(TypeAst::Named(
                         Token {
                             token_type: TokenType::Identifier,
-                            line: self.previous_token.line,
+                            span: self.previous_token.span,
                             lexeme: "Self",
                         },
                         vec![],
@@ -196,7 +190,7 @@ impl<'src> Parser<'src> {
             self.type_block()?
         } else {
             TypeAst::Named(
-                Token::new(TokenType::Identifier, self.previous_token.line, "void"),
+                Token::new(TokenType::Identifier, self.previous_token.span, "void"),
                 vec![],
             )
         };
@@ -245,7 +239,7 @@ impl<'src> Parser<'src> {
                     self.type_block()?
                 } else {
                     TypeAst::Named(
-                        Token::new(TokenType::Identifier, self.previous_token.line, "void"),
+                        Token::new(TokenType::Identifier, self.previous_token.span, "void"),
                         vec![],
                     )
                 };
@@ -305,17 +299,18 @@ impl<'src> Parser<'src> {
         } else if match_token_type!(self, TokT::Match) {
             self.match_statement()
         } else if match_token_type!(self, TokT::Return) {
-            let val = if !match_token_type!(self, TokT::Semicolon) {
+            let keyword = self.previous_token.clone();
+            let value = if !match_token_type!(self, TokT::Semicolon) {
                 let expr = self.expression()?;
                 self.consume(TokT::Semicolon, "Expected ';' after return value.")?;
                 expr
             } else {
                 Expr::Literal {
                     literal: Literal::Void,
-                    line: self.previous_token.line,
+                    span: self.previous_token.span,
                 }
             };
-            Ok(Stmt::Return(val))
+            Ok(Stmt::Return { value, keyword })
         } else {
             let expr = self.expression()?;
             self.consume(TokT::Semicolon, "Expected ';' after expression.")?;
@@ -324,13 +319,13 @@ impl<'src> Parser<'src> {
     }
     fn block(&mut self) -> Result<Stmt<'src>, ParserError<'src>> {
         self.consume(TokT::LeftBrace, "Expected '{' before block.")?;
-        let brace_token = self.previous_token.clone();
         let mut statements = vec![];
         while !check_token_type!(self, TokT::RightBrace) {
             statements.push(self.declaration()?);
         }
 
         self.consume(TokT::RightBrace, "Expected '}' after block.")?;
+        let brace_token = self.previous_token.clone();
         Ok(Stmt::Block {
             body: statements,
             brace_token,

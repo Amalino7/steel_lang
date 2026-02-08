@@ -1,5 +1,5 @@
 use crate::parser::ast::TypeAst;
-use crate::token::Token;
+use crate::scanner::{Span, Token};
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::type_system::TypeSystem;
 use crate::typechecker::Symbol;
@@ -31,6 +31,7 @@ impl PartialEq for FunctionType {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct StructType {
+    pub origin: Span,
     pub fields: HashMap<String, usize>,
     pub ordered_fields: Vec<(String, Type)>,
     pub name: Symbol,
@@ -40,11 +41,13 @@ pub struct StructType {
 pub struct InterfaceType {
     pub methods: HashMap<String, (usize, Type)>,
     pub name: Symbol,
+    pub origin: Span,
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct EnumType {
     pub name: Symbol,
+    pub origin: Span,
     pub variants: HashMap<Symbol, usize>,
     pub generic_params: Vec<Symbol>,
     pub ordered_variants: Vec<(Symbol, Type)>, // Void, one arg, tuple, struct
@@ -73,6 +76,7 @@ pub enum Type {
     Boolean,
     Void,
     Never,
+    Error,
     Infer(u32),
     Optional(Box<Type>),
     Unknown,
@@ -92,17 +96,17 @@ fn missing_generics(
     type_name: &str,
     generics_expected: &[Symbol],
     generics_provided: &[Type],
-    line: u32,
+    span: Span,
 ) -> Result<(), TypeCheckerError> {
     if generics_expected.len() > generics_provided.len() {
         Err(TypeCheckerError::MissingGeneric {
             ty_name: type_name.to_string(),
             generic_name: generics_expected[generics_provided.len()].to_string(),
-            line,
+            span,
         })
     } else if generics_provided.len() > generics_expected.len() {
         Err(TypeCheckerError::TooManyGenerics {
-            line,
+            span,
             found: generics_provided.len(),
             expected: generics_expected.len(),
             type_name: type_name.to_string(),
@@ -115,6 +119,7 @@ fn missing_generics(
 impl Type {
     pub fn is_concrete(&self) -> bool {
         match self {
+            Type::Error => true,
             Type::Infer(_) => false,
             Type::Optional(inner) => inner.is_concrete(),
             Type::Function(f) => {
@@ -141,17 +146,24 @@ impl Type {
         type_system: &TypeSystem,
         generics: &[TypeAst],
     ) -> Result<Type, TypeCheckerError> {
+        let span = name.span.merge(
+            generics
+                .last()
+                .map(|t: &TypeAst| t.span())
+                .unwrap_or(name.span),
+        );
+
         let generics: Result<Vec<_>, TypeCheckerError> = generics
             .iter()
             .map(|e| Self::from_ast(e, type_system))
             .collect();
+
         let generics = generics?;
 
-        let line = name.line;
         let name = name.lexeme;
 
         let check_generic =
-            |name, generic_params| missing_generics(name, generic_params, &generics, line);
+            |name, generic_params| missing_generics(name, generic_params, &generics, span);
 
         if name == "number" {
             Ok(Type::Number)
@@ -187,7 +199,7 @@ impl Type {
         } else {
             Err(TypeCheckerError::UndefinedType {
                 name: name.to_string(),
-                line,
+                span,
                 message: "Could not find type with that name.",
             })
         }
@@ -205,14 +217,14 @@ impl Type {
         }
     }
 
-    pub fn unwrap_optional_safe(&self, safe: bool, line: u32) -> Result<Type, TypeCheckerError> {
+    pub fn unwrap_optional_safe(&self, safe: bool, span: Span) -> Result<Type, TypeCheckerError> {
         if safe {
             match self {
                 Type::Optional(inner) => Ok(inner.as_ref().clone()),
                 _ => Err(TypeCheckerError::TypeMismatch {
                     expected: Type::Optional(Box::new(Type::Any)),
                     found: self.clone(),
-                    line,
+                    span,
                     message: "Cannot access safe navigation of non-optional type. Remove ?.",
                 }),
             }
@@ -230,6 +242,7 @@ impl Type {
 
     pub fn get_name(&self) -> Option<&str> {
         match self {
+            Type::Error => None,
             Type::Infer(_) => None,
             Type::Interface(name, _) => Some(name),
             Type::Number => Some("number"),
@@ -417,6 +430,7 @@ fn print_generics(args: &[Type], f: &mut Formatter<'_>) -> std::fmt::Result {
 impl Display for Type {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
+            Type::Error => write!(f, "Error"),
             Type::Infer(n) => write!(f, "T{}", n),
             Type::Metatype(name, generic_args) => {
                 write!(f, "Type {}", name)?;

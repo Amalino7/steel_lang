@@ -1,9 +1,9 @@
 use crate::compiler::analysis::ResolvedVar;
 use crate::compiler::analysis::ResolvedVar::Global;
 use crate::parser::ast::{Expr, Literal};
-use crate::token::TokenType;
-use crate::typechecker::error::TypeCheckerError;
+use crate::scanner::TokenType;
 use crate::typechecker::error::TypeCheckerError::AssignmentToCapturedVariable;
+use crate::typechecker::error::{Recoverable, TypeCheckerError};
 use crate::typechecker::type_ast::{ExprKind, LogicalOp, TypedExpr, UnaryOp};
 use crate::typechecker::type_system::{generics_to_map, TySys, TypeSystem};
 use crate::typechecker::types::{TupleType, Type};
@@ -15,14 +15,14 @@ impl<'src> TypeChecker<'src> {
     pub(crate) fn check_expression(
         &mut self,
         expr: &Expr<'src>,
-        expected: Option<&Type>,
+        expected: &Type,
     ) -> Result<TypedExpr, TypeCheckerError> {
         match expr {
             Expr::TypeSpecialization {
                 callee,
                 generics: generics_provided,
             } => {
-                let mut callee_typed = self.check_expression(callee, None)?;
+                let mut callee_typed = self.check_expression(callee, &Type::Unknown)?;
                 let generic_args = generics_provided
                     .iter()
                     .map(|t| Type::from_ast(t, &self.sys))
@@ -32,7 +32,7 @@ impl<'src> TypeChecker<'src> {
                     Type::Function(func) => {
                         if func.type_params.len() != generic_args.len() {
                             return Err(TypeCheckerError::InvalidGenericSpecification {
-                                line: callee_typed.line,
+                                span: callee_typed.span,
                                 message: format!(
                                     "Expected {} generic arguments but got {}!",
                                     func.type_params.len(),
@@ -42,7 +42,7 @@ impl<'src> TypeChecker<'src> {
                         }
                         if func.type_params.is_empty() {
                             return Err(TypeCheckerError::InvalidGenericSpecification {
-                                line: callee_typed.line,
+                                span: callee_typed.span,
                                 message: "Cannot specialize generic on function without generics!"
                                     .to_string(),
                             });
@@ -50,19 +50,20 @@ impl<'src> TypeChecker<'src> {
                         let map = generics_to_map(&func.type_params, &generic_args, None);
                         let new_ty = TypeSystem::generic_to_concrete(callee_typed.ty, &map);
                         callee_typed.ty = new_ty;
+                        callee_typed.span = expr.span();
                         Ok(callee_typed)
                     }
                     Type::Metatype(type_name, generics) => {
                         if !generics.is_empty() {
                             return Err(TypeCheckerError::InvalidGenericSpecification {
-                                line: callee_typed.line,
+                                span: callee_typed.span,
                                 message: "Cannot specialize generic more than once!".to_string(),
                             });
                         }
                         let actual_generic_count = self.sys.get_generics_count(type_name);
                         if generic_args.len() != actual_generic_count {
                             Err(TypeCheckerError::InvalidGenericSpecification {
-                                line: callee_typed.line,
+                                span: callee_typed.span,
                                 message: format!(
                                     "Expected {} but got {} generic arguments!",
                                     actual_generic_count,
@@ -71,11 +72,12 @@ impl<'src> TypeChecker<'src> {
                             })
                         } else {
                             Rc::get_mut(generics).unwrap().extend(generic_args); // Shouldn't fail
+                            callee_typed.span = expr.span();
                             Ok(callee_typed)
                         }
                     }
                     _ => Err(TypeCheckerError::InvalidGenericSpecification {
-                        line: callee_typed.line,
+                        span: callee_typed.span,
                         message: "Cannot specialize non-generic type!".to_string(),
                     }),
                 }
@@ -84,10 +86,10 @@ impl<'src> TypeChecker<'src> {
                 expression,
                 type_name,
             } => {
-                let target = self.check_expression(expression, None)?;
+                let target = self.check_expression(expression, &Type::Unknown)?;
                 let Type::Enum(enum_name, _) = &target.ty else {
                     return Err(TypeCheckerError::InvalidIsUsage {
-                        line: type_name.line,
+                        span: type_name.span,
                         message: "Is can only be used on enum types.",
                     });
                 };
@@ -98,7 +100,7 @@ impl<'src> TypeChecker<'src> {
 
                 if !enum_def.variants.contains_key(type_name.lexeme) {
                     return Err(TypeCheckerError::InvalidIsUsage {
-                        line: type_name.line,
+                        span: type_name.span,
                         message: "Enum variant does not exist.",
                     });
                 }
@@ -109,17 +111,16 @@ impl<'src> TypeChecker<'src> {
                         target: Box::new(target),
                         variant_idx: *variant_idx as u16,
                     },
-                    line: type_name.line,
+                    span: expr.span(),
                 })
             }
             Expr::Tuple { elements } => {
                 let mut typed_elements = Vec::with_capacity(elements.len());
                 let mut type_vec = vec![];
 
-                let expected_types = if let Some(Type::Tuple(t)) = expected {
-                    Some(&t.types)
-                } else {
-                    None
+                let expected_types = match *expected {
+                    Type::Tuple(ref t) => Some(&t.types),
+                    _ => None,
                 };
 
                 for (idx, element) in elements.iter().enumerate() {
@@ -136,7 +137,7 @@ impl<'src> TypeChecker<'src> {
                     kind: ExprKind::Tuple {
                         elements: typed_elements,
                     },
-                    line: elements[0].get_line(),
+                    span: expr.span(),
                 })
             }
             Expr::Unary {
@@ -144,7 +145,7 @@ impl<'src> TypeChecker<'src> {
                 expression,
             } if operator.token_type == TokenType::Try => {
                 // TODO add suggested type
-                let mut typed_expr = self.check_expression(expression, None)?;
+                let mut typed_expr = self.check_expression(expression, &Type::Unknown)?;
                 if let Type::Enum(name, instance) = &mut typed_expr.ty
                     && name.as_ref() == "Result"
                 {
@@ -159,7 +160,7 @@ impl<'src> TypeChecker<'src> {
                         &map,
                     );
 
-                    if let FunctionContext::Function(func_return_type) =
+                    if let FunctionContext::Function(func_return_type, _) =
                         self.current_function.clone()
                     {
                         let provided_err =
@@ -169,13 +170,13 @@ impl<'src> TypeChecker<'src> {
                             return Err(TypeCheckerError::TypeMismatch {
                                 expected: func_return_type,
                                 found: provided_err,
-                                line: operator.line,
+                                span: typed_expr.span,
                                 message: "The Result type propagate by try must be compatible with the function return type.",
                             });
                         }
                     } else {
                         return Err(TypeCheckerError::InvalidReturnOutsideFunction {
-                            line: operator.line,
+                            span: operator.span,
                         });
                     }
 
@@ -184,13 +185,13 @@ impl<'src> TypeChecker<'src> {
                         kind: ExprKind::Try {
                             operand: Box::new(typed_expr),
                         },
-                        line: operator.line,
+                        span: expr.span(),
                     })
                 } else {
                     Err(TypeCheckerError::TypeMismatch {
                         expected: Type::Enum("Result".into(), vec![Type::Any, Type::Any].into()),
                         found: typed_expr.ty,
-                        line: operator.line,
+                        span: operator.span,
                         message: "Try works only on the Result enum.",
                     })
                 }
@@ -211,23 +212,23 @@ impl<'src> TypeChecker<'src> {
                     Ok(TypedExpr {
                         ty: ctx.type_info.clone(),
                         kind: ExprKind::GetVar(resolved, ctx.name.clone()),
-                        line: name.line,
+                        span: name.span,
                     })
                 } else if let Some(type_name) = self.sys.get_owned_type_name(name.lexeme) {
                     Ok(TypedExpr {
                         ty: Type::Metatype(type_name.clone(), vec![].into()),
                         kind: ExprKind::GetVar(Global(0), type_name),
-                        line: name.line,
+                        span: name.span,
                     })
                 } else {
                     Err(TypeCheckerError::UndefinedVariable {
                         name: name.lexeme.to_string(),
-                        line: name.line,
+                        span: name.span,
                     })
                 }
             }
             Expr::Grouping { expression } => self.check_expression(expression, expected),
-            Expr::Literal { literal, line } => {
+            Expr::Literal { literal, span } => {
                 let ty = match literal {
                     Literal::Number(_) => Type::Number,
                     Literal::String(_) => Type::String,
@@ -239,7 +240,7 @@ impl<'src> TypeChecker<'src> {
                 Ok(TypedExpr {
                     ty,
                     kind: ExprKind::Literal(literal.clone()),
-                    line: *line,
+                    span: *span,
                 })
             }
             Expr::Assignment { identifier, value } => {
@@ -249,7 +250,7 @@ impl<'src> TypeChecker<'src> {
                     if let ResolvedVar::Closure(_) = &resolved {
                         return Err(AssignmentToCapturedVariable {
                             name: ctx.name.to_string(),
-                            line: identifier.line,
+                            span: identifier.span,
                         });
                     }
                     let expected = ctx.type_info.clone();
@@ -261,12 +262,12 @@ impl<'src> TypeChecker<'src> {
                             target: resolved,
                             value: Box::new(coerced_value),
                         },
-                        line: identifier.line,
+                        span: expr.span(),
                     })
                 } else {
                     Err(TypeCheckerError::UndefinedVariable {
                         name: identifier.lexeme.to_string(),
-                        line: identifier.line,
+                        span: identifier.span,
                     })
                 }
             }
@@ -275,9 +276,13 @@ impl<'src> TypeChecker<'src> {
                 left,
                 right,
             } if operator.token_type == TokenType::QuestionQuestion => {
-                let wrapped_expected = expected.map(|t| t.clone().wrap_in_optional());
+                let wrapped_expected = if *expected == Type::Unknown {
+                    Type::Unknown
+                } else {
+                    expected.clone().wrap_in_optional()
+                };
 
-                let left_typed = self.check_expression(left, wrapped_expected.as_ref())?;
+                let left_typed = self.check_expression(left, &wrapped_expected)?;
                 let right_typed = self.check_expression(right, expected)?;
                 let left_inner = match &left_typed.ty {
                     Type::Optional(inner) => inner.as_ref(),
@@ -285,7 +290,7 @@ impl<'src> TypeChecker<'src> {
                         return Err(TypeCheckerError::TypeMismatch {
                             expected: Type::Optional(Box::new(Type::Any)),
                             found: left_typed.ty,
-                            line: operator.line,
+                            span: left_typed.span,
                             message: "Cannot coalesce non-optional type.",
                         });
                     }
@@ -299,13 +304,13 @@ impl<'src> TypeChecker<'src> {
                             right: Box::new(right_typed),
                             typed_refinements: vec![],
                         },
-                        line: operator.line,
+                        span: expr.span(),
                     })
                 } else {
                     Err(TypeCheckerError::TypeMismatch {
                         expected: left_inner.clone(),
                         found: right_typed.ty,
-                        line: operator.line,
+                        span: operator.span,
                         message: "Cannot coalesce different types.",
                     })
                 }
@@ -320,7 +325,7 @@ impl<'src> TypeChecker<'src> {
                 arguments,
                 safe,
             } => {
-                let mut callee_typed = self.check_expression(callee, None)?;
+                let mut callee_typed = self.check_expression(callee, &Type::Unknown)?;
                 // Handle Struct constructor
                 if let Type::Metatype(name, generics) = &callee_typed.ty
                     && let Some(struct_def) = self.sys.get_struct(name)
@@ -338,13 +343,8 @@ impl<'src> TypeChecker<'src> {
                         .collect::<Vec<_>>();
 
                     let owned_name = struct_def.name.clone();
-                    let bound_args = self.bind_arguments(
-                        name,
-                        &abstracted,
-                        arguments,
-                        false,
-                        callee.get_line(),
-                    )?;
+                    let bound_args =
+                        self.bind_arguments(callee.span(), &abstracted, arguments, false)?;
 
                     let type_args = abstracted
                         .iter()
@@ -357,7 +357,7 @@ impl<'src> TypeChecker<'src> {
                             name: Box::from(owned_name.to_string()),
                             args: bound_args,
                         },
-                        line: callee.get_line(),
+                        span: expr.span(),
                     });
                 }
 
@@ -385,12 +385,13 @@ impl<'src> TypeChecker<'src> {
                         &variant_type.clone(),
                         &map,
                         arguments,
-                        callee.get_line(),
+                        callee.span(),
                     )?;
 
                     *value = Box::from(init_expr);
                     let result = Type::Enum(name.clone(), Rc::new(concrete_generics));
                     callee_typed.ty = self.infer_ctx.substitute(&result);
+                    callee_typed.span = expr.span();
 
                     return Ok(callee_typed);
                 }
@@ -405,7 +406,7 @@ impl<'src> TypeChecker<'src> {
 
                 let lookup_type = callee_typed
                     .ty
-                    .unwrap_optional_safe(safe, callee_typed.line)?;
+                    .unwrap_optional_safe(safe, callee_typed.span)?;
 
                 // Check for Normal Function Call
                 match lookup_type {
@@ -420,11 +421,10 @@ impl<'src> TypeChecker<'src> {
                         };
 
                         let bound_args = self.bind_arguments(
-                            callee.to_string().as_ref(),
+                            callee.span(),
                             &func.params,
                             arguments,
                             func.is_vararg,
-                            callee_typed.line,
                         )?;
                         let ret_type = if safe {
                             func.return_type.clone().wrap_in_optional()
@@ -439,7 +439,7 @@ impl<'src> TypeChecker<'src> {
                             .collect();
                         if !uninferred.is_empty() {
                             return Err(TypeCheckerError::CannotInferType {
-                                line: callee.get_line(),
+                                span: callee.span(),
                                 uninferred_generics: uninferred,
                             });
                         }
@@ -447,7 +447,7 @@ impl<'src> TypeChecker<'src> {
 
                         Ok(TypedExpr {
                             ty: ret_type,
-                            line: callee_typed.line,
+                            span: expr.span(),
                             kind: ExprKind::Call {
                                 callee: Box::new(callee_typed),
                                 arguments: bound_args,
@@ -457,7 +457,7 @@ impl<'src> TypeChecker<'src> {
                     }
                     _ => Err(TypeCheckerError::CalleeIsNotCallable {
                         found: callee_typed.ty,
-                        line: callee_typed.line,
+                        span: callee_typed.span,
                     }),
                 }
             }
@@ -468,7 +468,7 @@ impl<'src> TypeChecker<'src> {
                 safe,
             } => {
                 //TODO Ignores safe static access probably should be a warning
-                let object_typed = self.check_expression(object, None)?;
+                let object_typed = self.check_expression(object, &Type::Unknown)?;
                 if let Type::Metatype(name, generics) = &object_typed.ty {
                     return self.resolve_static_access(name, field, generics);
                 }
@@ -488,21 +488,28 @@ impl<'src> TypeChecker<'src> {
                     let typed_value = this.coerce_expression(value, &field_type)?;
                     Ok(TypedExpr {
                         ty: field_type,
+                        span: typed_value.span.merge(typed_obj.span),
                         kind: ExprKind::SetField {
                             object: Box::new(typed_obj),
                             index,
                             value: Box::new(typed_value),
                             safe: *safe,
                         },
-                        line: field.line,
                     })
                 },
             ),
 
-            Expr::ForceUnwrap { expression, line } => {
-                let expected_opt = expected.map(|t| Type::Optional(Box::new(t.clone())));
+            Expr::ForceUnwrap {
+                expression,
+                operator,
+            } => {
+                let expected_opt = if *expected == Type::Unknown {
+                    Type::Unknown
+                } else {
+                    Type::Optional(Box::new(expected.clone()))
+                };
 
-                let expr_typed = self.check_expression(expression, expected_opt.as_ref())?;
+                let expr_typed = self.check_expression(expression, &expected_opt)?;
                 match expr_typed.ty.clone() {
                     Type::Optional(inner) => Ok(TypedExpr {
                         ty: *inner,
@@ -510,28 +517,24 @@ impl<'src> TypeChecker<'src> {
                             operator: UnaryOp::Unwrap,
                             operand: Box::new(expr_typed),
                         },
-                        line: *line,
+                        span: expr.span(),
                     }),
                     _ => Err(TypeCheckerError::TypeMismatch {
                         expected: Type::Optional(Box::new(Type::Any)),
                         found: expr_typed.ty,
-                        line: *line,
+                        span: operator.span,
                         message: "Cannot force unwrap non-optional type.",
                     }),
                 }
             }
-            Expr::List { .. } => {
-                let Expr::List {
-                    elements,
-                    bracket_token,
-                } = expr
-                else {
-                    unreachable!()
-                };
-
-                let expected_inner = match expected {
-                    Some(Type::List(inner)) => Some(inner.as_ref().clone()),
-                    Some(Type::Optional(inner)) => match inner.as_ref() {
+            Expr::List {
+                elements,
+                bracket_token,
+            } => {
+                let expected_owned = expected.clone();
+                let expected_inner = match expected_owned {
+                    Type::List(inner) => Some(inner.as_ref().clone()),
+                    Type::Optional(inner) => match inner.as_ref() {
                         Type::List(list_inner) => Some(list_inner.as_ref().clone()),
                         _ => None,
                     },
@@ -540,13 +543,13 @@ impl<'src> TypeChecker<'src> {
 
                 if elements.is_empty() {
                     let inner = expected_inner.ok_or(TypeCheckerError::CannotInferType {
-                        line: bracket_token.line,
+                        span: bracket_token.span,
                         uninferred_generics: vec![],
                     })?;
                     return Ok(TypedExpr {
                         ty: Type::List(Box::new(inner)),
                         kind: ExprKind::List { elements: vec![] },
-                        line: bracket_token.line,
+                        span: expr.span(),
                     });
                 }
 
@@ -554,14 +557,16 @@ impl<'src> TypeChecker<'src> {
                 let inner_ty = expected_inner.unwrap_or_else(|| self.infer_ctx.new_type_var());
 
                 for element in elements.iter() {
-                    let typed = self.coerce_expression(element, &inner_ty)?;
+                    let typed = self
+                        .coerce_expression(element, &inner_ty)
+                        .recover(&mut self.errors, TypedExpr::new_blank(element.span()));
                     typed_elements.push(typed);
                 }
 
                 let inferred_inner = self.infer_ctx.substitute(&inner_ty);
                 if !inferred_inner.is_concrete() {
                     return Err(TypeCheckerError::CannotInferType {
-                        line: bracket_token.line,
+                        span: bracket_token.span,
                         uninferred_generics: vec![],
                     });
                 }
@@ -571,7 +576,7 @@ impl<'src> TypeChecker<'src> {
                     kind: ExprKind::List {
                         elements: typed_elements,
                     },
-                    line: bracket_token.line,
+                    span: expr.span(),
                 })
             }
             Expr::Map { .. } => {
@@ -582,16 +587,16 @@ impl<'src> TypeChecker<'src> {
                 object,
                 index,
             } => {
-                let object_typed = self.check_expression(object, None)?;
+                let object_typed = self.check_expression(object, &Type::Unknown)?;
                 let parent_type = object_typed
                     .ty
-                    .unwrap_optional_safe(*safe, object_typed.line)?;
+                    .unwrap_optional_safe(*safe, object_typed.span)?;
 
                 let Type::List(inner) = parent_type else {
                     return Err(TypeCheckerError::TypeMismatch {
                         expected: Type::List(Box::new(Type::Any)),
                         found: parent_type,
-                        line: object_typed.line,
+                        span: object_typed.span,
                         message: "Indexing is only supported on lists.",
                     });
                 };
@@ -604,7 +609,7 @@ impl<'src> TypeChecker<'src> {
 
                 Ok(TypedExpr {
                     ty,
-                    line: object_typed.line,
+                    span: expr.span(),
                     kind: ExprKind::GetIndex {
                         object: Box::new(object_typed),
                         index: Box::new(index_typed),
@@ -618,16 +623,16 @@ impl<'src> TypeChecker<'src> {
                 index,
                 value,
             } => {
-                let object_typed = self.check_expression(object, None)?;
+                let object_typed = self.check_expression(object, &Type::Unknown)?;
                 let parent_type = object_typed
                     .ty
-                    .unwrap_optional_safe(*safe, object_typed.line)?;
+                    .unwrap_optional_safe(*safe, object_typed.span)?;
 
                 let Type::List(inner) = parent_type else {
                     return Err(TypeCheckerError::TypeMismatch {
                         expected: Type::List(Box::new(Type::Any)),
                         found: parent_type,
-                        line: object_typed.line,
+                        span: object_typed.span,
                         message: "Indexing is only supported on lists.",
                     });
                 };
@@ -637,7 +642,7 @@ impl<'src> TypeChecker<'src> {
 
                 Ok(TypedExpr {
                     ty: *inner,
-                    line: object_typed.line,
+                    span: expr.span(),
                     kind: ExprKind::SetIndex {
                         object: Box::new(object_typed),
                         index: Box::new(index_typed),
@@ -645,6 +650,10 @@ impl<'src> TypeChecker<'src> {
                         safe: *safe,
                     },
                 })
+            }
+            Expr::Error => {
+                // Already reported by parser
+                Ok(TypedExpr::new_blank(expr.span()))
             }
         }
     }
@@ -654,7 +663,7 @@ impl<'src> TypeChecker<'src> {
         expr: &Expr<'src>,
         expected: &Type,
     ) -> Result<TypedExpr, TypeCheckerError> {
-        let mut expr = self.check_expression(expr, Some(expected))?;
+        let mut expr = self.check_expression(expr, expected)?;
         if self.infer_ctx.unify_types(expected, &expr.ty).is_ok() {
             let expr_ty = self.infer_ctx.substitute(&expr.ty);
             return if expr_ty.is_concrete() {
@@ -662,7 +671,7 @@ impl<'src> TypeChecker<'src> {
                 Ok(expr)
             } else {
                 Err(TypeCheckerError::CannotInferType {
-                    line: expr.line,
+                    span: expr.span,
                     uninferred_generics: vec![], // TODO Think how to report error
                 })
             };
@@ -680,7 +689,7 @@ impl<'src> TypeChecker<'src> {
         {
             return Ok(TypedExpr {
                 ty: Type::Interface(iface_name.clone(), generics.clone()),
-                line: expr.line,
+                span: expr.span,
                 kind: ExprKind::InterfaceUpcast {
                     expr: Box::new(expr),
                     vtable_idx: idx,
@@ -691,8 +700,8 @@ impl<'src> TypeChecker<'src> {
         self.infer_ctx
             .unify_types(expected, &expr.ty)
             .map_err(|msg| TypeCheckerError::ComplexTypeMismatch {
-                expected: expected.clone(),
-                line: expr.line,
+                expected: self.infer_ctx.substitute(expected),
+                span: expr.span,
                 message: msg,
                 found: expr.ty.clone(),
             })
