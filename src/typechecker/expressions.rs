@@ -245,7 +245,6 @@ impl<'src> TypeChecker<'src> {
             }
             Expr::Assignment { identifier, value } => {
                 let var_lookup = self.scopes.lookup(identifier.lexeme);
-
                 if let Some((ctx, resolved)) = var_lookup {
                     if let ResolvedVar::Closure(_) = &resolved {
                         return Err(AssignmentToCapturedVariable {
@@ -253,8 +252,30 @@ impl<'src> TypeChecker<'src> {
                             span: identifier.span,
                         });
                     }
-                    let expected = ctx.type_info.clone();
-                    let coerced_value = self.coerce_expression(value, &expected)?;
+
+                    let (resolved, coerced_value) =
+                        if let Some((old_resolved, old_ty)) = ctx.original_type.clone() {
+                            let coerced_value = self.coerce_expression(value, &old_ty)?;
+                            if let Type::Optional(inner) = &old_ty
+                                && inner.as_ref() == &coerced_value.ty
+                            {
+                                self.scopes.widen_type(
+                                    identifier.lexeme,
+                                    coerced_value.ty.clone(),
+                                    old_resolved.clone(),
+                                )
+                            } else {
+                                self.scopes.widen_type(
+                                    identifier.lexeme,
+                                    old_ty.clone(),
+                                    old_resolved.clone(),
+                                );
+                            }
+                            (old_resolved, coerced_value)
+                        } else {
+                            let coerced_value = self.coerce_expression(value, expected)?;
+                            (resolved, coerced_value)
+                        };
 
                     Ok(TypedExpr {
                         ty: coerced_value.ty.clone(),

@@ -11,6 +11,7 @@ pub struct VariableContext {
     pub(crate) name: Symbol,
     pub(crate) index: usize,
     pub(crate) span: Span,
+    pub(crate) original_type: Option<(ResolvedVar, Type)>,
 }
 
 impl VariableContext {
@@ -20,6 +21,7 @@ impl VariableContext {
             name,
             index,
             span,
+            original_type: None,
         }
     }
 }
@@ -169,6 +171,19 @@ impl ScopeManager {
         None
     }
 
+    pub fn widen_type(&mut self, name: &str, broad_type: Type, old_location: ResolvedVar) {
+        for scope in self.scopes.iter_mut().rev() {
+            if let Some(ctx) = scope.variables.get_mut(name) {
+                if let ResolvedVar::Local(idx) = old_location {
+                    ctx.original_type = None;
+                    ctx.type_info = broad_type;
+                    ctx.index = idx as usize;
+                }
+                return;
+            }
+        }
+    }
+
     #[must_use]
     pub fn refine(&mut self, name: &str, new_type: Type) -> Option<(ResolvedVar, ResolvedVar)> {
         let lookup_res = self.lookup(name);
@@ -178,11 +193,20 @@ impl ScopeManager {
             if let ResolvedVar::Global(_) = resolved {
                 return None;
             }
+            let original_type = ctx.type_info.clone();
+            let original_resolved = resolved.clone();
 
             return if let Type::Enum(_, _) = &ctx.type_info {
                 let name = ctx.name.clone();
                 self.declare(name.clone(), new_type, Span::default())
                     .unwrap(); // Shouldn't fail
+
+                if let Some(scope) = self.scopes.last_mut() {
+                    if let Some(var_ctx) = scope.variables.get_mut(&name) {
+                        var_ctx.original_type = Some((original_resolved, original_type));
+                    }
+                }
+
                 let (_, new_resolved) = self.lookup(name.as_ref()).unwrap();
                 Some((resolved, new_resolved))
             } else {
@@ -190,10 +214,12 @@ impl ScopeManager {
                 let name = ctx.name.clone();
                 let span = ctx.span;
                 let scope = self.scopes.last_mut().expect("No scope active");
-                scope.variables.insert(
-                    name.clone(),
-                    VariableContext::new(name, new_type, idx, span),
-                );
+
+                let mut new_ctx = VariableContext::new(name.clone(), new_type, idx, span);
+                new_ctx
+                    .original_type
+                    .replace((original_resolved, original_type));
+                scope.variables.insert(name, new_ctx);
                 None
             };
         }

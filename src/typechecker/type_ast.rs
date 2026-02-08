@@ -199,6 +199,7 @@ pub enum StmtKind {
     While {
         condition: TypedExpr,
         body: Box<TypedStmt>,
+        true_path: Vec<(ResolvedVar, ResolvedVar)>,
     },
     Function {
         reserved: u8,

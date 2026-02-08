@@ -3,8 +3,8 @@ mod tests {
     use crate::execute_source;
     use crate::parser::Parser;
     use crate::scanner::Scanner;
-    use crate::typechecker::TypeChecker;
     use crate::typechecker::error::TypeCheckerError;
+    use crate::typechecker::TypeChecker;
 
     #[test]
     fn test_type_checker() {
@@ -448,7 +448,6 @@ mod tests {
                 local = 20;
                 return local;
             }
-            assert(foo(), 20);
         }
         "#;
 
@@ -456,9 +455,11 @@ mod tests {
         let mut parser = Parser::new(scanner);
         let mut ast = parser.parse().expect("Parser failed.");
         let mut checker = TypeChecker::new();
+
         let errors = checker
             .check(ast.as_mut_slice())
             .expect_err("Should have failed.");
+        println!("{:#?}", errors);
         assert_eq!(errors.len(), 1, "Expected 1 error, got {}", errors.len());
 
         assert!(matches!(

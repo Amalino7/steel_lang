@@ -249,6 +249,14 @@ pub fn get_natives() -> Vec<NativeDef> {
                 _ => unreachable!(),
             },
         },
+        NativeDef {
+            name: "string.length",
+            type_: instance_method(vec![("self".into(), Type::String)], Type::Number, vec![]),
+            func: |args, _| match args[0] {
+                Value::String(str) => Ok(Value::Number(str.len() as f64)),
+                _ => unreachable!(),
+            },
+        },
     ]
 }
 

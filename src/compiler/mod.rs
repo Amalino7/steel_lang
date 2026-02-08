@@ -132,7 +132,11 @@ impl<'a> Compiler<'a> {
                     self.patch_jump(jump);
                 }
             }
-            StmtKind::While { condition, body } => {
+            StmtKind::While {
+                condition,
+                body,
+                true_path,
+            } => {
                 let line = stmt.span.line;
 
                 let loop_start = self.chunk().instructions.len();
@@ -141,6 +145,7 @@ impl<'a> Compiler<'a> {
                 let exit_jump = self.emit_jump(Opcode::JumpIfFalse, line);
                 self.emit_op(Opcode::Pop, line);
 
+                self.emit_refinement(true_path, line);
                 self.compile_stmt(body);
                 self.emit_jump_back(loop_start, body.span.line);
 

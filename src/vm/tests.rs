@@ -3,10 +3,10 @@ use crate::execute_source;
 use crate::parser::Parser;
 use crate::scanner::Scanner;
 use crate::typechecker::TypeChecker;
-use crate::vm::VM;
 use crate::vm::bytecode::{Chunk, Opcode};
 use crate::vm::gc::GarbageCollector;
 use crate::vm::value::{Function, Value};
+use crate::vm::VM;
 
 #[test]
 fn test_simple_add() {
@@ -67,8 +67,8 @@ fn test_expressions() {
     let scanner = Scanner::new(src);
     let mut parser = Parser::new(scanner);
     let mut typecheker = TypeChecker::new();
-    let mut ast = parser.parse().expect("Failed to parse");
-    let typed_ast = typecheker.check(&mut ast).expect("Failed to typecheck");
+    let ast = parser.parse().expect("Failed to parse");
+    let typed_ast = typecheker.check(&ast).expect("Failed to typecheck");
 
     let mut gc = GarbageCollector::new();
     let compiler = Compiler::new("main".to_string(), &mut gc);
@@ -85,8 +85,8 @@ fn test_cmp() {
     let scanner = Scanner::new(src);
     let mut parser = Parser::new(scanner);
     let mut typecheker = TypeChecker::new();
-    let mut ast = parser.parse().expect("Failed to parse");
-    let typed_ast = typecheker.check(&mut ast).expect("Failed to typecheck");
+    let ast = parser.parse().expect("Failed to parse");
+    let typed_ast = typecheker.check(&ast).expect("Failed to typecheck");
 
     let mut gc = GarbageCollector::new();
     let compiler = Compiler::new("main".to_string(), &mut gc);
@@ -107,8 +107,8 @@ fn test_while_loop() {
     let scanner = Scanner::new(src);
     let mut parser = Parser::new(scanner);
     let mut typecheker = TypeChecker::new();
-    let mut ast = parser.parse().expect("Failed to parse");
-    let typed_ast = typecheker.check(&mut ast).expect("Failed to typecheck");
+    let ast = parser.parse().expect("Failed to parse");
+    let typed_ast = typecheker.check(&ast).expect("Failed to typecheck");
 
     let mut gc = GarbageCollector::new();
     let compiler = Compiler::new("main".to_string(), &mut gc);
@@ -1865,6 +1865,53 @@ fn test_poly() {
         printPerimeter(r);
         i = i + 1;
     }
+    "#;
+    execute_source(src, false, "run", true);
+}
+#[test]
+fn test_unrefinement() {
+    let src = r#"
+    enum Either { Left(number), Right(string) }
+    {
+        let a:number? = 10;
+        if a != nil {
+            println(a * a);
+            assert(a * a, 100);
+            if true {
+                a = nil;
+            }
+            a = 10;
+            println(a ?? 0);
+        }
+        let left = Either.Left(10);
+        if left is Left {
+            println(left + 10);
+            assert(left + 10, 20);
+            left = Either.Right("100");
+        }
+    }
+    "#;
+    execute_source(src, false, "run", true);
+}
+#[test]
+fn test_enum_loop() {
+    let src = r#"
+        enum LinkedList<T> { Nil, Cons(T, LinkedList<T>) }
+        impl<T> LinkedList<T> {
+            func prepend(self, value: T): LinkedList<T> {
+                return LinkedList.Cons(value, self);
+            }
+        }
+        {
+            let list: LinkedList<number> = LinkedList.Nil;
+            list = list.prepend(10);
+            list = list.prepend(20);
+            list = list.prepend(30);
+            while list is Cons {
+                println(list.0 + 1);
+                list = list.1;
+            }
+        }
     "#;
     execute_source(src, false, "run", true);
 }

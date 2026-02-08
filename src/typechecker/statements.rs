@@ -160,30 +160,40 @@ impl<'src> TypeChecker<'src> {
                 }
             }
             Stmt::While { condition, body } => {
-                let cond_type = self
+                let cond_typed = self
                     .check_expression(condition, &Type::Boolean)
                     .unwrap_or_else(|err| {
                         self.errors.push(err);
                         TypedExpr::new_blank(condition.span())
                     });
-                if cond_type.ty != Type::Boolean
-                    && cond_type.ty != Type::Unknown
-                    && cond_type.ty != Type::Error
+                if cond_typed.ty != Type::Boolean
+                    && cond_typed.ty != Type::Unknown
+                    && cond_typed.ty != Type::Error
                 {
                     self.errors.push(TypeCheckerError::TypeMismatch {
                         expected: Type::Boolean,
-                        found: cond_type.ty.clone(),
+                        found: cond_typed.ty.clone(),
                         span: condition.span(),
                         message: "While value must be a boolean.",
                     });
                 }
 
-                let body = self.check_stmt(body);
+                let refinements = self.analyze_condition(&cond_typed);
+                let mut scope = ScopeGuard::new(self, ScopeType::Block);
+                let mut true_path = vec![];
+                for (name, ty) in refinements.true_path.iter() {
+                    if let Some(case) = scope.scopes.refine(name, ty.clone()) {
+                        true_path.push(case)
+                    }
+                }
+                let body = scope.check_stmt(body);
+                drop(scope);
 
                 TypedStmt {
                     kind: StmtKind::While {
-                        condition: cond_type,
+                        condition: cond_typed,
                         body: Box::new(body),
+                        true_path,
                     },
                     type_info: Type::Void,
                     span: stmt.span(),
