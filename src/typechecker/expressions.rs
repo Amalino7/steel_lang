@@ -723,7 +723,7 @@ impl<'src> TypeChecker<'src> {
             .map_err(|msg| TypeCheckerError::ComplexTypeMismatch {
                 expected: self.infer_ctx.substitute(expected),
                 span: expr.span,
-                message: msg,
+                message: msg.into(),
                 found: expr.ty.clone(),
             })
             .map(|_| expr)

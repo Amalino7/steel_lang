@@ -306,7 +306,7 @@ impl<'src> TypeChecker<'src> {
                         expected: expected_self,
                         found: obj_type.clone(),
                         span: method_token.span,
-                        message: msg,
+                        message: msg.into(),
                     })?;
 
                 let params = func
