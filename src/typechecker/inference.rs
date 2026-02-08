@@ -173,17 +173,25 @@ impl InferenceContext {
             found: provided.clone(),
         };
 
+        if variance == Variance::Contravariant && self.is_trivially_unifiable(provided, expected) {
+            return Ok(());
+        }
+
         if self.is_trivially_unifiable(expected, provided) {
             return Ok(());
         }
+
         match (expected, provided) {
             (Type::Infer(id), _) => self.unify_infer_left(*id, provided),
             (_, Type::Infer(id)) => self.unify_infer_right(expected, *id, variance),
             (Type::Optional(expected_inner), Type::Optional(provided_inner)) => {
                 self.unify_with_variance(expected_inner, provided_inner, variance)
             }
-            (Type::Optional(expected_inner), provided) => {
+            (Type::Optional(expected_inner), provided) if variance == Variance::Covariant => {
                 self.unify_with_variance(expected_inner, provided, variance)
+            }
+            (expected, Type::Optional(provided_inner)) if variance == Variance::Contravariant => {
+                self.unify_with_variance(expected, provided_inner, variance)
             }
             (Type::List(expected_inner), Type::List(provided_inner)) => {
                 self.unify_with_variance(expected_inner, provided_inner, Variance::Invariant)

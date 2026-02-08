@@ -273,7 +273,9 @@ impl<'src> TypeChecker<'src> {
                             }
                             (old_resolved, coerced_value)
                         } else {
-                            let coerced_value = self.coerce_expression(value, expected)?;
+                            // This bug here took way too long.
+                            let expected = ctx.type_info.clone();
+                            let coerced_value = self.coerce_expression(value, &expected)?;
                             (resolved, coerced_value)
                         };
 

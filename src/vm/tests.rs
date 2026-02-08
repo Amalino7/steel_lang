@@ -1124,7 +1124,7 @@ fn test_complex_linked_list() {
                     let head = self.head;
                     while head != nil and index > 0 {
                         index -= 1;
-                        head = head?.next;
+                        head = head.next;
                     }
                     return head?.value;
                 }
@@ -1132,7 +1132,7 @@ fn test_complex_linked_list() {
                     let head = self.head;
                     while head != nil and index > 0 {
                         index -= 1;
-                        head = head?.next;
+                        head = head.next;
                     }
                     head?.value = value;
                 }

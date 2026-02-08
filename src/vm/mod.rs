@@ -604,7 +604,7 @@ impl VM {
                     current_frame.ip += 1;
                     let obj = self.stack.pop();
                     let Value::InterfaceObj(obj) = obj else {
-                        unreachable!("GetInterfaceMethod expected interface object");
+                        unreachable!("GetInterfaceMethod expected interface object {}", obj);
                     };
                     self.stack.push(Value::Function(obj.vtable.methods[idx]));
                     self.stack.push(obj.data);
