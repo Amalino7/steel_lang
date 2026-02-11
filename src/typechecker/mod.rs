@@ -24,6 +24,8 @@ mod scope_manager;
 mod statements;
 mod tests;
 pub mod type_ast;
+mod type_registry;
+mod type_resolver;
 mod type_system;
 pub mod types;
 

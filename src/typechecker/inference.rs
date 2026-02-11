@@ -157,7 +157,6 @@ impl InferenceContext {
         expected_ty: &Type,
         provided: &Type,
     ) -> Result<(), UnificationError> {
-        println!("Unifying {:?} with {:?}", expected_ty, provided);
         self.unify_with_variance(expected_ty, provided, Variance::Covariant)
     }
 
@@ -182,8 +181,8 @@ impl InferenceContext {
         }
 
         match (expected, provided) {
-            (Type::Infer(id), _) => self.unify_infer_left(*id, provided),
             (_, Type::Infer(id)) => self.unify_infer_right(expected, *id, variance),
+            (Type::Infer(id), _) => self.unify_infer_left(*id, provided, variance),
             (Type::Optional(expected_inner), Type::Optional(provided_inner)) => {
                 self.unify_with_variance(expected_inner, provided_inner, variance)
             }
@@ -263,10 +262,15 @@ impl InferenceContext {
             || (matches!(expected, Type::Optional(_)) && matches!(provided, Type::Nil))
     }
 
-    fn unify_infer_left(&mut self, id: u32, provided: &Type) -> Result<(), UnificationError> {
+    fn unify_infer_left(
+        &mut self,
+        id: u32,
+        provided: &Type,
+        variance: Variance,
+    ) -> Result<(), UnificationError> {
         if self.is_resolved(id) {
             let resolved = self.resolve(id).unwrap().clone();
-            self.unify_with_variance(&resolved, provided, Variance::Covariant) // TODO why covariant? here
+            self.unify_with_variance(&resolved, provided, variance)
         } else {
             self.bind(id, provided.clone())
         }
@@ -293,9 +297,9 @@ impl InferenceContext {
         variance: Variance,
         mismatch: impl FnOnce(UnificationErrorKind) -> UnificationError,
     ) -> Result<(), UnificationError> {
-        if prov_inner.is_vararg {
-            return Err(mismatch(UnificationErrorKind::VarargNotAllowed));
-        }
+        // if prov_inner.is_vararg {
+        //     return Err(mismatch(UnificationErrorKind::VarargNotAllowed));
+        // }
 
         if !prov_inner.type_params.is_empty() {
             return Err(mismatch(UnificationErrorKind::GenericFunctionNotAllowed));

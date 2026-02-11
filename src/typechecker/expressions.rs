@@ -358,8 +358,12 @@ impl<'src> TypeChecker<'src> {
                         generics,
                         Some(&mut self.infer_ctx),
                     );
-
-                    let abstracted = struct_def
+                    let abstract_type_args = struct_def
+                        .generic_params
+                        .iter()
+                        .map(|name| map.get(name).unwrap())
+                        .collect::<Vec<_>>();
+                    let abstracted_field = struct_def
                         .ordered_fields
                         .iter()
                         .map(|(s, ty)| (s.clone(), TySys::generic_to_concrete(ty.clone(), &map)))
@@ -367,11 +371,11 @@ impl<'src> TypeChecker<'src> {
 
                     let owned_name = struct_def.name.clone();
                     let bound_args =
-                        self.bind_arguments(callee.span(), &abstracted, arguments, false)?;
+                        self.bind_arguments(callee.span(), &abstracted_field, arguments, false)?;
 
-                    let type_args = abstracted
+                    let type_args = abstract_type_args
                         .iter()
-                        .map(|(_, ty)| self.infer_ctx.substitute(ty))
+                        .map(|t| self.infer_ctx.substitute(t))
                         .collect::<Vec<_>>();
 
                     return Ok(TypedExpr {
