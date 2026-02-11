@@ -3,7 +3,6 @@ use crate::scanner::{Token, TokenType};
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::scope_manager::ScopeType;
 use crate::typechecker::type_ast::{BinaryOp, ExprKind, LogicalOp, TypedExpr, UnaryOp};
-use crate::typechecker::type_system::TypeSystem;
 use crate::typechecker::types::Type;
 use crate::typechecker::TypeChecker;
 
@@ -256,7 +255,7 @@ impl<'src> TypeChecker<'src> {
                 }
             }
             TokenType::EqualEqual | TokenType::BangEqual => {
-                if TypeSystem::can_compare(&left_type, &right_type) {
+                if Type::can_compare(&left_type, &right_type) {
                     let op = match left_type {
                         Type::Number => BinaryOp::EqualEqualNumber,
                         Type::String => BinaryOp::EqualEqualString,

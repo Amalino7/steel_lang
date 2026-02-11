@@ -1,10 +1,10 @@
 use crate::parser::ast::{Binding, Expr, MatchArm, Pattern};
-use crate::typechecker::TypeChecker;
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::scope_manager::ScopeType;
 use crate::typechecker::type_ast::{MatchCase, StmtKind, TypedBinding, TypedExpr, TypedStmt};
-use crate::typechecker::type_system::{TypeSystem, generics_to_map};
+use crate::typechecker::type_system::generics_to_map;
 use crate::typechecker::types::{EnumType, TupleType, Type};
+use crate::typechecker::TypeChecker;
 use std::collections::HashSet;
 use std::rc::Rc;
 
@@ -27,7 +27,7 @@ impl<'src> TypeChecker<'src> {
             }
         };
 
-        let enum_def = self.sys.get_enum(enum_name).unwrap().clone();
+        let enum_def = self.sys().get_enum(enum_name).unwrap().clone();
         let mut matched_variants = HashSet::new();
         let mut typed_cases = vec![];
 
@@ -178,7 +178,8 @@ impl<'src> TypeChecker<'src> {
                             message: "Can only use structure destructure syntax on structs",
                         });
                     }
-                    let Some(struct_def) = self.sys.get_struct(struct_name.as_ref()) else {
+                    let Some(struct_def) = self.resolver.sys.get_struct(struct_name.as_ref())
+                    else {
                         return Err(TypeCheckerError::UndefinedType {
                             name: name.lexeme.to_string(),
                             span: binding.span(),
@@ -200,7 +201,7 @@ impl<'src> TypeChecker<'src> {
                             generics,
                             Some(&mut self.infer_ctx),
                         );
-                        let field_type = TypeSystem::generic_to_concrete(field_type.clone(), &map);
+                        let field_type = field_type.clone().generic_to_concrete(&map);
 
                         bindings.push((field_idx, field_type, binding));
                     }

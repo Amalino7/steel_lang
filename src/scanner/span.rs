@@ -8,7 +8,7 @@ pub struct Span {
 }
 
 impl Span {
-    pub fn new(start: usize, end: usize, line: u32) -> Self {
+    pub const fn new(start: usize, end: usize, line: u32) -> Self {
         Self { start, end, line }
     }
 

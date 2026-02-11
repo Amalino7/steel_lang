@@ -5,6 +5,7 @@ use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::inference::InferenceContext;
 use crate::typechecker::scope_manager::{ScopeManager, ScopeType};
 use crate::typechecker::type_ast::{StmtKind, TypedStmt};
+use crate::typechecker::type_resolver::TypeResolver;
 use crate::typechecker::type_system::TypeSystem;
 use crate::typechecker::types::Type;
 use std::mem::take;
@@ -24,9 +25,9 @@ mod scope_manager;
 mod statements;
 mod tests;
 pub mod type_ast;
-mod type_registry;
 mod type_resolver;
 mod type_system;
+mod type_system_old;
 pub mod types;
 
 #[derive(Debug, PartialEq, Clone)]
@@ -37,7 +38,7 @@ enum FunctionContext {
 pub type Symbol = Rc<str>;
 pub struct TypeChecker<'src> {
     current_function: FunctionContext,
-    sys: TypeSystem,
+    resolver: TypeResolver,
     scopes: ScopeManager,
     natives: &'src [NativeDef],
     errors: Vec<TypeCheckerError>,
@@ -48,24 +49,17 @@ impl<'src> TypeChecker<'src> {
     // This is used for testing purposes only.
     #[allow(dead_code)]
     pub fn new() -> Self {
-        TypeChecker {
-            current_function: FunctionContext::None,
-            sys: TypeSystem::new(),
-            scopes: ScopeManager::new(),
-            natives: &[],
-            errors: vec![],
-            infer_ctx: InferenceContext::new(),
-        }
+        Self::new_with_natives(&[])
     }
 
     pub fn new_with_natives(natives: &'src [NativeDef]) -> Self {
         TypeChecker {
             current_function: FunctionContext::None,
-            sys: TypeSystem::new(),
+            resolver: TypeResolver::new(TypeSystem::new()),
             scopes: ScopeManager::new(),
             natives,
             errors: vec![],
-            infer_ctx: Default::default(),
+            infer_ctx: InferenceContext::new(),
         }
     }
 
@@ -112,5 +106,9 @@ impl<'src> TypeChecker<'src> {
                 .declare(native.name.into(), native.type_.clone(), Span::default())
                 .expect("Failed to register global");
         }
+    }
+
+    fn sys(&self) -> &TypeSystem {
+        &self.resolver.sys
     }
 }

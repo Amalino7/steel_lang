@@ -2,6 +2,7 @@ use crate::parser::ast::Stmt;
 use crate::typechecker::error::{Recoverable, TypeCheckerError};
 use crate::typechecker::scope_manager::{ScopeGuard, ScopeType};
 use crate::typechecker::type_ast::{StmtKind, TypedExpr, TypedRefinements, TypedStmt};
+use crate::typechecker::type_resolver::TypeScopeGuard;
 use crate::typechecker::types::Type;
 use crate::typechecker::{FunctionContext, TypeChecker};
 
@@ -24,7 +25,9 @@ impl<'src> TypeChecker<'src> {
                 value,
                 type_info,
             } => {
-                let declared_type = Type::from_ast(type_info, &self.sys)
+                let declared_type = self
+                    .resolver
+                    .resolve(type_info)
                     .ok_log(&mut self.errors)
                     .unwrap_or(Type::Error);
 
@@ -201,31 +204,25 @@ impl<'src> TypeChecker<'src> {
             }
             Stmt::Function {
                 name,
-                params,
                 body,
-                type_,
+                signature,
                 generics,
             } => {
-                self.sys.push_generics(generics);
-                let raw_type =
-                    Type::from_function_ast(type_, &self.sys, self.sys.get_active_generics())
-                        .recover(
-                            &mut self.errors,
-                            Type::new_function(vec![], Type::Void, vec![]),
-                        );
-
-                let final_type = raw_type.patch_param_names(params);
+                let guard = TypeScopeGuard::new(self, generics).expect("Invalid generics");
+                let func_type = guard.resolver.resolve_func(signature, generics).recover(
+                    &mut self.errors,
+                    Type::new_function(vec![], Type::Void, vec![]),
+                );
 
                 if !self.scopes.is_global() {
                     self.scopes
-                        .declare(name.lexeme.into(), final_type.clone(), name.span)
+                        .declare(name.lexeme.into(), func_type.clone(), name.span)
                         .ok_log(&mut self.errors);
                 }
 
                 let res = self
-                    .check_function(name, params, body, final_type, name.lexeme.into())
+                    .check_function(name, params, body, func_type, name.lexeme.into())
                     .recover(&mut self.errors, TypedStmt::new_blank(stmt.span()));
-                self.sys.pop_n_generics(generics.len());
                 res
             }
             Stmt::Return { value, keyword } => {

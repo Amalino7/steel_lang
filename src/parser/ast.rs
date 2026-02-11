@@ -12,13 +12,16 @@ pub enum Literal {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct FunctionSig<'src> {
+    pub params: Box<[(Token<'src>, TypeAst<'src>)]>,
+    pub return_type: Box<TypeAst<'src>>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum TypeAst<'src> {
     Optional(Box<TypeAst<'src>>),
     Named(Token<'src>, Vec<TypeAst<'src>>),
-    Function {
-        param_types: Box<[TypeAst<'src>]>,
-        return_type: Box<TypeAst<'src>>,
-    },
+    Function(FunctionSig<'src>),
     Tuple(Vec<TypeAst<'src>>),
     Infer,
 }
@@ -190,10 +193,9 @@ pub enum Stmt<'src> {
     },
     Function {
         name: Token<'src>,
-        params: Vec<Token<'src>>,
         body: Box<Stmt<'src>>,
         generics: Vec<Token<'src>>,
-        type_: TypeAst<'src>,
+        signature: FunctionSig<'src>,
     },
     Struct {
         name: Token<'src>,
@@ -202,13 +204,13 @@ pub enum Stmt<'src> {
     },
     Impl {
         interfaces: Vec<Token<'src>>,
-        name: (Token<'src>, Vec<Token<'src>>),
+        name: (Token<'src>, Vec<TypeAst<'src>>),
         methods: Vec<Stmt<'src>>,
         generics: Vec<Token<'src>>,
     },
     Interface {
         name: Token<'src>,
-        methods: Vec<InterfaceSig<'src>>,
+        methods: Vec<MethodSig<'src>>,
         generics: Vec<Token<'src>>,
     },
     Enum {
@@ -230,10 +232,9 @@ pub enum VariantType<'src> {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct InterfaceSig<'src> {
+pub struct MethodSig<'src> {
     pub name: Token<'src>,
-    pub params: Vec<Token<'src>>,
-    pub type_: TypeAst<'src>,
+    pub signature: FunctionSig<'src>,
     pub generics: Vec<Token<'src>>,
 }
 
@@ -392,16 +393,16 @@ impl Display for TypeAst<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             TypeAst::Named(name, _) => write!(f, "{}", name.lexeme),
-            TypeAst::Function {
-                param_types: params,
+            TypeAst::Function(FunctionSig {
+                params,
                 return_type,
-            } => {
+            }) => {
                 write!(
                     f,
-                    "fn({}) -> {}",
+                    "func({}) -> {}",
                     params
                         .iter()
-                        .map(|t| format!("{}", t))
+                        .map(|t| format!("{}: {}", t.0.lexeme, t.1))
                         .collect::<Vec<_>>()
                         .join(", "),
                     return_type
@@ -467,17 +468,21 @@ impl Display for Stmt<'_> {
             }
             Stmt::While { condition, body } => write!(f, "while {} then {}", condition, body),
             Stmt::Function {
-                name, params, body, ..
+                name,
+                body,
+                signature,
+                ..
             } => {
                 write!(
                     f,
                     "func {}({}) {}",
                     name.lexeme,
-                    params
+                    signature
+                        .params
                         .iter()
-                        .map(|e| e.lexeme)
+                        .map(|t| format!("{}: {}", t.0.lexeme, t.1))
                         .collect::<Vec<_>>()
-                        .join(","),
+                        .join(", "),
                     body
                 )
             }
@@ -526,7 +531,18 @@ impl Display for Stmt<'_> {
                 print_generics(f, generics)?;
                 write!(f, ": {{")?;
                 for m in methods {
-                    write!(f, " func {}(...): {};", m.name.lexeme, m.type_)?;
+                    write!(
+                        f,
+                        " func {}({}): {};",
+                        m.name.lexeme,
+                        m.signature
+                            .params
+                            .iter()
+                            .map(|t| format!("{}: {}", t.0.lexeme, t.1))
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        m.signature.return_type
+                    )?;
                 }
                 write!(f, "}}")
             }
@@ -697,12 +713,12 @@ impl TypeAst<'_> {
                 .last()
                 .map(|generic| name.span.merge(generic.span()))
                 .unwrap_or(name.span),
-            TypeAst::Function {
-                param_types,
+            TypeAst::Function(FunctionSig {
+                params,
                 return_type,
-            } => param_types
+            }) => params
                 .last()
-                .map(|last| param_types[0].span().merge(last.span()))
+                .map(|last| params[0].0.span.merge(last.1.span()))
                 .unwrap_or_else(|| return_type.span()),
             TypeAst::Tuple(types) => types
                 .last()

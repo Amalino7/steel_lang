@@ -2,7 +2,7 @@ use crate::parser::ast::{CallArg, Expr, Literal};
 use crate::scanner::{Span, Token};
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::type_ast::{ExprKind, TypedExpr};
-use crate::typechecker::type_system::{generics_to_map, TySys, TypeSystem};
+use crate::typechecker::type_system_old::{generics_to_map, TySys, TypeSystem};
 use crate::typechecker::types::{GenericArgs, TupleType, Type};
 use crate::typechecker::{Symbol, TypeChecker};
 use std::collections::HashMap;

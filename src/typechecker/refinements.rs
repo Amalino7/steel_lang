@@ -1,5 +1,4 @@
 use crate::typechecker::type_ast::{BinaryOp, ExprKind, LogicalOp, TypedExpr, UnaryOp};
-use crate::typechecker::type_system::TypeSystem;
 use crate::typechecker::types::Type;
 use crate::typechecker::{Symbol, TypeChecker};
 
@@ -51,22 +50,20 @@ impl<'src> TypeChecker<'src> {
                 if let ExprKind::GetVar(_, name) = &target.kind
                     && let Type::Enum(enum_name, _) = &target.ty
                 {
-                    let enum_def = self.sys.get_enum(enum_name).unwrap();
-                    let generics_map = self.sys.get_generics_map(&target.ty);
+                    let enum_def = self.sys().get_enum(enum_name).unwrap();
+                    let generics_map = self.sys().get_generics_map(&target.ty);
                     let false_path = if enum_def.variants.len() == 2 {
                         let (_, other_ty) = enum_def
                             .ordered_variants
                             .get((1 - *variant_idx) as usize)
                             .unwrap();
-                        let final_type =
-                            TypeSystem::generic_to_concrete(other_ty.clone(), &generics_map);
+                        let final_type = other_ty.clone().generic_to_concrete(&generics_map);
                         vec![(name.clone(), final_type)]
                     } else {
                         vec![]
                     };
                     let (_, narrowed_type) = &enum_def.ordered_variants[*variant_idx as usize];
-                    let final_type =
-                        TypeSystem::generic_to_concrete(narrowed_type.clone(), &generics_map);
+                    let final_type = narrowed_type.clone().generic_to_concrete(&generics_map);
                     return BranchRefinements {
                         true_path: vec![(name.clone(), final_type.clone())],
                         false_path,

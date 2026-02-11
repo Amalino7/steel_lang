@@ -5,6 +5,9 @@ use std::ops::Range;
 
 #[derive(Debug, Clone)]
 pub enum TypeCheckerError {
+    SelfOutsideOfImpl {
+        span: Span,
+    },
     UndefinedType {
         name: String,
         span: Span,
@@ -131,11 +134,6 @@ pub enum TypeCheckerError {
         span: Span,
         message: &'static str,
     },
-    MissingGeneric {
-        ty_name: String,
-        generic_name: String,
-        span: Span,
-    },
     CannotInferType {
         span: Span,
         uninferred_generics: Vec<String>,
@@ -144,7 +142,7 @@ pub enum TypeCheckerError {
         span: Span,
         message: String,
     },
-    TooManyGenerics {
+    GenericCountMismatch {
         span: Span,
         found: usize,
         expected: usize,
@@ -394,6 +392,7 @@ impl TypeCheckerError {
     // This is the method main.rs will call to tell Ariadne WHERE to point
     pub fn span(&self) -> Span {
         match self {
+            TypeCheckerError::SelfOutsideOfImpl { span } => *span,
             TypeCheckerError::UndefinedType { span, .. } => *span,
             TypeCheckerError::UndefinedVariable { span, .. } => *span,
             TypeCheckerError::CalleeIsNotCallable { span, .. } => *span,
@@ -421,16 +420,18 @@ impl TypeCheckerError {
             TypeCheckerError::InvalidTupleIndex { span, .. } => *span,
             TypeCheckerError::UnreachablePattern { span, .. } => *span,
             TypeCheckerError::InvalidIsUsage { span, .. } => *span,
-            TypeCheckerError::MissingGeneric { span, .. } => *span,
             TypeCheckerError::CannotInferType { span, .. } => *span,
             TypeCheckerError::InvalidGenericSpecification { span, .. } => *span,
-            TypeCheckerError::TooManyGenerics { span, .. } => *span,
+            TypeCheckerError::GenericCountMismatch { span, .. } => *span,
         }
     }
 
     // This is the method main.rs will call to tell Ariadne WHAT to say
     pub fn message(&self) -> String {
         match self {
+            TypeCheckerError::SelfOutsideOfImpl { .. } => {
+                "Cannot use 'self' and 'Self' outside of an implementation block.".to_string()
+            }
             TypeCheckerError::UndefinedVariable { name, .. } => {
                 format!("Undefined variable '{}'.", name)
             }
@@ -561,16 +562,6 @@ impl TypeCheckerError {
             TypeCheckerError::InvalidIsUsage { message, .. } => {
                 format!("Invalid usage of 'is' operator. {}", message)
             }
-            TypeCheckerError::MissingGeneric {
-                ty_name,
-                generic_name,
-                ..
-            } => {
-                format!(
-                    "Missing generic on type '{}'. Name: {}",
-                    ty_name, generic_name
-                )
-            }
             TypeCheckerError::CannotInferType {
                 uninferred_generics,
                 ..
@@ -583,7 +574,7 @@ impl TypeCheckerError {
             TypeCheckerError::InvalidGenericSpecification { message, .. } => {
                 format!("Invalid generic specification. {}", message)
             }
-            TypeCheckerError::TooManyGenerics {
+            TypeCheckerError::GenericCountMismatch {
                 found,
                 expected,
                 type_name,
