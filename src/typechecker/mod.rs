@@ -38,7 +38,7 @@ enum FunctionContext {
 pub type Symbol = Rc<str>;
 pub struct TypeChecker<'src> {
     current_function: FunctionContext,
-    resolver: TypeResolver,
+    sys: TypeSystem,
     scopes: ScopeManager,
     natives: &'src [NativeDef],
     errors: Vec<TypeCheckerError>,
@@ -55,7 +55,7 @@ impl<'src> TypeChecker<'src> {
     pub fn new_with_natives(natives: &'src [NativeDef]) -> Self {
         TypeChecker {
             current_function: FunctionContext::None,
-            resolver: TypeResolver::new(TypeSystem::new()),
+            sys: TypeSystem::new(),
             scopes: ScopeManager::new(),
             natives,
             errors: vec![],
@@ -108,7 +108,7 @@ impl<'src> TypeChecker<'src> {
         }
     }
 
-    fn sys(&self) -> &TypeSystem {
-        &self.resolver.sys
+    fn res(&self) -> TypeResolver {
+        TypeResolver::new(&self.sys, &self.scopes)
     }
 }

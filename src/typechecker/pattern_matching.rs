@@ -27,7 +27,7 @@ impl<'src> TypeChecker<'src> {
             }
         };
 
-        let enum_def = self.sys().get_enum(enum_name).unwrap().clone();
+        let enum_def = self.sys.get_enum(enum_name).unwrap().clone();
         let mut matched_variants = HashSet::new();
         let mut typed_cases = vec![];
 
@@ -178,8 +178,7 @@ impl<'src> TypeChecker<'src> {
                             message: "Can only use structure destructure syntax on structs",
                         });
                     }
-                    let Some(struct_def) = self.resolver.sys.get_struct(struct_name.as_ref())
-                    else {
+                    let Some(struct_def) = self.sys.get_struct(struct_name.as_ref()) else {
                         return Err(TypeCheckerError::UndefinedType {
                             name: name.lexeme.to_string(),
                             span: binding.span(),

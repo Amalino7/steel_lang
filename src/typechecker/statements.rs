@@ -2,7 +2,6 @@ use crate::parser::ast::Stmt;
 use crate::typechecker::error::{Recoverable, TypeCheckerError};
 use crate::typechecker::scope_manager::{ScopeGuard, ScopeType};
 use crate::typechecker::type_ast::{StmtKind, TypedExpr, TypedRefinements, TypedStmt};
-use crate::typechecker::type_resolver::TypeScopeGuard;
 use crate::typechecker::types::Type;
 use crate::typechecker::{FunctionContext, TypeChecker};
 
@@ -26,7 +25,7 @@ impl<'src> TypeChecker<'src> {
                 type_info,
             } => {
                 let declared_type = self
-                    .resolver
+                    .res()
                     .resolve(type_info)
                     .ok_log(&mut self.errors)
                     .unwrap_or(Type::Error);
@@ -208,21 +207,22 @@ impl<'src> TypeChecker<'src> {
                 signature,
                 generics,
             } => {
-                let guard = TypeScopeGuard::new(self, generics).expect("Invalid generics");
-                let func_type = guard.resolver.resolve_func(signature, generics).recover(
-                    &mut self.errors,
+                let mut guard = ScopeGuard::new_type_block(self, generics);
+                let func_type = guard.res().resolve_func(signature, generics).recover(
+                    &mut guard.errors,
                     Type::new_function(vec![], Type::Void, vec![]),
                 );
 
+                let res = guard
+                    .check_function(name, signature, body, func_type.clone(), name.lexeme.into())
+                    .recover(&mut guard.errors, TypedStmt::new_blank(stmt.span()));
+                drop(guard);
+
                 if !self.scopes.is_global() {
                     self.scopes
-                        .declare(name.lexeme.into(), func_type.clone(), name.span)
+                        .declare(name.lexeme.into(), func_type, name.span)
                         .ok_log(&mut self.errors);
                 }
-
-                let res = self
-                    .check_function(name, params, body, func_type, name.lexeme.into())
-                    .recover(&mut self.errors, TypedStmt::new_blank(stmt.span()));
                 res
             }
             Stmt::Return { value, keyword } => {

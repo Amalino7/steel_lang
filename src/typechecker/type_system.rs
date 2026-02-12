@@ -168,6 +168,37 @@ impl TypeSystem {
     pub fn get_primitive(&self, name: &str) -> Option<&Type> {
         self.primitives.get(name)
     }
+
+    pub fn get_generic_count_by_name(&self, name: &str) -> usize {
+        if let Some(s) = self.structs.get(name) {
+            s.generic_params.len()
+        } else if self.interfaces.contains_key(name) {
+            0
+        } else if let Some(e) = self.enums.get(name) {
+            e.generic_params.len()
+        } else if name == "List" {
+            1
+        } else if name == "Map" {
+            2
+        } else {
+            0
+        }
+    }
+    // TODO rethink logic
+    pub fn get_owned_name(&self, name: &str) -> Option<Symbol> {
+        Some(if let Some(s) = self.structs.get(name) {
+            s.name.clone()
+        } else if let Some(e) = self.enums.get(name) {
+            e.name.clone()
+        } else if let Some(i) = self.interfaces.get(name) {
+            i.name.clone()
+        } else if let Some(p) = self.primitives.get_key_value(name) {
+            p.0.clone()
+        } else {
+            return None;
+        })
+    }
+
     pub fn get_generic_count(&self, ty: &Type) -> usize {
         match ty {
             Type::Struct(_, args) => args.len(),

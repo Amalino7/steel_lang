@@ -50,8 +50,8 @@ impl<'src> TypeChecker<'src> {
                 if let ExprKind::GetVar(_, name) = &target.kind
                     && let Type::Enum(enum_name, _) = &target.ty
                 {
-                    let enum_def = self.sys().get_enum(enum_name).unwrap();
-                    let generics_map = self.sys().get_generics_map(&target.ty);
+                    let enum_def = self.sys.get_enum(enum_name).unwrap();
+                    let generics_map = self.sys.get_generics_map(&target.ty);
                     let false_path = if enum_def.variants.len() == 2 {
                         let (_, other_ty) = enum_def
                             .ordered_variants

@@ -2,7 +2,7 @@ use crate::parser::ast::{CallArg, Expr, Literal};
 use crate::scanner::{Span, Token};
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::type_ast::{ExprKind, TypedExpr};
-use crate::typechecker::type_system_old::{generics_to_map, TySys, TypeSystem};
+use crate::typechecker::type_system::{generics_to_map, TypeSystem};
 use crate::typechecker::types::{GenericArgs, TupleType, Type};
 use crate::typechecker::{Symbol, TypeChecker};
 use std::collections::HashMap;
@@ -76,7 +76,7 @@ impl<'src> TypeChecker<'src> {
          -> Result<Vec<TypedExpr>, TypeCheckerError> {
             let concrete_params: Vec<(String, Type)> = raw_params
                 .into_iter()
-                .map(|(name, ty)| (name, TySys::generic_to_concrete(ty, map)))
+                .map(|(name, ty)| (name, ty.generic_to_concrete(map)))
                 .collect();
 
             this.bind_arguments(span, &concrete_params, inferred_args, false)
@@ -93,7 +93,7 @@ impl<'src> TypeChecker<'src> {
                 let concrete_struct_generics = struct_def
                     .generic_params
                     .iter()
-                    .map(|t| TySys::generic_to_concrete(Type::GenericParam(t.clone()), map))
+                    .map(|t| Type::GenericParam(t.clone()).generic_to_concrete(map))
                     .collect::<Vec<_>>();
 
                 let params = struct_def.ordered_fields.clone();
@@ -123,7 +123,7 @@ impl<'src> TypeChecker<'src> {
                 let concrete_tuple_types = tuple_types
                     .types
                     .iter()
-                    .map(|t| TySys::generic_to_concrete(t.clone(), map))
+                    .map(|t| t.clone().generic_to_concrete(map))
                     .collect::<Vec<_>>();
 
                 TypedExpr {
@@ -179,7 +179,7 @@ impl<'src> TypeChecker<'src> {
         } else {
             HashMap::new()
         };
-        let ty = TypeSystem::generic_to_concrete(ctx.type_info.clone(), &pairs);
+        let ty = ctx.type_info.clone().generic_to_concrete(&pairs);
         Ok(TypedExpr {
             ty,
             kind: ExprKind::GetVar(resolved_var, ctx.name.clone()),
@@ -196,7 +196,7 @@ impl<'src> TypeChecker<'src> {
             .ty
             .unwrap_optional_safe(is_safe, member_token.span)?;
 
-        if let Ok((idx, field_type)) = self.sys.resolve_member_type(&actual_ty, member_token) {
+        if let Ok((idx, field_type)) = resolve_member_type(&actual_ty, member_token, &self.sys) {
             let mut expr = TypedExpr {
                 ty: field_type,
                 span: object_typed.span.merge(member_token.span),
@@ -298,8 +298,7 @@ impl<'src> TypeChecker<'src> {
         let generics_map = self.sys.get_generics_map(&obj_type);
         let mut method_ty = match &ctx.type_info {
             Type::Function(func) => {
-                let expected_self =
-                    TypeSystem::generic_to_concrete(func.params[0].1.clone(), &generics_map);
+                let expected_self = func.params[0].1.clone().generic_to_concrete(&generics_map);
                 self.infer_ctx
                     .unify_types(&obj_type, &expected_self)
                     .map_err(|msg| TypeCheckerError::ComplexTypeMismatch {
@@ -313,15 +312,10 @@ impl<'src> TypeChecker<'src> {
                     .params
                     .iter()
                     .skip(1) // skip self
-                    .map(|(name, ty)| {
-                        (
-                            name.clone(),
-                            TypeSystem::generic_to_concrete(ty.clone(), &generics_map),
-                        )
-                    })
+                    .map(|(name, ty)| (name.clone(), ty.clone().generic_to_concrete(&generics_map)))
                     .collect();
 
-                let ret = TypeSystem::generic_to_concrete(func.return_type.clone(), &generics_map);
+                let ret = func.return_type.clone().generic_to_concrete(&generics_map);
 
                 let remaining_generics = func
                     .type_params
@@ -362,7 +356,63 @@ impl<'src> TypeChecker<'src> {
         let object_typed = self.check_expression(object_expr, &Type::Unknown)?;
         let parent_type = object_typed.ty.unwrap_optional_safe(safe, field.span)?;
 
-        let (index, field_type) = self.sys.resolve_member_type(&parent_type, field)?;
+        let (index, field_type) = resolve_member_type(&parent_type, field, &self.sys)?;
         callback(self, object_typed, index, field_type)
+    }
+}
+
+pub(crate) fn resolve_member_type(
+    parent_type: &Type,
+    field: &Token,
+    sys: &TypeSystem,
+) -> Result<(u8, Type), TypeCheckerError> {
+    match parent_type {
+        Type::Tuple(tuple_type) => {
+            let idx =
+                field
+                    .lexeme
+                    .parse::<u8>()
+                    .map_err(|_| TypeCheckerError::InvalidTupleIndex {
+                        tuple_type: parent_type.clone(),
+                        index: field.lexeme.to_string(),
+                        span: field.span,
+                    })?;
+
+            if idx as usize >= tuple_type.types.len() {
+                return Err(TypeCheckerError::InvalidTupleIndex {
+                    tuple_type: parent_type.clone(),
+                    index: idx.to_string(),
+                    span: field.span,
+                });
+            }
+
+            Ok((idx, tuple_type.types[idx as usize].clone()))
+        }
+        Type::Struct(name, generics) => {
+            let struct_def = sys
+                .get_struct(name)
+                .expect("Struct def missing after type check");
+
+            let (field_id, raw_type) = struct_def
+                .fields
+                .get(field.lexeme)
+                .map(|id| (*id, struct_def.ordered_fields[*id].1.clone()))
+                .ok_or_else(|| TypeCheckerError::UndefinedField {
+                    struct_name: struct_def.name.to_string(),
+                    field_name: field.lexeme.to_string(),
+                    span: field.span,
+                })?;
+            let concrete_type = raw_type.generic_to_concrete(&generics_to_map(
+                &struct_def.generic_params,
+                generics,
+                None,
+            ));
+
+            Ok((field_id as u8, concrete_type))
+        }
+        _ => Err(TypeCheckerError::TypeHasNoFields {
+            found: parent_type.clone(),
+            span: field.span,
+        }),
     }
 }

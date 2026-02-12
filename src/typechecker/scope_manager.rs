@@ -1,9 +1,9 @@
 use crate::compiler::analysis::ResolvedVar;
-use crate::scanner::Span;
+use crate::scanner::{Span, Token};
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::types::Type;
 use crate::typechecker::{Symbol, TypeChecker};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Clone)]
 pub struct VariableContext {
@@ -29,6 +29,11 @@ impl VariableContext {
 #[derive(Debug, PartialEq, Clone)]
 pub enum ScopeType {
     Global,
+    /// Adds Self type
+    ImplBlock,
+    TypeBlock {
+        generic_count: usize,
+    },
     Function,
     Block,
 }
@@ -42,12 +47,26 @@ struct Scope {
 pub struct ScopeManager {
     scopes: Vec<Scope>,
     closures: Vec<Symbol>,
+    self_type: Option<Type>,
+    generics: HashSet<Symbol>,
+    generics_raw: Vec<Symbol>,
 }
+
 pub struct ScopeGuard<'a, 'src>(&'a mut TypeChecker<'src>);
 
 impl<'a, 'src> ScopeGuard<'a, 'src> {
     pub fn new(checker: &'a mut TypeChecker<'src>, scope_type: ScopeType) -> Self {
         checker.scopes.begin_scope(scope_type);
+        ScopeGuard(checker)
+    }
+
+    pub fn new_impl(checker: &'a mut TypeChecker<'src>, self_ty: Type) -> Self {
+        checker.scopes.begin_impl_block(self_ty);
+        ScopeGuard(checker)
+    }
+    pub fn new_type_block(checker: &'a mut TypeChecker<'src>, generics: &[Token<'src>]) -> Self {
+        let resolved_generics = generics.iter().map(|s| s.lexeme.into()).collect::<Vec<_>>();
+        checker.scopes.begin_type_block(&resolved_generics);
         ScopeGuard(checker)
     }
 }
@@ -75,7 +94,30 @@ impl ScopeManager {
         Self {
             scopes: vec![],
             closures: vec![],
+            self_type: None,
+            generics: HashSet::new(),
+            generics_raw: Vec::new(),
         }
+    }
+
+    pub fn get_self_type(&self) -> Option<&Type> {
+        self.self_type.as_ref()
+    }
+    pub fn get_generics(&self) -> &HashSet<Symbol> {
+        &self.generics
+    }
+
+    pub fn begin_impl_block(&mut self, self_type: Type) {
+        self.self_type = Some(self_type);
+    }
+
+    pub(crate) fn begin_type_block(&mut self, generics: &[Symbol]) {
+        // TODO redeclaration error
+        self.generics_raw.extend(generics.iter().cloned());
+        self.generics.extend(generics.iter().cloned());
+        self.begin_scope(ScopeType::TypeBlock {
+            generic_count: generics.len(),
+        });
     }
 
     pub fn begin_scope(&mut self, scope_type: ScopeType) {
@@ -91,7 +133,7 @@ impl ScopeManager {
             })
             .unwrap_or(0);
 
-        if scope_type == ScopeType::Function {
+        if matches!(scope_type, ScopeType::Function { .. }) {
             last_idx = 0;
         }
 
@@ -113,6 +155,20 @@ impl ScopeManager {
 
     pub fn end_scope(&mut self) -> usize {
         let finished_scope = self.scopes.pop().expect("No scope to end");
+        match finished_scope.scope_type {
+            ScopeType::ImplBlock => {
+                self.self_type = None;
+            }
+            ScopeType::TypeBlock { generic_count } => {
+                for _ in self.generics_raw.len() - generic_count..self.generics_raw.len() {
+                    self.generics.remove(&self.generics_raw.pop().unwrap());
+                }
+            }
+            ScopeType::Function => {}
+            ScopeType::Block => {}
+            ScopeType::Global => {}
+        }
+
         let max = finished_scope.max_index;
         if let Some(parent) = self.scopes.last_mut()
             && parent.scope_type != ScopeType::Global
@@ -121,6 +177,9 @@ impl ScopeManager {
         }
 
         max
+    }
+    pub fn max_index(&self) -> usize {
+        self.scopes.last().map(|s| s.max_index).unwrap_or(0)
     }
 
     pub fn declare(
@@ -164,7 +223,7 @@ impl ScopeManager {
                 return Some((ctx, resolved));
             }
 
-            if scope.scope_type == ScopeType::Function {
+            if matches!(scope.scope_type, ScopeType::Function) {
                 is_closure = true;
             }
         }

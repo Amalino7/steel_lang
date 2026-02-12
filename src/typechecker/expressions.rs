@@ -23,7 +23,7 @@ impl<'src> TypeChecker<'src> {
                 generics: generics_provided,
             } => {
                 let mut callee_typed = self.check_expression(callee, &Type::Unknown)?;
-                let generic_args = self.resolver.resolve_many(generics_provided)?;
+                let generic_args = self.res().resolve_many(generics_provided)?;
                 match &mut callee_typed.ty {
                     Type::Function(func) => {
                         if func.type_params.len() != generic_args.len() {
@@ -56,7 +56,7 @@ impl<'src> TypeChecker<'src> {
                                 message: "Cannot specialize generic more than once!".to_string(),
                             });
                         }
-                        let actual_generic_count = self.sys().get_generic_count(type_name);
+                        let actual_generic_count = self.sys.get_generic_count_by_name(type_name);
                         if generic_args.len() != actual_generic_count {
                             Err(TypeCheckerError::InvalidGenericSpecification {
                                 span: callee_typed.span,
@@ -90,7 +90,7 @@ impl<'src> TypeChecker<'src> {
                     });
                 };
                 let enum_def = self
-                    .sys()
+                    .sys
                     .get_enum(enum_name.as_ref())
                     .expect("Invalid enum Type return!");
 
@@ -145,7 +145,7 @@ impl<'src> TypeChecker<'src> {
                 if let Type::Enum(name, instance) = &mut typed_expr.ty
                     && name.as_ref() == "Result"
                 {
-                    let enum_def = self.sys().get_enum(name.as_ref()).unwrap();
+                    let enum_def = self.sys.get_enum(name.as_ref()).unwrap();
                     let map = generics_to_map(&enum_def.generic_params, instance, None);
                     let ok_type = enum_def.ordered_variants[0]
                         .1
@@ -210,7 +210,7 @@ impl<'src> TypeChecker<'src> {
                         kind: ExprKind::GetVar(resolved, ctx.name.clone()),
                         span: name.span,
                     })
-                } else if let Some(type_name) = self.sys().get_owned_type_name(name.lexeme) {
+                } else if let Some(type_name) = self.sys.get_owned_name(name.lexeme) {
                     Ok(TypedExpr {
                         ty: Type::Metatype(type_name.clone(), vec![].into()),
                         kind: ExprKind::GetVar(Global(0), type_name),
@@ -347,7 +347,7 @@ impl<'src> TypeChecker<'src> {
                 let mut callee_typed = self.check_expression(callee, &Type::Unknown)?;
                 // Handle Struct constructor
                 if let Type::Metatype(name, generics) = &callee_typed.ty
-                    && let Some(struct_def) = self.sys().get_struct(name)
+                    && let Some(struct_def) = self.sys.get_struct(name)
                 {
                     let map: HashMap<Symbol, Type> = generics_to_map(
                         &struct_def.generic_params,
@@ -385,7 +385,7 @@ impl<'src> TypeChecker<'src> {
                 }
 
                 if let Type::Metatype(name, generics) = &callee_typed.ty
-                    && let Some(enum_def) = self.sys().get_enum(name)
+                    && let Some(enum_def) = self.sys.get_enum(name)
                     && let ExprKind::EnumInit {
                         variant_idx, value, ..
                     } = &mut callee_typed.kind
@@ -687,7 +687,8 @@ impl<'src> TypeChecker<'src> {
         expected: &Type,
     ) -> Result<TypedExpr, TypeCheckerError> {
         let mut expr = self.check_expression(expr, expected)?;
-        if self.infer_ctx.unify_types(expected, &expr.ty).is_ok() {
+        let res = self.infer_ctx.unify_types(expected, &expr.ty);
+        if res.is_ok() {
             let expr_ty = self.infer_ctx.substitute(&expr.ty);
             return if expr_ty.is_concrete() {
                 expr.ty = expr_ty;
@@ -708,7 +709,7 @@ impl<'src> TypeChecker<'src> {
 
         if let (Type::Interface(iface_name, generics), Some(name)) =
             (expected_type, expr.ty.get_name())
-            && let Some(idx) = self.sys().get_vtable_idx(name, iface_name.clone())
+            && let Some(idx) = self.sys.get_vtable_idx(name, iface_name.clone())
         {
             return Ok(TypedExpr {
                 ty: Type::Interface(iface_name.clone(), generics.clone()),
@@ -720,14 +721,12 @@ impl<'src> TypeChecker<'src> {
             });
         }
 
-        self.infer_ctx
-            .unify_types(expected, &expr.ty)
-            .map_err(|msg| TypeCheckerError::ComplexTypeMismatch {
-                expected: self.infer_ctx.substitute(expected),
-                span: expr.span,
-                message: msg.into(),
-                found: expr.ty.clone(),
-            })
-            .map(|_| expr)
+        res.map_err(|msg| TypeCheckerError::ComplexTypeMismatch {
+            expected: self.infer_ctx.substitute(expected),
+            span: expr.span,
+            message: msg.into(),
+            found: expr.ty.clone(),
+        })
+        .map(|_| expr)
     }
 }

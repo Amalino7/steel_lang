@@ -26,7 +26,7 @@ impl<'src> TypeChecker<'src> {
                 Some(name) => {
                     seen_named = true;
 
-                    let idx = self.sys.resolve_named_arg(params, name.lexeme, name.span)?;
+                    let idx = resolve_named_arg(params, name.lexeme, name.span)?;
 
                     if used[idx] {
                         return Err(TypeCheckerError::DuplicateArgument {
@@ -90,4 +90,17 @@ impl<'src> TypeChecker<'src> {
         result.extend(extras);
         Ok(result)
     }
+}
+fn resolve_named_arg(
+    params: &[(String, Type)],
+    name: &str,
+    span: Span,
+) -> Result<usize, TypeCheckerError> {
+    params
+        .iter()
+        .position(|(pname, _)| pname == name)
+        .ok_or_else(|| TypeCheckerError::UndefinedParameter {
+            param_name: name.to_string(),
+            span,
+        })
 }

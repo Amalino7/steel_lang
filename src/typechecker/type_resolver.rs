@@ -1,10 +1,10 @@
 use crate::parser::ast::{FunctionSig, TypeAst};
 use crate::scanner::Token;
 use crate::typechecker::error::TypeCheckerError;
+use crate::typechecker::scope_manager::ScopeManager;
 use crate::typechecker::type_system::TypeSystem;
 use crate::typechecker::types::{TupleType, Type};
 use crate::typechecker::{Symbol, TypeChecker};
-use std::collections::HashSet;
 use std::rc::Rc;
 
 pub struct TypeScopeGuard<'a, 'src> {
@@ -12,91 +12,17 @@ pub struct TypeScopeGuard<'a, 'src> {
     generics: Vec<Symbol>,
     has_self_type: bool,
 }
-/// Duplicate generic definition.
-type TypeResolverError = Symbol;
-
-impl<'a, 'src> TypeScopeGuard<'a, 'src> {
-    pub fn new(
-        checker: &'a mut TypeChecker<'src>,
-        generics: &[Token],
-    ) -> Result<Self, TypeResolverError> {
-        let mut symbol_generic = vec![];
-        for generic in generics.iter() {
-            if checker.resolver.generics.contains(generic.lexeme) {
-                return Err(generic.lexeme.into());
-            }
-            symbol_generic.push(generic.lexeme.into())
-        }
-        checker.resolver.generics.extend(symbol_generic.clone());
-        Ok(TypeScopeGuard {
-            type_checker: checker,
-            generics: symbol_generic,
-            has_self_type: false,
-        })
-    }
-    pub fn new_impl_scope(
-        checker: &'a mut TypeChecker<'src>,
-        generics: &[Token],
-        self_type: Type,
-    ) -> Result<Self, TypeResolverError> {
-        let mut symbol_generic = vec![];
-        for generic in generics.iter() {
-            if checker.resolver.generics.contains(generic.lexeme) {
-                return Err(generic.lexeme.into());
-            }
-            symbol_generic.push(generic.lexeme.into())
-        }
-        checker.resolver.generics.extend(symbol_generic.clone());
-        checker.resolver.self_type = Some(self_type);
-        Ok(TypeScopeGuard {
-            type_checker: checker,
-            generics: symbol_generic,
-            has_self_type: true,
-        })
-    }
-}
-impl<'a> Drop for TypeScopeGuard<'a, '_> {
-    fn drop(&mut self) {
-        for generic in self.generics.iter() {
-            self.type_checker.resolver.generics.remove(generic);
-        }
-        if self.has_self_type {
-            self.type_checker.resolver.self_type = None;
-        }
-    }
+pub struct TypeResolver<'a> {
+    sys: &'a TypeSystem,
+    scope_manager: &'a ScopeManager,
 }
 
-impl<'a, 'src> std::ops::Deref for TypeScopeGuard<'a, 'src> {
-    type Target = TypeChecker<'src>;
-    fn deref(&self) -> &Self::Target {
-        &self.type_checker
-    }
-}
-
-impl<'a, 'src> std::ops::DerefMut for TypeScopeGuard<'a, 'src> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.type_checker
-    }
-}
-pub struct TypeResolver {
-    pub sys: TypeSystem,
-    generics: HashSet<Symbol>,
-    self_type: Option<Type>,
-}
-
-impl TypeResolver {
-    pub fn new(sys: TypeSystem) -> Self {
+impl<'a> TypeResolver<'a> {
+    pub fn new(sys: &'a TypeSystem, scope: &'a ScopeManager) -> Self {
         Self {
             sys,
-            generics: HashSet::new(),
-            self_type: None,
+            scope_manager: scope,
         }
-    }
-    pub fn get_generics(&self) -> &HashSet<Symbol> {
-        &self.generics
-    }
-    pub fn get_self_type(&self) -> Option<&Type> {
-        self.self_type.as_ref()
     }
 
     pub fn resolve(&self, ast: &TypeAst<'_>) -> Result<Type, TypeCheckerError> {
@@ -123,11 +49,12 @@ impl TypeResolver {
         let name = token.lexeme;
         if name == "Self" {
             return self
-                .self_type
-                .clone()
+                .scope_manager
+                .get_self_type()
+                .cloned()
                 .ok_or(TypeCheckerError::SelfOutsideOfImpl { span: token.span });
         }
-        if let Some(name) = self.generics.get(name) {
+        if let Some(name) = self.scope_manager.get_generics().get(name) {
             return Ok(Type::GenericParam(name.clone()));
         }
         let resolved_generics = self.resolve_many(generics)?;
