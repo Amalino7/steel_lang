@@ -167,15 +167,22 @@ impl<'a> Compiler<'a> {
                 }
             }
             StmtKind::Function {
-                reserved,
                 target,
                 name,
-                body,
-                captures,
-                ..
+                function_decl,
             } => {
                 let line = stmt.span.line;
                 let func_compiler = Compiler::new(name.to_string(), self.gc);
+
+                let ExprKind::Function {
+                    reserved,
+                    body,
+                    captures,
+                    ..
+                } = &function_decl.kind
+                else {
+                    return;
+                };
 
                 let compiled_fn = func_compiler.compile(*reserved, body);
                 let constant = Value::Function(self.gc.alloc(compiled_fn));
@@ -342,6 +349,9 @@ impl<'a> Compiler<'a> {
     fn compile_expr(&mut self, expr: &TypedExpr) {
         let line = expr.span.line;
         match &expr.kind {
+            ExprKind::Function { .. } => {
+                todo!("When lambdas get added")
+            }
             ExprKind::NoOp => {}
             ExprKind::Binary {
                 left,

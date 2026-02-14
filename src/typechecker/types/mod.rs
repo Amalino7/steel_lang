@@ -8,11 +8,19 @@ use std::rc::Rc;
 
 #[derive(Debug, Clone)]
 pub struct FunctionType {
-    pub is_static: bool,
     pub is_vararg: bool,
     pub params: Vec<(String, Type)>,
     pub return_type: Type,
     pub type_params: Vec<Symbol>,
+}
+
+impl FunctionType {
+    pub fn is_static(&self) -> bool {
+        self.params
+            .first()
+            .map(|param| param.0 != "self")
+            .unwrap_or(true)
+    }
 }
 
 impl PartialEq for FunctionType {
@@ -169,7 +177,6 @@ impl Type {
         type_params: Vec<Symbol>,
     ) -> Type {
         Type::Function(Rc::new(FunctionType {
-            is_static: true,
             is_vararg: false,
             params,
             return_type,
@@ -179,7 +186,6 @@ impl Type {
 
     pub fn new_vararg(param_types: Vec<Type>, return_type: Type) -> Type {
         Type::Function(Rc::new(FunctionType {
-            is_static: true,
             is_vararg: true,
             params: param_types
                 .into_iter()

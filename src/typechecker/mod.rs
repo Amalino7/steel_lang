@@ -3,11 +3,12 @@ use crate::scanner::Span;
 use crate::stdlib::NativeDef;
 use crate::typechecker::error::TypeCheckerError;
 use crate::typechecker::inference::InferenceContext;
-use crate::typechecker::scope_manager::{ScopeManager, ScopeType};
+use crate::typechecker::scope::variables::Declaration;
 use crate::typechecker::type_ast::{StmtKind, TypedStmt};
 use crate::typechecker::type_resolver::TypeResolver;
 use crate::typechecker::type_system::TypeSystem;
 use crate::typechecker::types::Type;
+use scope::scope_manager::{ScopeKind, ScopeManager};
 use std::mem::take;
 use std::rc::Rc;
 
@@ -21,7 +22,7 @@ mod operators;
 mod pattern_matching;
 mod refinements;
 mod return_analysis;
-mod scope_manager;
+mod scope;
 mod statements;
 mod tests;
 pub mod type_ast;
@@ -64,7 +65,7 @@ impl<'src> TypeChecker<'src> {
     }
 
     pub fn check(&mut self, ast: &[Stmt<'src>]) -> Result<TypedStmt, Vec<TypeCheckerError>> {
-        self.scopes.begin_scope(ScopeType::Global);
+        self.scopes.begin_scope(ScopeKind::Global);
         let mut typed_ast = vec![];
 
         self.register_globals(self.natives);
@@ -102,8 +103,10 @@ impl<'src> TypeChecker<'src> {
 
     fn register_globals(&mut self, natives: &[NativeDef]) {
         for native in natives.iter() {
+            let decl =
+                Declaration::function(native.name.into(), native.type_.clone(), Span::default());
             self.scopes
-                .declare(native.name.into(), native.type_.clone(), Span::default())
+                .declare(decl)
                 .expect("Failed to register global");
         }
     }

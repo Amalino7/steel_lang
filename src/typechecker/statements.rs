@@ -1,6 +1,8 @@
 use crate::parser::ast::Stmt;
 use crate::typechecker::error::{Recoverable, TypeCheckerError};
-use crate::typechecker::scope_manager::{ScopeGuard, ScopeType};
+use crate::typechecker::scope::guard::ScopeGuard;
+use crate::typechecker::scope::scope_manager::ScopeKind;
+use crate::typechecker::scope::variables::Declaration;
 use crate::typechecker::type_ast::{StmtKind, TypedExpr, TypedRefinements, TypedStmt};
 use crate::typechecker::types::Type;
 use crate::typechecker::{FunctionContext, TypeChecker};
@@ -66,7 +68,7 @@ impl<'src> TypeChecker<'src> {
                 generics,
             } => self.define_impl(impl_block, interfaces, name, methods, generics),
             Stmt::Block { body, brace_token } => {
-                let mut scope = ScopeGuard::new(self, ScopeType::Block);
+                let mut scope = ScopeGuard::new(self, ScopeKind::Block);
                 let stmts = body
                     .iter()
                     .map(|stmt| scope.check_stmt(stmt))
@@ -110,7 +112,7 @@ impl<'src> TypeChecker<'src> {
                     else_path: vec![],
                     after_path: vec![],
                 };
-                let mut scope = ScopeGuard::new(self, ScopeType::Block);
+                let mut scope = ScopeGuard::new(self, ScopeKind::Block);
                 for (name, ty) in refinements.true_path.iter() {
                     if let Some(case) = scope.scopes.refine(name, ty.clone()) {
                         typed_refinements.true_path.push(case)
@@ -120,7 +122,7 @@ impl<'src> TypeChecker<'src> {
                 drop(scope);
 
                 let else_branch_typed = if let Some(else_branch) = else_branch {
-                    let mut scope = ScopeGuard::new(self, ScopeType::Block);
+                    let mut scope = ScopeGuard::new(self, ScopeKind::Block);
                     for (name, ty) in refinements.false_path.iter() {
                         if let Some(case) = scope.scopes.refine(name, ty.clone()) {
                             typed_refinements.else_path.push(case)
@@ -181,7 +183,7 @@ impl<'src> TypeChecker<'src> {
                 }
 
                 let refinements = self.analyze_condition(&cond_typed);
-                let mut scope = ScopeGuard::new(self, ScopeType::Block);
+                let mut scope = ScopeGuard::new(self, ScopeKind::Block);
                 let mut true_path = vec![];
                 for (name, ty) in refinements.true_path.iter() {
                     if let Some(case) = scope.scopes.refine(name, ty.clone()) {
@@ -207,23 +209,26 @@ impl<'src> TypeChecker<'src> {
                 signature,
                 generics,
             } => {
-                let mut guard = ScopeGuard::new_type_block(self, generics);
-                let func_type = guard.res().resolve_func(signature, generics).recover(
-                    &mut guard.errors,
-                    Type::new_function(vec![], Type::Void, vec![]),
-                );
-
-                let res = guard
-                    .check_function(name, signature, body, func_type.clone(), name.lexeme.into())
-                    .recover(&mut guard.errors, TypedStmt::new_blank(stmt.span()));
-                drop(guard);
-
+                let res = self
+                    .check_function(name, signature, body, generics)
+                    .recover(&mut self.errors, TypedExpr::new_blank(stmt.span()));
                 if !self.scopes.is_global() {
-                    self.scopes
-                        .declare(name.lexeme.into(), func_type, name.span)
-                        .ok_log(&mut self.errors);
+                    let decl = Declaration::function(name.lexeme.into(), res.ty.clone(), name.span);
+                    self.scopes.declare(decl).ok_log(&mut self.errors);
                 }
-                res
+                let func = self
+                    .scopes
+                    .lookup(name.lexeme)
+                    .expect("Function should have been declared!");
+                TypedStmt {
+                    span: res.span,
+                    type_info: Type::Void,
+                    kind: StmtKind::Function {
+                        name: name.lexeme.into(),
+                        target: func.1,
+                        function_decl: res,
+                    },
+                }
             }
             Stmt::Return { value, keyword } => {
                 if let FunctionContext::Function(func_return_type, func_span) =

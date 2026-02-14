@@ -184,7 +184,7 @@ impl TypeSystem {
             0
         }
     }
-    // TODO rethink logic
+    // TODO rethink logic, missing generics
     pub fn get_owned_name(&self, name: &str) -> Option<Symbol> {
         Some(if let Some(s) = self.structs.get(name) {
             s.name.clone()

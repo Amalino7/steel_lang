@@ -1,6 +1,6 @@
 use crate::scanner::Span;
 use crate::typechecker::error::TypeCheckerError;
-use crate::typechecker::type_ast::{MatchCase, StmtKind, TypedStmt};
+use crate::typechecker::type_ast::{ExprKind, MatchCase, StmtKind, TypedStmt};
 use crate::typechecker::types::Type;
 use crate::typechecker::TypeChecker;
 
@@ -43,11 +43,17 @@ impl<'src> TypeChecker<'src> {
             StmtKind::While { body, .. } => self.check_stmt_returns(body),
             StmtKind::Function {
                 name,
-                body,
-                signature,
+                function_decl,
                 ..
             } => {
-                let return_type = if let Type::Function(func) = &stmt.type_info {
+                let ExprKind::Function {
+                    signature, body, ..
+                } = &function_decl.kind
+                else {
+                    return Ok(());
+                };
+
+                let return_type = if let Type::Function(func) = &function_decl.ty {
                     func.return_type.clone()
                 } else {
                     unreachable!()

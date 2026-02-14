@@ -1,6 +1,7 @@
 use crate::parser::ast::{Binding, Expr, MatchArm, Pattern};
 use crate::typechecker::error::TypeCheckerError;
-use crate::typechecker::scope_manager::ScopeType;
+use crate::typechecker::scope::scope_manager::ScopeKind;
+use crate::typechecker::scope::variables::Declaration;
 use crate::typechecker::type_ast::{MatchCase, StmtKind, TypedBinding, TypedExpr, TypedStmt};
 use crate::typechecker::type_system::generics_to_map;
 use crate::typechecker::types::{EnumType, TupleType, Type};
@@ -118,7 +119,7 @@ impl<'src> TypeChecker<'src> {
 
                 let payload_type = field_types;
 
-                self.scopes.begin_scope(ScopeType::Block);
+                self.scopes.begin_scope(ScopeKind::Block);
                 let typed_binding = if let Some(binding) = &bind {
                     self.check_binding(binding, &payload_type)?
                 } else {
@@ -144,7 +145,7 @@ impl<'src> TypeChecker<'src> {
                 Ok(())
             }
             Pattern::Variable(name) => {
-                self.scopes.begin_scope(ScopeType::Block);
+                self.scopes.begin_scope(ScopeKind::Block);
                 let typed_binding =
                     self.check_binding(&Binding::Variable(name.clone()), &value_typed.ty)?;
                 let typed_body = self.check_stmt(&arm.body);
@@ -252,8 +253,9 @@ impl<'src> TypeChecker<'src> {
                 if token.lexeme == "_" {
                     return Ok(TypedBinding::Ignored);
                 }
-                self.scopes
-                    .declare(token.lexeme.into(), type_to_match.clone(), token.span)?;
+                let decl =
+                    Declaration::variable(token.lexeme.into(), type_to_match.clone(), token.span);
+                self.scopes.declare(decl)?;
                 let (_, resolved) = self.scopes.lookup(token.lexeme).unwrap();
                 Ok(TypedBinding::Variable(resolved))
             }

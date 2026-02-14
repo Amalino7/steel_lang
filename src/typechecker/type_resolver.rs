@@ -1,9 +1,9 @@
 use crate::parser::ast::{FunctionSig, TypeAst};
 use crate::scanner::Token;
 use crate::typechecker::error::TypeCheckerError;
-use crate::typechecker::scope_manager::ScopeManager;
+use crate::typechecker::scope::scope_manager::ScopeManager;
 use crate::typechecker::type_system::TypeSystem;
-use crate::typechecker::types::{TupleType, Type};
+use crate::typechecker::types::{FunctionType, TupleType, Type};
 use crate::typechecker::{Symbol, TypeChecker};
 use std::rc::Rc;
 
@@ -29,7 +29,7 @@ impl<'a> TypeResolver<'a> {
         match ast {
             TypeAst::Optional(inner) => Ok(self.resolve(inner)?.wrap_in_optional()),
             TypeAst::Named(name, generics) => self.resolve_named(name, generics),
-            TypeAst::Function(sig) => self.resolve_func(sig, &[]),
+            TypeAst::Function(sig) => self.resolve_func(sig, vec![]).map(Type::Function),
             TypeAst::Tuple(param) => self.resolve_tuple(param),
             TypeAst::Infer => Ok(Type::Unknown),
         }
@@ -54,7 +54,7 @@ impl<'a> TypeResolver<'a> {
                 .cloned()
                 .ok_or(TypeCheckerError::SelfOutsideOfImpl { span: token.span });
         }
-        if let Some(name) = self.scope_manager.get_generics().get(name) {
+        if let Some(name) = self.scope_manager.is_generic(name) {
             return Ok(Type::GenericParam(name.clone()));
         }
         let resolved_generics = self.resolve_many(generics)?;
@@ -63,7 +63,10 @@ impl<'a> TypeResolver<'a> {
     }
 
     pub fn resolve_tuple(&self, params: &[TypeAst<'_>]) -> Result<Type, TypeCheckerError> {
-        let types = self.resolve_many(params)?;
+        let mut types = self.resolve_many(params)?;
+        if types.len() == 1 {
+            return Ok(types.pop().unwrap());
+        }
         Ok(Type::Tuple(Rc::new(TupleType { types })))
     }
 
@@ -73,17 +76,20 @@ impl<'a> TypeResolver<'a> {
     pub fn resolve_func(
         &self,
         signature: &FunctionSig<'_>,
-        generics: &[Token],
-    ) -> Result<Type, TypeCheckerError> {
+        active_generics: Vec<Symbol>,
+    ) -> Result<Rc<FunctionType>, TypeCheckerError> {
         let params = signature
             .params
             .iter()
             .map(|(name, ty)| Ok((name.lexeme.to_string(), self.resolve(ty)?)))
             .collect::<Result<Vec<_>, _>>()?;
 
-        let generics = generics.iter().map(|s| s.lexeme.into()).collect();
-
         let return_type = self.resolve(&signature.return_type)?;
-        Ok(Type::new_function(params, return_type, generics))
+        Ok(Rc::new(FunctionType {
+            is_vararg: false,
+            params,
+            return_type,
+            type_params: active_generics,
+        }))
     }
 }

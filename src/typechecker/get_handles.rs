@@ -287,7 +287,7 @@ impl<'src> TypeChecker<'src> {
                 })?;
 
         if let Type::Function(func) = &ctx.type_info
-            && func.is_static
+            && func.is_static()
         {
             return Err(TypeCheckerError::StaticMethodOnInstance {
                 method_name: method_token.lexeme.to_string(),

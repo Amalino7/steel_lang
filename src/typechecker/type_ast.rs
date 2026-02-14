@@ -4,7 +4,7 @@ use crate::scanner::Span;
 use crate::typechecker::types::Type;
 use crate::typechecker::Symbol;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct TypedExpr {
     pub ty: Type,
     pub kind: ExprKind,
@@ -46,7 +46,7 @@ pub enum BinaryOp {
     EqualEqualString,
     EqualEqual,
 }
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum ExprKind {
     Literal(Literal),
     GetVar(ResolvedVar, Symbol),
@@ -133,6 +133,12 @@ pub enum ExprKind {
         arguments: Vec<TypedExpr>,
         safe: bool,
     },
+    Function {
+        reserved: u8,
+        signature: Span,
+        body: Box<TypedStmt>,
+        captures: Box<[ResolvedVar]>,
+    },
 }
 
 impl TypedStmt {
@@ -202,15 +208,12 @@ pub enum StmtKind {
         true_path: Vec<(ResolvedVar, ResolvedVar)>,
     },
     Function {
-        reserved: u8,
-        target: ResolvedVar,
-        signature: Span,
         name: Box<str>, // reduces memory usage by 8 bytes
-        body: Box<TypedStmt>,
-        captures: Box<[ResolvedVar]>,
+        target: ResolvedVar,
+        function_decl: TypedExpr,
     },
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum TypedBinding {
     Variable(ResolvedVar),
     Ignored,

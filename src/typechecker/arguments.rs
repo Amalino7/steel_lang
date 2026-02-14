@@ -14,7 +14,7 @@ impl<'src> TypeChecker<'src> {
         is_vararg: bool,
     ) -> Result<Vec<TypedExpr>, TypeCheckerError> {
         let fixed_len = params.len();
-        let mut fixed: Vec<Option<TypedExpr>> = vec![None; fixed_len];
+        let mut fixed: Vec<Option<TypedExpr>> = (0..fixed_len).map(|_| None).collect();
         let mut used = vec![false; fixed_len];
         let mut extras = Vec::new(); // Used for varargs
         let mut pos_cursor = 0;

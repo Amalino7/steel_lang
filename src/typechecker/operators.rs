@@ -1,7 +1,7 @@
 use crate::parser::ast::Expr;
 use crate::scanner::{Token, TokenType};
 use crate::typechecker::error::TypeCheckerError;
-use crate::typechecker::scope_manager::ScopeType;
+use crate::typechecker::scope::scope_manager::ScopeKind;
 use crate::typechecker::type_ast::{BinaryOp, ExprKind, LogicalOp, TypedExpr, UnaryOp};
 use crate::typechecker::types::Type;
 use crate::typechecker::TypeChecker;
@@ -67,7 +67,7 @@ impl<'src> TypeChecker<'src> {
         let left_typed = self.check_expression(left, &Type::Boolean)?;
         let refinements = self.analyze_condition(&left_typed);
 
-        self.scopes.begin_scope(ScopeType::Block);
+        self.scopes.begin_scope(ScopeKind::Block);
 
         let refinements = if TokenType::And == operator.token_type {
             refinements.true_path

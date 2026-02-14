@@ -15,7 +15,6 @@ fn instance_method(
     type_params: Vec<Symbol>,
 ) -> Type {
     Type::Function(Rc::new(FunctionType {
-        is_static: false,
         is_vararg: false,
         params,
         return_type,
