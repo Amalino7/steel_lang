@@ -1,9 +1,9 @@
 use crate::parser::ast::Expr;
 use crate::scanner::{Token, TokenType};
-use crate::typechecker::error::TypeCheckerError;
-use crate::typechecker::scope::scope_manager::ScopeKind;
-use crate::typechecker::type_ast::{BinaryOp, ExprKind, LogicalOp, TypedExpr, UnaryOp};
-use crate::typechecker::types::Type;
+use crate::typechecker::core::ast::{BinaryOp, ExprKind, LogicalOp, TypedExpr, UnaryOp};
+use crate::typechecker::core::error::TypeCheckerError;
+use crate::typechecker::core::types::Type;
+use crate::typechecker::scope::manager::ScopeKind;
 use crate::typechecker::TypeChecker;
 
 impl<'src> TypeChecker<'src> {

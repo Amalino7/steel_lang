@@ -1,0 +1,12 @@
+let global: func?(number) = nil;
+
+impl number {
+    func random<T>(in: T) {
+        func nested(n: number) {
+            println(n);
+        }
+        global = nested;
+    }
+}
+
+number.random(10);

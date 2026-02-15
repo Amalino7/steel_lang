@@ -68,7 +68,7 @@ fn test_expressions() {
     let mut parser = Parser::new(scanner);
     let mut typecheker = TypeChecker::new();
     let ast = parser.parse().expect("Failed to parse");
-    let typed_ast = typecheker.check(&ast).expect("Failed to typecheck");
+    let (typed_ast, _warnings) = typecheker.check(&ast).expect("Failed to typecheck");
 
     let mut gc = GarbageCollector::new();
     let compiler = Compiler::new("main".to_string(), &mut gc);
@@ -86,7 +86,7 @@ fn test_cmp() {
     let mut parser = Parser::new(scanner);
     let mut typecheker = TypeChecker::new();
     let ast = parser.parse().expect("Failed to parse");
-    let typed_ast = typecheker.check(&ast).expect("Failed to typecheck");
+    let (typed_ast, _warnings) = typecheker.check(&ast).expect("Failed to typecheck");
 
     let mut gc = GarbageCollector::new();
     let compiler = Compiler::new("main".to_string(), &mut gc);
@@ -108,7 +108,7 @@ fn test_while_loop() {
     let mut parser = Parser::new(scanner);
     let mut typecheker = TypeChecker::new();
     let ast = parser.parse().expect("Failed to parse");
-    let typed_ast = typecheker.check(&ast).expect("Failed to typecheck");
+    let (typed_ast, _warnings) = typecheker.check(&ast).expect("Failed to typecheck");
 
     let mut gc = GarbageCollector::new();
     let compiler = Compiler::new("main".to_string(), &mut gc);

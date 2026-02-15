@@ -1,7 +1,29 @@
 use crate::scanner::Span;
-use crate::typechecker::types::Type;
+use crate::typechecker::core::types::Type;
 use ariadne::{Color, Label, Report, ReportKind};
 use std::ops::Range;
+
+#[derive(Debug, Clone)]
+pub enum TypeCheckerWarning {
+    UnusedBinding {
+        name: String,
+        span: Span,
+    },
+    SafeAccessOnNonOptional {
+        span: Span,
+    },
+    RedundantForceUnwrap {
+        span: Span,
+    },
+    ShadowedVariable {
+        name: String,
+        span: Span,
+        original_span: Span,
+    },
+    UnreachableCode {
+        span: Span,
+    },
+}
 
 #[derive(Debug, Clone)]
 pub enum TypeCheckerError {
@@ -16,6 +38,7 @@ pub enum TypeCheckerError {
     UndefinedVariable {
         name: String,
         span: Span,
+        suggestions: Vec<String>,
     },
     CalleeIsNotCallable {
         found: Type,
@@ -50,9 +73,6 @@ pub enum TypeCheckerError {
     InvalidReturnOutsideFunction {
         span: Span,
     },
-    UnreachableCode {
-        span: Span,
-    },
     MissingReturnStatement {
         fn_span: Span, // Signature
         fn_name: String,
@@ -70,6 +90,8 @@ pub enum TypeCheckerError {
         struct_name: String,
         field_name: String,
         span: Span,
+        struct_origin: Option<Span>,
+        suggestions: Vec<String>,
     },
     StructOutsideOfGlobalScope {
         name: String,
@@ -79,6 +101,8 @@ pub enum TypeCheckerError {
         span: Span,
         found: Type,
         method_name: String,
+        type_origin: Option<Span>,
+        suggestions: Vec<String>,
     },
     StaticMethodOnInstance {
         method_name: String,
@@ -112,10 +136,12 @@ pub enum TypeCheckerError {
     UndefinedParameter {
         param_name: String,
         span: Span,
+        callee_origin: Option<Span>,
     },
     MissingArgument {
         param_name: String,
         span: Span,
+        callee_origin: Option<Span>,
     },
     PositionalArgumentAfterNamed {
         message: &'static str,
@@ -219,7 +245,7 @@ impl TypeCheckerError {
     pub fn create_report<'a>(&self, source_id: &'a str) -> Report<'a, (&'a str, Range<usize>)> {
         let offset = self.span().start;
 
-        let mut report = Report::build(ReportKind::Error, source_id, offset).with_code("TypeError");
+        let mut report = Report::build(ReportKind::Error, source_id, offset).with_code(self.code());
 
         match self {
             TypeCheckerError::TypeMismatch {
@@ -377,8 +403,141 @@ impl TypeCheckerError {
                     .with_message(format!("Redeclaration of type or variable '{}'", name))
                     .with_labels(labels);
             }
+            TypeCheckerError::UndefinedField {
+                struct_name,
+                field_name,
+                span,
+                struct_origin,
+                suggestions,
+            } => {
+                let mut labels = vec![
+                    Label::new((source_id, span.to_range()))
+                        .with_message(format!(
+                            "Field '{}' does not exist on struct '{}'",
+                            field_name, struct_name
+                        ))
+                        .with_color(Color::Red),
+                ];
+
+                if let Some(origin) = struct_origin {
+                    labels.push(
+                        Label::new((source_id, origin.to_range()))
+                            .with_message(format!("Struct '{}' defined here", struct_name))
+                            .with_color(Color::Blue),
+                    );
+                }
+
+                report = report
+                    .with_message(format!("Undefined field '{}'", field_name))
+                    .with_labels(labels);
+
+                if !suggestions.is_empty() {
+                    report =
+                        report.with_help(format!("Did you mean '{}'?", suggestions.join("', '")));
+                }
+            }
+            TypeCheckerError::UndefinedMethod {
+                span,
+                found,
+                method_name,
+                type_origin,
+                suggestions,
+            } => {
+                let mut labels = vec![
+                    Label::new((source_id, span.to_range()))
+                        .with_message(format!(
+                            "Method '{}' does not exist on type '{}'",
+                            method_name, found
+                        ))
+                        .with_color(Color::Red),
+                ];
+
+                if let Some(origin) = type_origin {
+                    labels.push(
+                        Label::new((source_id, origin.to_range()))
+                            .with_message(format!("Type '{}' defined here", found))
+                            .with_color(Color::Blue),
+                    );
+                }
+
+                report = report
+                    .with_message(format!("Undefined method '{}'", method_name))
+                    .with_labels(labels);
+
+                if !suggestions.is_empty() {
+                    report =
+                        report.with_help(format!("Did you mean '{}'?", suggestions.join("', '")));
+                }
+            }
+            TypeCheckerError::UndefinedVariable {
+                name,
+                span,
+                suggestions,
+            } => {
+                report = report
+                    .with_message(format!("Undefined variable '{}'", name))
+                    .with_label(
+                        Label::new((source_id, span.to_range()))
+                            .with_message(format!(
+                                "Variable '{}' is not defined in this scope",
+                                name
+                            ))
+                            .with_color(Color::Red),
+                    );
+
+                if !suggestions.is_empty() {
+                    report =
+                        report.with_help(format!("Did you mean '{}'?", suggestions.join("', '")));
+                }
+            }
+            TypeCheckerError::MissingArgument {
+                param_name,
+                span,
+                callee_origin,
+            } => {
+                let mut labels = vec![
+                    Label::new((source_id, span.to_range()))
+                        .with_message(format!("Missing required argument '{}'", param_name))
+                        .with_color(Color::Red),
+                ];
+
+                if let Some(origin) = callee_origin {
+                    labels.push(
+                        Label::new((source_id, origin.to_range()))
+                            .with_message("Function signature declared here")
+                            .with_color(Color::Blue),
+                    );
+                }
+
+                report = report
+                    .with_message(format!("Missing argument '{}'", param_name))
+                    .with_labels(labels);
+            }
+            TypeCheckerError::UndefinedParameter {
+                param_name,
+                span,
+                callee_origin,
+            } => {
+                let mut labels = vec![
+                    Label::new((source_id, span.to_range()))
+                        .with_message(format!("Parameter '{}' does not exist", param_name))
+                        .with_color(Color::Red),
+                ];
+
+                if let Some(origin) = callee_origin {
+                    labels.push(
+                        Label::new((source_id, origin.to_range()))
+                            .with_message("Function signature declared here")
+                            .with_color(Color::Blue),
+                    );
+                }
+
+                report = report
+                    .with_message(format!("Undefined parameter '{}'", param_name))
+                    .with_labels(labels);
+            }
             err => {
-                report = report.with_message(err.message()).with_label(
+                report = report.with_message(err.short_message()).with_label(
                     Label::new((source_id, err.span().to_range()))
                         .with_message(err.message())
                         .with_color(Color::Red),
@@ -401,7 +560,6 @@ impl TypeCheckerError {
             TypeCheckerError::ComplexTypeMismatch { span, .. } => *span,
             TypeCheckerError::ComplexTypeMismatchWithOrigins { span, .. } => *span,
             TypeCheckerError::InvalidReturnOutsideFunction { span, .. } => *span,
-            TypeCheckerError::UnreachableCode { span, .. } => *span,
             TypeCheckerError::MissingReturnStatement { span, .. } => *span,
             TypeCheckerError::AssignmentToCapturedVariable { span, .. } => *span,
             TypeCheckerError::TypeHasNoFields { span, .. } => *span,
@@ -488,7 +646,6 @@ impl TypeCheckerError {
             TypeCheckerError::InvalidReturnOutsideFunction { .. } => {
                 "Return statement outside of a function body.".to_string()
             }
-            TypeCheckerError::UnreachableCode { .. } => "Unreachable code detected.".to_string(),
             TypeCheckerError::MissingReturnStatement { .. } => {
                 "Missing return statement.".to_string()
             }
@@ -586,5 +743,183 @@ impl TypeCheckerError {
                 )
             }
         }
+    }
+
+    /// Returns an error code for this error type
+    pub fn code(&self) -> &'static str {
+        match self {
+            TypeCheckerError::TypeMismatch { .. } => "E001",
+            TypeCheckerError::TypeMismatchWithOrigin { .. } => "E001",
+            TypeCheckerError::ComplexTypeMismatch { .. } => "E001",
+            TypeCheckerError::ComplexTypeMismatchWithOrigins { .. } => "E001",
+            TypeCheckerError::UndefinedVariable { .. } => "E002",
+            TypeCheckerError::UndefinedType { .. } => "E003",
+            TypeCheckerError::UndefinedField { .. } => "E004",
+            TypeCheckerError::UndefinedMethod { .. } => "E005",
+            TypeCheckerError::MissingReturnStatement { .. } => "E006",
+            TypeCheckerError::InvalidReturnOutsideFunction { .. } => "E007",
+            TypeCheckerError::CalleeIsNotCallable { .. } => "E008",
+            TypeCheckerError::TooManyArguments { .. } => "E009",
+            TypeCheckerError::MissingArgument { .. } => "E010",
+            TypeCheckerError::DuplicateArgument { .. } => "E011",
+            TypeCheckerError::UndefinedParameter { .. } => "E012",
+            TypeCheckerError::PositionalArgumentAfterNamed { .. } => "E013",
+            TypeCheckerError::TypeHasNoFields { .. } => "E014",
+            TypeCheckerError::SelfOutsideOfImpl { .. } => "E015",
+            TypeCheckerError::AssignmentToCapturedVariable { .. } => "E016",
+            TypeCheckerError::StructOutsideOfGlobalScope { .. } => "E017",
+            TypeCheckerError::StaticMethodOnInstance { .. } => "E018",
+            TypeCheckerError::Redeclaration { .. } => "E019",
+            TypeCheckerError::DoesNotImplementInterface { .. } => "E020",
+            TypeCheckerError::UncoveredPattern { .. } => "E021",
+            TypeCheckerError::InvalidTupleIndex { .. } => "E022",
+            TypeCheckerError::UnreachablePattern { .. } => "E023",
+            TypeCheckerError::InvalidIsUsage { .. } => "E024",
+            TypeCheckerError::CannotInferType { .. } => "E025",
+            TypeCheckerError::InvalidGenericSpecification { .. } => "E026",
+            TypeCheckerError::GenericCountMismatch { .. } => "E027",
+        }
+    }
+
+    /// Returns a short, category-style message for the error header
+    pub fn short_message(&self) -> &'static str {
+        match self {
+            TypeCheckerError::SelfOutsideOfImpl { .. } => "Invalid use of 'self'",
+            TypeCheckerError::UndefinedVariable { .. } => "Undefined variable",
+            TypeCheckerError::CalleeIsNotCallable { .. } => "Cannot call non-function",
+            TypeCheckerError::TypeMismatch { .. } => "Type mismatch",
+            TypeCheckerError::TypeMismatchWithOrigin { .. } => "Type mismatch",
+            TypeCheckerError::ComplexTypeMismatch { .. } => "Type mismatch",
+            TypeCheckerError::ComplexTypeMismatchWithOrigins { .. } => "Type mismatch",
+            TypeCheckerError::InvalidReturnOutsideFunction { .. } => "Invalid return statement",
+            TypeCheckerError::MissingReturnStatement { .. } => "Missing return statement",
+            TypeCheckerError::AssignmentToCapturedVariable { .. } => {
+                "Cannot assign to captured variable"
+            }
+            TypeCheckerError::UndefinedType { .. } => "Undefined type",
+            TypeCheckerError::TypeHasNoFields { .. } => "Type has no fields",
+            TypeCheckerError::UndefinedField { .. } => "Undefined field",
+            TypeCheckerError::StructOutsideOfGlobalScope { .. } => "Invalid struct definition",
+            TypeCheckerError::UndefinedMethod { .. } => "Undefined method",
+            TypeCheckerError::StaticMethodOnInstance { .. } => {
+                "Cannot call static method on instance"
+            }
+            TypeCheckerError::Redeclaration { .. } => "Redeclaration",
+            TypeCheckerError::DoesNotImplementInterface { .. } => "Interface not implemented",
+            TypeCheckerError::UncoveredPattern { .. } => "Uncovered pattern",
+            TypeCheckerError::TooManyArguments { .. } => "Too many arguments",
+            TypeCheckerError::DuplicateArgument { .. } => "Duplicate argument",
+            TypeCheckerError::UndefinedParameter { .. } => "Undefined parameter",
+            TypeCheckerError::MissingArgument { .. } => "Missing argument",
+            TypeCheckerError::PositionalArgumentAfterNamed { .. } => "Invalid argument order",
+            TypeCheckerError::InvalidTupleIndex { .. } => "Invalid tuple index",
+            TypeCheckerError::UnreachablePattern { .. } => "Unreachable pattern",
+            TypeCheckerError::InvalidIsUsage { .. } => "Invalid 'is' operator usage",
+            TypeCheckerError::CannotInferType { .. } => "Cannot infer type",
+            TypeCheckerError::InvalidGenericSpecification { .. } => "Invalid generic specification",
+            TypeCheckerError::GenericCountMismatch { .. } => "Generic count mismatch",
+        }
+    }
+}
+
+impl TypeCheckerWarning {
+    pub fn create_report<'a>(&self, source_id: &'a str) -> Report<'a, (&'a str, Range<usize>)> {
+        let offset = self.span().start;
+        let mut report = Report::build(ReportKind::Warning, source_id, offset);
+
+        match self {
+            TypeCheckerWarning::UnusedBinding { name, span } => {
+                report = report
+                    .with_message(format!("Unused binding '{}'", name))
+                    .with_label(
+                        Label::new((source_id, span.to_range()))
+                            .with_message(format!("Binding '{}' is never used", name))
+                            .with_color(Color::Yellow),
+                    )
+                    .with_help("Consider using '_' to explicitly ignore this value");
+            }
+            TypeCheckerWarning::SafeAccessOnNonOptional { span } => {
+                report = report
+                    .with_message("Safe access operator on non-optional type")
+                    .with_label(
+                        Label::new((source_id, span.to_range()))
+                            .with_message("This type is not optional, safe access has no effect")
+                            .with_color(Color::Yellow),
+                    )
+                    .with_help("Remove the '?' operator as it's not needed here");
+            }
+            TypeCheckerWarning::RedundantForceUnwrap { span } => {
+                report = report
+                    .with_message("Force unwrap on non-optional type")
+                    .with_label(
+                        Label::new((source_id, span.to_range()))
+                            .with_message("This type is not optional, force unwrap has no effect")
+                            .with_color(Color::Yellow),
+                    )
+                    .with_help("Remove the '!' operator as it's not needed here");
+            }
+            TypeCheckerWarning::ShadowedVariable {
+                name,
+                span,
+                original_span,
+            } => {
+                report = report
+                    .with_message(format!("Variable '{}' shadows existing binding", name))
+                    .with_labels(vec![
+                        Label::new((source_id, span.to_range()))
+                            .with_message(format!("'{}' is redeclared here", name))
+                            .with_color(Color::Yellow),
+                        Label::new((source_id, original_span.to_range()))
+                            .with_message(format!("Previous declaration of '{}'", name))
+                            .with_color(Color::Blue),
+                    ]);
+            }
+            TypeCheckerWarning::UnreachableCode { span } => {
+                report = report
+                    .with_message("Unreachable code detected")
+                    .with_label(
+                        Label::new((source_id, span.to_range()))
+                            .with_message("This code will never be executed")
+                            .with_color(Color::Yellow),
+                    )
+                    .with_help("Code after a return statement is unreachable");
+            }
+        }
+
+        report.finish()
+    }
+
+    pub fn span(&self) -> Span {
+        match self {
+            TypeCheckerWarning::UnusedBinding { span, .. } => *span,
+            TypeCheckerWarning::SafeAccessOnNonOptional { span } => *span,
+            TypeCheckerWarning::RedundantForceUnwrap { span } => *span,
+            TypeCheckerWarning::ShadowedVariable { span, .. } => *span,
+            TypeCheckerWarning::UnreachableCode { span } => *span,
+        }
+    }
+
+    pub fn message(&self) -> String {
+        match self {
+            TypeCheckerWarning::UnusedBinding { name, .. } => {
+                format!("Unused binding '{}'", name)
+            }
+            TypeCheckerWarning::SafeAccessOnNonOptional { .. } => {
+                "Safe access operator on non-optional type".to_string()
+            }
+            TypeCheckerWarning::RedundantForceUnwrap { .. } => {
+                "Force unwrap on non-optional type".to_string()
+            }
+            TypeCheckerWarning::ShadowedVariable { name, .. } => {
+                format!("Variable '{}' shadows existing binding", name)
+            }
+            TypeCheckerWarning::UnreachableCode { .. } => "Unreachable code detected".to_string(),
+        }
+    }
+}
+
+impl std::fmt::Display for TypeCheckerWarning {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message())
     }
 }

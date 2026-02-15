@@ -1,4 +1,4 @@
-use crate::typechecker::types::Type;
+use crate::typechecker::core::types::Type;
 use std::fmt::{Display, Formatter};
 
 fn print_generics(args: &[Type], f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -19,7 +19,7 @@ impl Display for Type {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Type::Error => write!(f, "Error"),
-            Type::Infer(n) => write!(f, "T{}", n),
+            Type::Infer(n) => write!(f, "?{}", n),
             Type::Metatype(name, generic_args) => {
                 write!(f, "Type {}", name)?;
                 print_generics(generic_args, f)
@@ -61,7 +61,7 @@ impl Display for Type {
                 print_generics(generic_args, f)
             }
             Type::Optional(inner) => write!(f, "{}?", inner),
-            Type::Nil => write!(f, "Nil"),
+            Type::Nil => write!(f, "nil"),
             Type::Tuple(types) => {
                 write!(
                     f,

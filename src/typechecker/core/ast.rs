@@ -1,7 +1,7 @@
 use crate::compiler::analysis::ResolvedVar;
 use crate::parser::ast::Literal;
 use crate::scanner::Span;
-use crate::typechecker::types::Type;
+use crate::typechecker::core::types::Type;
 use crate::typechecker::Symbol;
 
 #[derive(Debug)]

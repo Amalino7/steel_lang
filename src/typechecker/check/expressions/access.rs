@@ -1,189 +1,130 @@
-use crate::parser::ast::{CallArg, Expr, Literal};
-use crate::scanner::{Span, Token};
-use crate::typechecker::error::TypeCheckerError;
-use crate::typechecker::type_ast::{ExprKind, TypedExpr};
-use crate::typechecker::type_system::{generics_to_map, TypeSystem};
-use crate::typechecker::types::{GenericArgs, TupleType, Type};
+use crate::parser::ast::Expr;
+use crate::scanner::Token;
+use crate::typechecker::core::ast::{ExprKind, TypedExpr};
+use crate::typechecker::core::error::{TypeCheckerError, TypeCheckerWarning};
+use crate::typechecker::core::types::{GenericArgs, Type};
+use crate::typechecker::system::{generics_to_map, TypeSystem};
 use crate::typechecker::{Symbol, TypeChecker};
-use std::collections::HashMap;
-use std::rc::Rc;
 
 impl<'src> TypeChecker<'src> {
-    pub(crate) fn resolve_static_access(
+    pub(crate) fn check_get(
         &mut self,
-        type_token: &Symbol,
-        member_token: &Token,
-        generics: &GenericArgs,
+        expr: &Expr<'src>,
+        object: &Expr<'src>,
+        field: &Token<'src>,
+        safe: &bool,
     ) -> Result<TypedExpr, TypeCheckerError> {
-        let enum_access = self.handle_enum_access(type_token, member_token, generics);
-        match enum_access {
-            Some(expr) => Ok(expr),
-            None => self.handle_static_method_access(type_token, member_token, generics),
+        let object_typed = self.check_expression(object, &Type::Unknown)?;
+        if let Type::Metatype(name, generics) = &object_typed.ty {
+            if *safe {
+                self.warnings
+                    .push(TypeCheckerWarning::SafeAccessOnNonOptional { span: expr.span() })
+            }
+            return self.resolve_static_access(name, field, generics);
         }
+
+        self.resolve_instance_access(object_typed, field, *safe)
     }
 
-    fn handle_enum_access(
+    pub(crate) fn check_set(
         &mut self,
-        type_name: &Symbol,
-        variant_name: &Token,
-        generics: &GenericArgs,
-    ) -> Option<TypedExpr> {
-        let enum_def = self.sys.get_enum(type_name)?;
-
-        let (idx, variant_types) = enum_def.get_variant(variant_name.lexeme)?;
-
-        let map = generics_to_map(
-            &enum_def.generic_params,
-            generics,
-            Some(&mut self.infer_ctx),
-        );
-        let concrete_generics = enum_def
-            .generic_params
-            .iter()
-            .map(|s| map.get(s).unwrap().clone())
-            .collect::<Vec<_>>();
-
-        let ty = if variant_types == Type::Void {
-            Type::Enum(enum_def.name.clone(), concrete_generics.into())
-        } else {
-            Type::Metatype(type_name.clone(), generics.clone())
-        };
-        // Handle Type.Variant
-        Some(TypedExpr {
-            ty,
-            kind: ExprKind::EnumInit {
-                enum_name: enum_def.name.clone(),
-                variant_idx: idx as u16,
-                value: Box::new(TypedExpr {
-                    ty: Type::Nil,
-                    kind: ExprKind::Literal(Literal::Nil),
-                    span: variant_name.span,
-                }),
+        object: &Expr<'src>,
+        field: &Token,
+        value: &Expr<'src>,
+        safe: &bool,
+    ) -> Result<TypedExpr, TypeCheckerError> {
+        self.with_member_access(
+            object,
+            field,
+            *safe,
+            |this, typed_obj, index, field_type| {
+                let typed_value = this.coerce_expression(value, &field_type)?;
+                Ok(TypedExpr {
+                    ty: field_type,
+                    span: typed_value.span.merge(typed_obj.span),
+                    kind: ExprKind::SetField {
+                        object: Box::new(typed_obj),
+                        index,
+                        value: Box::new(typed_value),
+                        safe: *safe,
+                    },
+                })
             },
-            span: variant_name.span,
-        })
-    }
-    pub(crate) fn handle_enum_call(
-        &mut self,
-        _variant_name: Symbol,
-        variant_type: &Type,
-        map: &HashMap<Symbol, Type>,
-        inferred_args: &Vec<CallArg<'src>>,
-        span: Span,
-    ) -> Result<TypedExpr, TypeCheckerError> {
-        let bind_and_process = |this: &mut Self,
-                                raw_params: Vec<(String, Type)>|
-         -> Result<Vec<TypedExpr>, TypeCheckerError> {
-            let concrete_params: Vec<(String, Type)> = raw_params
-                .into_iter()
-                .map(|(name, ty)| (name, ty.generic_to_concrete(map)))
-                .collect();
-
-            this.bind_arguments(span, &concrete_params, inferred_args, false)
-        };
-
-        let val_expr = match variant_type {
-            // Case: MyEnum.Struct(a: 1, b: 2)
-            Type::Struct(struct_name, _) => {
-                let struct_def = self
-                    .sys
-                    .get_struct(struct_name)
-                    .expect("Enum variant points to non-existent struct");
-
-                let concrete_struct_generics = struct_def
-                    .generic_params
-                    .iter()
-                    .map(|t| Type::GenericParam(t.clone()).generic_to_concrete(map))
-                    .collect::<Vec<_>>();
-
-                let params = struct_def.ordered_fields.clone();
-
-                let bound_args = bind_and_process(self, params)?;
-
-                TypedExpr {
-                    ty: Type::Struct(struct_name.clone(), Rc::new(concrete_struct_generics)),
-                    kind: ExprKind::StructInit {
-                        name: Box::from(struct_name.to_string()),
-                        args: bound_args,
-                    },
-                    span,
-                }
-            }
-
-            // Case: MyEnum.Tuple(1, 2)
-            Type::Tuple(tuple_types) => {
-                let params: Vec<(String, Type)> = tuple_types
-                    .types
-                    .iter()
-                    .enumerate()
-                    .map(|(i, t)| (i.to_string(), t.clone()))
-                    .collect();
-
-                let bound_args = bind_and_process(self, params)?;
-                let concrete_tuple_types = tuple_types
-                    .types
-                    .iter()
-                    .map(|t| t.clone().generic_to_concrete(map))
-                    .collect::<Vec<_>>();
-
-                TypedExpr {
-                    ty: Type::Tuple(Rc::new(TupleType {
-                        types: concrete_tuple_types,
-                    })),
-                    kind: ExprKind::Tuple {
-                        elements: bound_args,
-                    },
-                    span,
-                }
-            }
-
-            // Case: MyEnum.Value(5)
-            _ => {
-                let params = vec![("value".to_string(), variant_type.clone())];
-
-                let mut bound_args = bind_and_process(self, params)?;
-                bound_args.pop().ok_or(TypeCheckerError::MissingArgument {
-                    param_name: "value".into(),
-                    span,
-                })?
-            }
-        };
-
-        Ok(val_expr)
+        )
     }
 
-    fn handle_static_method_access(
+    pub(crate) fn check_get_index(
         &mut self,
-        type_name: &Symbol,
-        method_name: &Token,
-        generics: &GenericArgs,
+        expr: &Expr<'src>,
+        safe: &bool,
+        object: &Expr<'src>,
+        index: &Expr<'src>,
     ) -> Result<TypedExpr, TypeCheckerError> {
-        let mangled_name = format!("{}.{}", type_name, method_name.lexeme);
+        let object_typed = self.check_expression(object, &Type::Unknown)?;
+        let parent_type = object_typed
+            .ty
+            .unwrap_optional_safe(*safe, object_typed.span)?;
 
-        let method =
-            self.scopes
-                .lookup(mangled_name.as_str())
-                .ok_or(TypeCheckerError::UndefinedMethod {
-                    span: method_name.span,
-                    found: Type::Struct(Rc::from(type_name.to_string()), vec![].into()),
-                    method_name: method_name.lexeme.to_string(),
-                })?;
-
-        let (ctx, resolved_var) = method;
-        let pairs = if let Some(def) = self.sys.get_struct(type_name) {
-            if generics.len() != def.generic_params.len() {
-                HashMap::new()
-            } else {
-                generics_to_map(&def.generic_params, generics, Some(&mut self.infer_ctx))
-            }
-        } else {
-            HashMap::new()
+        let Type::List(inner) = parent_type else {
+            return Err(TypeCheckerError::TypeMismatch {
+                expected: Type::List(Box::new(Type::Any)),
+                found: parent_type,
+                span: object_typed.span,
+                message: "Indexing is only supported on lists.",
+            });
         };
-        let ty = ctx.type_info.clone().generic_to_concrete(&pairs);
+
+        let index_typed = self.coerce_expression(index, &Type::Number)?;
+        let mut ty = *inner;
+        if *safe {
+            ty = ty.wrap_in_optional();
+        }
+
         Ok(TypedExpr {
             ty,
-            kind: ExprKind::GetVar(resolved_var, ctx.name.clone()),
-            span: method_name.span,
+            span: expr.span(),
+            kind: ExprKind::GetIndex {
+                object: Box::new(object_typed),
+                index: Box::new(index_typed),
+                safe: *safe,
+            },
+        })
+    }
+
+    pub(crate) fn check_set_index(
+        &mut self,
+        expr: &Expr<'src>,
+        safe: &bool,
+        object: &Expr<'src>,
+        index: &Expr<'src>,
+        value: &Expr<'src>,
+    ) -> Result<TypedExpr, TypeCheckerError> {
+        let object_typed = self.check_expression(object, &Type::Unknown)?;
+        let parent_type = object_typed
+            .ty
+            .unwrap_optional_safe(*safe, object_typed.span)?;
+
+        let Type::List(inner) = parent_type else {
+            return Err(TypeCheckerError::TypeMismatch {
+                expected: Type::List(Box::new(Type::Any)),
+                found: parent_type,
+                span: object_typed.span,
+                message: "Indexing is only supported on lists.",
+            });
+        };
+
+        let index_typed = self.coerce_expression(index, &Type::Number)?;
+        let value_typed = self.coerce_expression(value, &inner)?;
+
+        Ok(TypedExpr {
+            ty: *inner,
+            span: expr.span(),
+            kind: ExprKind::SetIndex {
+                object: Box::new(object_typed),
+                index: Box::new(index_typed),
+                value: Box::new(value_typed),
+                safe: *safe,
+            },
         })
     }
     pub(crate) fn resolve_instance_access(
@@ -234,10 +175,15 @@ impl<'src> TypeChecker<'src> {
     ) -> Result<TypedExpr, TypeCheckerError> {
         let iface = self.sys.get_interface(name).unwrap();
         let Some((idx, method_ty)) = iface.methods.get(member_token.lexeme) else {
+            let method_names: Vec<&str> = iface.methods.keys().map(|s| s.as_str()).collect();
+            let suggestions =
+                crate::typechecker::similarity::find_similar(member_token.lexeme, method_names, 3);
             return Err(TypeCheckerError::UndefinedMethod {
                 span: member_token.span,
                 found: Type::Interface(iface.name.clone(), generics.clone()),
                 method_name: member_token.lexeme.to_string(),
+                type_origin: Some(iface.origin),
+                suggestions,
             });
         };
 
@@ -277,14 +223,30 @@ impl<'src> TypeChecker<'src> {
         // Type.method
         let mangled_name = format!("{}.{}", type_name, method_token.lexeme);
 
-        let (ctx, resolved_var) =
-            self.scopes
-                .lookup(&mangled_name)
-                .ok_or_else(|| TypeCheckerError::UndefinedMethod {
-                    span: method_token.span,
-                    found: obj_type.clone(),
-                    method_name: method_token.lexeme.to_string(),
-                })?;
+        let methods = self.scopes.get_methods_for_type(type_name);
+        let lookup_result = self.scopes.lookup(&mangled_name);
+        let (ctx, resolved_var) = lookup_result.ok_or_else(|| {
+            // Combine methods and fields for suggestions (user might have meant either)
+            let mut candidates: Vec<String> = methods.clone();
+
+            // Add field names if this is a struct type
+            if let Some(struct_def) = self.sys.get_struct(type_name) {
+                candidates.extend(struct_def.fields.keys().map(|s| s.to_string()));
+            }
+
+            let suggestions = crate::typechecker::similarity::find_similar(
+                method_token.lexeme,
+                candidates.iter().map(|s| s.as_str()),
+                3,
+            );
+            TypeCheckerError::UndefinedMethod {
+                span: method_token.span,
+                found: obj_type.clone(),
+                method_name: method_token.lexeme.to_string(),
+                type_origin: None, // TODO: track type definition span
+                suggestions,
+            }
+        })?;
 
         if let Type::Function(func) = &ctx.type_info
             && func.is_static()
@@ -361,7 +323,7 @@ impl<'src> TypeChecker<'src> {
     }
 }
 
-pub(crate) fn resolve_member_type(
+fn resolve_member_type(
     parent_type: &Type,
     field: &Token,
     sys: &TypeSystem,
@@ -397,10 +359,18 @@ pub(crate) fn resolve_member_type(
                 .fields
                 .get(field.lexeme)
                 .map(|id| (*id, struct_def.ordered_fields[*id].1.clone()))
-                .ok_or_else(|| TypeCheckerError::UndefinedField {
-                    struct_name: struct_def.name.to_string(),
-                    field_name: field.lexeme.to_string(),
-                    span: field.span,
+                .ok_or_else(|| {
+                    let field_names: Vec<&str> =
+                        struct_def.fields.keys().map(|s| s.as_str()).collect();
+                    let suggestions =
+                        crate::typechecker::similarity::find_similar(field.lexeme, field_names, 3);
+                    TypeCheckerError::UndefinedField {
+                        struct_name: struct_def.name.to_string(),
+                        field_name: field.lexeme.to_string(),
+                        span: field.span,
+                        struct_origin: Some(struct_def.origin),
+                        suggestions,
+                    }
                 })?;
             let concrete_type = raw_type.generic_to_concrete(&generics_to_map(
                 &struct_def.generic_params,

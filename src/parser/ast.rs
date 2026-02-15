@@ -493,7 +493,7 @@ impl Display for Stmt<'_> {
                 fields,
                 generics,
             } => {
-                write!(f, "Struct {} {{", name.lexeme)?;
+                write!(f, "struct {} {{", name.lexeme)?;
                 print_generics(f, generics)?;
                 for field in fields {
                     write!(f, "{} : {}, ", field.0.lexeme, field.1)?;
@@ -506,7 +506,7 @@ impl Display for Stmt<'_> {
                 methods,
                 generics,
             } => {
-                write!(f, "Impl {}", name.0.lexeme)?;
+                write!(f, "impl {}", name.0.lexeme)?;
                 print_generics(f, generics)?;
                 write!(
                     f,
@@ -527,7 +527,7 @@ impl Display for Stmt<'_> {
                 methods,
                 generics,
             } => {
-                write!(f, "Interface {}", name.lexeme)?;
+                write!(f, "interface {}", name.lexeme)?;
                 print_generics(f, generics)?;
                 write!(f, ": {{")?;
                 for m in methods {
@@ -551,7 +551,7 @@ impl Display for Stmt<'_> {
                 variants,
                 generics,
             } => {
-                write!(f, "Enum {}", name.lexeme)?;
+                write!(f, "enum {}", name.lexeme)?;
                 print_generics(f, generics)?;
                 write!(f, "{{")?;
                 for case in variants {

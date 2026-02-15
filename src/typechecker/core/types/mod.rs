@@ -1,10 +1,11 @@
 mod display;
 
 use crate::scanner::Span;
-use crate::typechecker::error::TypeCheckerError;
-use crate::typechecker::Symbol;
+use crate::typechecker::core::error::TypeCheckerError;
 use std::collections::HashMap;
 use std::rc::Rc;
+
+pub type Symbol = Rc<str>;
 
 #[derive(Debug, Clone)]
 pub struct FunctionType {
@@ -137,6 +138,26 @@ impl Type {
             }
         } else {
             Ok(self.clone())
+        }
+    }
+
+    /// Unwraps optional for safe access, emitting a warning instead of error if used on non-optional
+    pub fn unwrap_optional_safe_warn(
+        &self,
+        safe: bool,
+        span: Span,
+        warnings: &mut Vec<crate::typechecker::core::error::TypeCheckerWarning>,
+    ) -> Type {
+        if safe {
+            match self {
+                Type::Optional(inner) => inner.as_ref().clone(),
+                _ => {
+                    warnings.push(crate::typechecker::core::error::TypeCheckerWarning::SafeAccessOnNonOptional { span });
+                    self.clone()
+                }
+            }
+        } else {
+            self.clone()
         }
     }
 

@@ -1,9 +1,10 @@
 use crate::compiler::analysis::ResolvedVar;
 use crate::scanner::Span;
-use crate::typechecker::error::TypeCheckerError;
-use crate::typechecker::scope::variables::{Declaration, VariableContext};
-use crate::typechecker::types::Type;
+use crate::typechecker::core::error::TypeCheckerError;
+use crate::typechecker::core::types::Type;
+use crate::typechecker::scope::variables::{Declaration, Mutability, VariableContext};
 use crate::typechecker::Symbol;
+use std::cmp::PartialEq;
 use std::collections::HashMap;
 
 #[derive(Debug, PartialEq, Clone)]
@@ -19,65 +20,17 @@ struct Scope {
     max_index: usize,
 }
 
-struct TypeScope {
-    generics: Vec<Symbol>,
-    self_type: Option<Type>,
-}
-
 pub struct ScopeManager {
-    type_scopes: Vec<TypeScope>,
     scopes: Vec<Scope>,
     closures: Vec<Symbol>,
-    generics_raw: Vec<Symbol>,
 }
 
 impl ScopeManager {
     pub fn new() -> Self {
         Self {
-            type_scopes: vec![],
             scopes: vec![],
             closures: vec![],
-            generics_raw: Vec::new(),
         }
-    }
-
-    pub fn begin_type_scope(&mut self, generics: &[Symbol], self_type: Option<Type>) {
-        self.type_scopes.push(TypeScope {
-            generics: generics.to_vec(),
-            self_type,
-        });
-    }
-    pub(crate) fn set_self(&mut self, self_type: Type) {
-        if let Some(type_scope) = self.type_scopes.last_mut() {
-            type_scope.self_type = Some(self_type)
-        }
-    }
-    pub fn end_type_scope(&mut self) {
-        self.type_scopes.pop().expect("No type scope to pop");
-    }
-
-    pub fn is_generic(&self, name: &str) -> Option<Symbol> {
-        for scope in self.type_scopes.iter().rev() {
-            for g in &scope.generics {
-                if g.as_ref() == name {
-                    return Some(g.clone());
-                }
-            }
-        }
-        None
-    }
-    pub fn all_generics(&self) -> Vec<Symbol> {
-        self.type_scopes
-            .iter()
-            .flat_map(|s| s.generics.iter().cloned())
-            .collect()
-    }
-
-    pub fn get_self_type(&self) -> Option<&Type> {
-        self.type_scopes
-            .iter()
-            .rev()
-            .find_map(|s| s.self_type.as_ref())
     }
 
     pub fn begin_scope(&mut self, scope_kind: ScopeKind) {
@@ -127,8 +80,9 @@ impl ScopeManager {
     pub fn declare(&mut self, decl: Declaration) -> Result<(), TypeCheckerError> {
         let scope = self.scopes.last_mut().expect("No scope active");
 
-        if scope.variables.contains_key(&decl.name) && ScopeKind::Global == scope.kind {
-            let prev = &scope.variables[&decl.name];
+        if let Some(prev) = scope.variables.get(&decl.name)
+            && prev.mutability == Mutability::Unique
+        {
             return Err(TypeCheckerError::Redeclaration {
                 name: decl.name.to_string(),
                 span: decl.span,
@@ -244,5 +198,33 @@ impl ScopeManager {
     }
     pub fn return_closures(&mut self, returned: Vec<Symbol>) -> Vec<Symbol> {
         std::mem::replace(&mut self.closures, returned)
+    }
+
+    /// Get all visible variable names in current scope (for suggestions)
+    pub fn visible_variable_names(&self) -> Vec<&str> {
+        let mut names = Vec::new();
+        for scope in self.scopes.iter().rev() {
+            for var_name in scope.variables.keys() {
+                names.push(var_name.as_ref());
+            }
+        }
+        names
+    }
+
+    /// Get all method names for a given type (for suggestions)
+    /// Methods are stored as "TypeName.method_name" in the scope
+    pub fn get_methods_for_type(&self, type_name: &str) -> Vec<String> {
+        let prefix = format!("{}.", type_name);
+        let mut methods = Vec::new();
+
+        for scope in self.scopes.iter().rev() {
+            for var_name in scope.variables.keys() {
+                if let Some(method_name) = var_name.as_ref().strip_prefix(&prefix) {
+                    methods.push(method_name.to_string());
+                }
+            }
+        }
+
+        methods
     }
 }

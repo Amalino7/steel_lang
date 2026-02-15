@@ -1,24 +1,19 @@
 use crate::parser::ast::{FunctionSig, TypeAst};
 use crate::scanner::Token;
-use crate::typechecker::error::TypeCheckerError;
-use crate::typechecker::scope::scope_manager::ScopeManager;
-use crate::typechecker::type_system::TypeSystem;
-use crate::typechecker::types::{FunctionType, TupleType, Type};
-use crate::typechecker::{Symbol, TypeChecker};
+use crate::typechecker::core::error::TypeCheckerError;
+use crate::typechecker::core::types::{FunctionType, TupleType, Type};
+use crate::typechecker::scope::types::TypeScopeManager;
+use crate::typechecker::system::TypeSystem;
+use crate::typechecker::Symbol;
 use std::rc::Rc;
 
-pub struct TypeScopeGuard<'a, 'src> {
-    type_checker: &'a mut TypeChecker<'src>,
-    generics: Vec<Symbol>,
-    has_self_type: bool,
-}
 pub struct TypeResolver<'a> {
     sys: &'a TypeSystem,
-    scope_manager: &'a ScopeManager,
+    scope_manager: &'a TypeScopeManager,
 }
 
 impl<'a> TypeResolver<'a> {
-    pub fn new(sys: &'a TypeSystem, scope: &'a ScopeManager) -> Self {
+    pub fn new(sys: &'a TypeSystem, scope: &'a TypeScopeManager) -> Self {
         Self {
             sys,
             scope_manager: scope,

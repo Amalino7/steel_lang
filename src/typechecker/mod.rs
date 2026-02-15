@@ -1,48 +1,40 @@
 use crate::parser::ast::Stmt;
 use crate::scanner::Span;
 use crate::stdlib::NativeDef;
-use crate::typechecker::error::TypeCheckerError;
-use crate::typechecker::inference::InferenceContext;
+use crate::typechecker::scope::types::TypeScopeManager;
 use crate::typechecker::scope::variables::Declaration;
-use crate::typechecker::type_ast::{StmtKind, TypedStmt};
-use crate::typechecker::type_resolver::TypeResolver;
-use crate::typechecker::type_system::TypeSystem;
-use crate::typechecker::types::Type;
-use scope::scope_manager::{ScopeKind, ScopeManager};
+use crate::typechecker::scope::FunctionContext;
+use core::ast::{StmtKind, TypedStmt};
+use core::error::{TypeCheckerError, TypeCheckerWarning};
+use core::types::Type;
+use inference::InferenceContext;
+use resolver::TypeResolver;
+use scope::manager::{ScopeKind, ScopeManager};
 use std::mem::take;
-use std::rc::Rc;
+use system::TypeSystem;
 
-mod arguments;
-mod declarations;
-pub mod error;
-mod expressions;
-mod get_handles;
-mod inference;
-mod operators;
-mod pattern_matching;
+mod check;
+pub mod core;
+pub(crate) mod inference;
 mod refinements;
+pub(crate) mod resolver;
 mod return_analysis;
 mod scope;
-mod statements;
+mod similarity;
+pub(crate) mod system;
+#[cfg(test)]
 mod tests;
-pub mod type_ast;
-mod type_resolver;
-mod type_system;
-mod type_system_old;
-pub mod types;
 
-#[derive(Debug, PartialEq, Clone)]
-enum FunctionContext {
-    None,
-    Function(Type, Span),
-}
-pub type Symbol = Rc<str>;
+pub use core::types::Symbol;
+
 pub struct TypeChecker<'src> {
     current_function: FunctionContext,
     sys: TypeSystem,
     scopes: ScopeManager,
+    type_scopes: TypeScopeManager,
     natives: &'src [NativeDef],
     errors: Vec<TypeCheckerError>,
+    warnings: Vec<TypeCheckerWarning>,
     infer_ctx: InferenceContext,
 }
 
@@ -55,16 +47,21 @@ impl<'src> TypeChecker<'src> {
 
     pub fn new_with_natives(natives: &'src [NativeDef]) -> Self {
         TypeChecker {
+            type_scopes: TypeScopeManager::new(),
             current_function: FunctionContext::None,
             sys: TypeSystem::new(),
             scopes: ScopeManager::new(),
             natives,
             errors: vec![],
+            warnings: vec![],
             infer_ctx: InferenceContext::new(),
         }
     }
 
-    pub fn check(&mut self, ast: &[Stmt<'src>]) -> Result<TypedStmt, Vec<TypeCheckerError>> {
+    pub fn check(
+        &mut self,
+        ast: &[Stmt<'src>],
+    ) -> Result<(TypedStmt, Vec<TypeCheckerWarning>), Vec<TypeCheckerError>> {
         self.scopes.begin_scope(ScopeKind::Global);
         let mut typed_ast = vec![];
 
@@ -89,15 +86,18 @@ impl<'src> TypeChecker<'src> {
         if !self.errors.is_empty() {
             Err(take(&mut self.errors))
         } else {
-            Ok(TypedStmt {
-                kind: StmtKind::Global {
-                    global_count,
-                    stmts: typed_ast,
-                    reserved,
+            Ok((
+                TypedStmt {
+                    kind: StmtKind::Global {
+                        global_count,
+                        stmts: typed_ast,
+                        reserved,
+                    },
+                    span: Span::default(),
+                    type_info: Type::Void,
                 },
-                span: Span::default(),
-                type_info: Type::Void,
-            })
+                take(&mut self.warnings),
+            ))
         }
     }
 
@@ -112,6 +112,6 @@ impl<'src> TypeChecker<'src> {
     }
 
     fn res(&self) -> TypeResolver {
-        TypeResolver::new(&self.sys, &self.scopes)
+        TypeResolver::new(&self.sys, &self.type_scopes)
     }
 }

@@ -1,6 +1,6 @@
 use crate::compiler::analysis::ResolvedVar;
 use crate::scanner::Span;
-use crate::typechecker::types::Type;
+use crate::typechecker::core::types::Type;
 use crate::typechecker::Symbol;
 
 // TODO take advantage of new features.

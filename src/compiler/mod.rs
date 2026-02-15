@@ -2,7 +2,7 @@ pub mod analysis;
 
 use crate::compiler::analysis::ResolvedVar;
 use crate::parser::ast::Literal;
-use crate::typechecker::type_ast::{
+use crate::typechecker::core::ast::{
     BinaryOp, ExprKind, LogicalOp, MatchCase, StmtKind, TypedBinding, TypedExpr, TypedStmt, UnaryOp,
 };
 use crate::vm::bytecode::{Chunk, Opcode};

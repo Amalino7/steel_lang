@@ -9,21 +9,16 @@ pub enum ParserError<'src> {
     },
     UnexpectedToken {
         found: Token<'src>,
-        message: &'static str,
+        message: String,
     },
     MissingToken {
         expected: TokenType,
-        after_token: Token<'src>,
-        message: &'static str,
+        found_token: Token<'src>,
+        message: String,
     },
     ParseError {
         token: Token<'src>,
-        message: &'static str,
-    },
-    RichError {
-        primary_span: Span,
         message: String,
-        context: Vec<(Span, String)>,
     },
 }
 impl<'src> ParserError<'src> {
@@ -32,21 +27,26 @@ impl<'src> ParserError<'src> {
             ParserError::ScannerError { token } => token.span,
             ParserError::UnexpectedToken { found, .. } => found.span,
             ParserError::ParseError { token, .. } => token.span,
-            ParserError::MissingToken { after_token, .. } => after_token.span,
-            ParserError::RichError { primary_span, .. } => *primary_span,
+            ParserError::MissingToken { found_token, .. } => found_token.span,
         }
     }
     pub fn message(&self) -> String {
         match self {
-            ParserError::RichError { message, .. } => message.to_string(),
             ParserError::ScannerError { token } => {
                 format!("Scanner error: {}", token.lexeme)
             }
-            ParserError::UnexpectedToken { message, .. } => message.to_string(),
+            ParserError::UnexpectedToken { found, message } => {
+                format!("{} Found '{}'.", message, found.lexeme)
+            }
             ParserError::MissingToken {
-                expected, message, ..
+                expected,
+                found_token,
+                message,
             } => {
-                format!("Missing '{}'. {}", expected, message)
+                format!(
+                    "Missing '{}'. {} Found '{}'.",
+                    expected, message, found_token.lexeme
+                )
             }
             ParserError::ParseError { message, .. } => message.to_string(),
         }

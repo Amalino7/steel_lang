@@ -1,10 +1,10 @@
 use crate::parser::ast::{Binding, Expr, MatchArm, Pattern};
-use crate::typechecker::error::TypeCheckerError;
-use crate::typechecker::scope::scope_manager::ScopeKind;
+use crate::typechecker::core::ast::{MatchCase, StmtKind, TypedBinding, TypedExpr, TypedStmt};
+use crate::typechecker::core::error::TypeCheckerError;
+use crate::typechecker::core::types::{EnumType, TupleType, Type};
+use crate::typechecker::scope::manager::ScopeKind;
 use crate::typechecker::scope::variables::Declaration;
-use crate::typechecker::type_ast::{MatchCase, StmtKind, TypedBinding, TypedExpr, TypedStmt};
-use crate::typechecker::type_system::generics_to_map;
-use crate::typechecker::types::{EnumType, TupleType, Type};
+use crate::typechecker::system::generics_to_map;
 use crate::typechecker::TypeChecker;
 use std::collections::HashSet;
 use std::rc::Rc;
@@ -101,12 +101,22 @@ impl<'src> TypeChecker<'src> {
                     });
                 }
 
-                let (variant_idx, field_types) = enum_def
-                    .get_variant(variant_name.lexeme)
-                    .ok_or_else(|| TypeCheckerError::UndefinedField {
-                        struct_name: enum_def.name.to_string(),
-                        field_name: variant_name.lexeme.to_string(),
-                        span: variant_name.span,
+                let (variant_idx, field_types) =
+                    enum_def.get_variant(variant_name.lexeme).ok_or_else(|| {
+                        let variant_names: Vec<&str> =
+                            enum_def.variants.keys().map(|s| s.as_ref()).collect();
+                        let suggestions = crate::typechecker::similarity::find_similar(
+                            variant_name.lexeme,
+                            variant_names,
+                            3,
+                        );
+                        TypeCheckerError::UndefinedField {
+                            struct_name: enum_def.name.to_string(),
+                            field_name: variant_name.lexeme.to_string(),
+                            span: variant_name.span,
+                            struct_origin: Some(enum_def.origin),
+                            suggestions,
+                        }
                     })?;
 
                 if matched_variants.contains(variant_name.lexeme) {
@@ -124,11 +134,12 @@ impl<'src> TypeChecker<'src> {
                     self.check_binding(binding, &payload_type)?
                 } else {
                     if !matches!(payload_type, Type::Void) {
-                        // TODO potentially warn about unused bindings
-                        // self.warnings.push(TypeCheckerWarning::UnusedBinding {
-                        //     binding: binding.lexeme.to_string(),
-                        //     span: binding.span,
-                        // });
+                        self.warnings.push(
+                            crate::typechecker::core::error::TypeCheckerWarning::UnusedBinding {
+                                name: format!("{} payload", variant_name.lexeme),
+                                span: variant_name.span,
+                            },
+                        );
                     }
                     TypedBinding::Ignored
                 };
@@ -189,10 +200,19 @@ impl<'src> TypeChecker<'src> {
                     let mut bindings = vec![];
                     for (field_name, binding) in fields {
                         let Some(&field_idx) = struct_def.fields.get(field_name.lexeme) else {
+                            let field_names: Vec<&str> =
+                                struct_def.fields.keys().map(|s| s.as_str()).collect();
+                            let suggestions = crate::typechecker::similarity::find_similar(
+                                field_name.lexeme,
+                                field_names,
+                                3,
+                            );
                             return Err(TypeCheckerError::UndefinedField {
                                 struct_name: struct_def.name.to_string(),
                                 field_name: field_name.lexeme.to_string(),
                                 span: field_name.span,
+                                struct_origin: Some(struct_def.origin),
+                                suggestions,
                             });
                         };
                         let (_, field_type) = struct_def.ordered_fields[field_idx].clone();

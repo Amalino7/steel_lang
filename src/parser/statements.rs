@@ -114,8 +114,8 @@ impl<'src> Parser<'src> {
                     if let Binding::Variable(name) = &val {
                         fields.push((name.clone(), val));
                     } else {
-                        self.error_previous("Expected variable name after ':'.\n\
-                                 Either provide explicit key to the left or provide variable binding to the right.");
+                        return Err(self.error_previous("Expected variable name after ':'.\n\
+                                 Either provide explicit key to the left or provide variable binding to the right."));
                     }
                 }
                 Some(key) => fields.push((key, val)),
@@ -258,7 +258,7 @@ impl<'src> Parser<'src> {
                     if match_token_type!(self, TokT::Comma) {}
                 }
                 if types.len() < 2 {
-                    self.error_previous("Tuple types must have at least 2 fields.");
+                    return Err(self.error_previous("Tuple types must have at least 2 fields."));
                 }
                 let type_name = TypeAst::Tuple(types);
                 if match_token_type!(self, TokT::Question) {
@@ -316,7 +316,16 @@ impl<'src> Parser<'src> {
         self.consume(TokT::LeftBrace, "Expected '{' before block.")?;
         let mut statements = vec![];
         while !check_token_type!(self, TokT::RightBrace) {
-            statements.push(self.declaration()?);
+            match self.declaration() {
+                Ok(stmt) => statements.push(stmt),
+                Err(e) => {
+                    self.synchronize();
+                    self.errors.push(e);
+                    if check_token_type!(self, TokT::EOF) {
+                        break;
+                    }
+                }
+            }
         }
 
         self.consume(TokT::RightBrace, "Expected '}' after block.")?;

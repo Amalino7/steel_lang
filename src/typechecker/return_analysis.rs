@@ -1,7 +1,7 @@
 use crate::scanner::Span;
-use crate::typechecker::error::TypeCheckerError;
-use crate::typechecker::type_ast::{ExprKind, MatchCase, StmtKind, TypedStmt};
-use crate::typechecker::types::Type;
+use crate::typechecker::core::ast::{ExprKind, MatchCase, StmtKind, TypedStmt};
+use crate::typechecker::core::error::{TypeCheckerError, TypeCheckerWarning};
+use crate::typechecker::core::types::Type;
 use crate::typechecker::TypeChecker;
 
 impl<'src> TypeChecker<'src> {
@@ -96,7 +96,8 @@ impl<'src> TypeChecker<'src> {
                 let mut does_return = false;
                 for stmt in body {
                     if does_return {
-                        return Err(TypeCheckerError::UnreachableCode { span: stmt.span });
+                        self.warnings
+                            .push(TypeCheckerWarning::UnreachableCode { span: stmt.span });
                     }
                     does_return |= self.stmt_returns(stmt)?;
                 }

@@ -1,4 +1,4 @@
-use crate::typechecker::types::{FunctionType, TupleType, Type};
+use crate::typechecker::core::types::{FunctionType, TupleType, Type};
 use crate::typechecker::Symbol;
 use std::collections::HashMap;
 use std::fmt;

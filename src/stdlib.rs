@@ -1,4 +1,4 @@
-use crate::typechecker::types::{FunctionType, Type};
+use crate::typechecker::core::types::{FunctionType, Type};
 use crate::typechecker::Symbol;
 use crate::vm::value::{NativeFn, Value};
 use std::rc::Rc;
@@ -21,9 +21,8 @@ fn instance_method(
         type_params,
     }))
 }
-
+/// Contains standard logic written using the language.
 pub fn get_prelude() -> &'static str {
-    // standard logic lives here
     r#"
         impl number {
             func abs(self): number {

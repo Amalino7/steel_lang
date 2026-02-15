@@ -11,4 +11,3 @@ stress_gc = []
 
 [dependencies]
 ariadne = "0.4.0"
-log = "0.4.29"

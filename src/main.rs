@@ -4,7 +4,6 @@ use crate::compiler::Compiler;
 use crate::parser::Parser;
 use crate::scanner::Scanner;
 use crate::stdlib::get_natives;
-use crate::typechecker::type_ast::StmtKind;
 use crate::typechecker::TypeChecker;
 use crate::vm::disassembler::disassemble_chunk;
 use crate::vm::gc::GarbageCollector;
@@ -12,6 +11,7 @@ use crate::vm::VM;
 use ariadne::{Color, Label, Report, ReportKind, Source};
 use std::env::args;
 use std::fs;
+use typechecker::core::ast::StmtKind;
 
 mod compiler;
 mod parser;
@@ -67,7 +67,14 @@ pub fn run_file(file_name: &str, source: &str, debug: bool, mode: &str, force: b
         return;
     }
 
-    let typed_ast = analysis.unwrap();
+    let (typed_ast, warnings) = analysis.unwrap();
+
+    for warning in &warnings {
+        warning
+            .create_report(file_name)
+            .print((file_name, Source::from(source)))
+            .unwrap();
+    }
 
     if mode == "check" {
         println!("Type checking has passed.");

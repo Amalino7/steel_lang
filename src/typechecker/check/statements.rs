@@ -1,11 +1,12 @@
 use crate::parser::ast::Stmt;
-use crate::typechecker::error::{Recoverable, TypeCheckerError};
-use crate::typechecker::scope::guard::ScopeGuard;
-use crate::typechecker::scope::scope_manager::ScopeKind;
+use crate::typechecker::core::ast::{StmtKind, TypedExpr, TypedRefinements, TypedStmt};
+use crate::typechecker::core::error::{Recoverable, TypeCheckerError};
+use crate::typechecker::core::types::Type;
+use crate::typechecker::scope::guards::ScopeGuard;
+use crate::typechecker::scope::manager::ScopeKind;
 use crate::typechecker::scope::variables::Declaration;
-use crate::typechecker::type_ast::{StmtKind, TypedExpr, TypedRefinements, TypedStmt};
-use crate::typechecker::types::Type;
-use crate::typechecker::{FunctionContext, TypeChecker};
+use crate::typechecker::scope::FunctionContext;
+use crate::typechecker::TypeChecker;
 
 impl<'src> TypeChecker<'src> {
     pub(crate) fn check_stmt(&mut self, stmt: &Stmt<'src>) -> TypedStmt {
