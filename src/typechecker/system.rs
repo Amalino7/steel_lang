@@ -1,8 +1,9 @@
 use crate::scanner::{Span, Token};
 use crate::typechecker::core::error::TypeCheckerError;
+use crate::typechecker::core::types::type_defs::{EnumType, InterfaceType, StructType};
 use crate::typechecker::core::types::Symbol;
+use crate::typechecker::core::types::Type;
 use crate::typechecker::core::types::Type::GenericParam;
-use crate::typechecker::core::types::{EnumType, InterfaceType, StructType, Type};
 use crate::typechecker::inference::InferenceContext;
 use crate::typechecker::resolver::convert_generics;
 use std::collections::HashMap;

@@ -1,11 +1,12 @@
 use crate::parser::ast::{Binding, Expr, MatchArm, Pattern};
 use crate::typechecker::core::ast::{MatchCase, StmtKind, TypedBinding, TypedExpr, TypedStmt};
 use crate::typechecker::core::error::TypeCheckerError;
-use crate::typechecker::core::types::{EnumType, TupleType, Type};
+use crate::typechecker::core::types::type_defs::EnumType;
+use crate::typechecker::core::types::{GenericArgs, TupleType, Type};
 use crate::typechecker::scope::manager::ScopeKind;
 use crate::typechecker::scope::variables::Declaration;
 use crate::typechecker::system::generics_to_map;
-use crate::typechecker::TypeChecker;
+use crate::typechecker::{similarity, TypeChecker};
 use std::collections::HashSet;
 use std::rc::Rc;
 
@@ -16,16 +17,13 @@ impl<'src> TypeChecker<'src> {
         arms: &[MatchArm<'src>],
     ) -> Result<TypedStmt, TypeCheckerError> {
         let value_typed = self.check_expression(value, &Type::Unknown)?;
-        let enum_name = match &value_typed.ty {
-            Type::Enum(name, ..) => name,
-            _ => {
-                return Err(TypeCheckerError::TypeMismatch {
-                    expected: Type::Enum("Any".into(), vec![].into()),
-                    found: value_typed.ty,
-                    span: value_typed.span,
-                    message: "Match value must be an enum type.",
-                });
-            }
+        let Type::Enum(enum_name, generics) = &value_typed.ty else {
+            return Err(TypeCheckerError::TypeMismatch {
+                expected: Type::Enum("Any".into(), vec![].into()),
+                found: value_typed.ty,
+                span: value_typed.span,
+                message: "Match value must be an enum type.",
+            });
         };
 
         let enum_def = self.sys.get_enum(enum_name).unwrap().clone();
@@ -40,6 +38,7 @@ impl<'src> TypeChecker<'src> {
                 &mut matched_variants,
                 &mut typed_cases,
                 &mut has_fallthrough,
+                generics,
                 arm,
             );
             if let Err(err) = res {
@@ -75,6 +74,7 @@ impl<'src> TypeChecker<'src> {
         matched_variants: &mut HashSet<&'src str>,
         typed_cases: &mut Vec<MatchCase>,
         has_fallthrough: &mut bool,
+        generic_args: &GenericArgs,
         arm: &MatchArm<'src>,
     ) -> Result<(), TypeCheckerError> {
         if *has_fallthrough {
@@ -101,20 +101,21 @@ impl<'src> TypeChecker<'src> {
                     });
                 }
 
-                let (variant_idx, field_types): (u16, Type) = todo!("Pattern matching");
-                // enum_def.get_variant(variant_name.lexeme).ok_or_else(|| {
-                //     let variant_names: Vec<&str> =
-                //         enum_def.variants.keys().map(|s| s.as_ref()).collect();
-                //     let suggestions =
-                //         similarity::find_similar(variant_name.lexeme, variant_names, 3);
-                //     TypeCheckerError::UndefinedField {
-                //         struct_name: enum_def.name.to_string(),
-                //         field_name: variant_name.lexeme.to_string(),
-                //         span: variant_name.span,
-                //         struct_origin: Some(enum_def.origin),
-                //         suggestions,
-                //     }
-                // })?;
+                let (variant_idx, field_types): (u16, Type) = enum_def
+                    .get_variant(variant_name.lexeme, generic_args)
+                    .ok_or_else(|| {
+                        let variant_names: Vec<&str> =
+                            enum_def.variants.keys().map(|s| s.as_ref()).collect();
+                        let suggestions =
+                            similarity::find_similar(variant_name.lexeme, variant_names, 3);
+                        TypeCheckerError::UndefinedField {
+                            struct_name: enum_def.name.to_string(),
+                            field_name: variant_name.lexeme.to_string(),
+                            span: variant_name.span,
+                            struct_origin: Some(enum_def.origin),
+                            suggestions,
+                        }
+                    })?;
 
                 if matched_variants.contains(variant_name.lexeme) {
                     return Err(TypeCheckerError::UnreachablePattern {
@@ -146,7 +147,7 @@ impl<'src> TypeChecker<'src> {
                 self.scopes.end_scope();
 
                 typed_cases.push(MatchCase::Named {
-                    variant_idx: variant_idx as u16,
+                    variant_idx,
                     binding: typed_binding,
                     body: typed_body,
                 });
@@ -167,7 +168,7 @@ impl<'src> TypeChecker<'src> {
             }
         }
     }
-
+    // TODO scopes.
     pub(crate) fn check_binding(
         &mut self,
         binding: &Binding,
@@ -257,9 +258,7 @@ impl<'src> TypeChecker<'src> {
                     Ok(TypedBinding::Tuple(bindings))
                 } else {
                     Err(TypeCheckerError::TypeMismatch {
-                        expected: Type::Tuple(Rc::new(TupleType {
-                            types: vec![Type::Any; fields.len()],
-                        })),
+                        expected: Type::new_tuple(vec![Type::Any; fields.len()]),
                         found: type_to_match.clone(),
                         span: binding.span(),
                         message: "Can only use tuple destructure on tuples.",

@@ -149,10 +149,10 @@ impl<'src> TypeChecker<'src> {
         {
             let enum_def = self.sys.get_enum(name.as_ref()).unwrap();
 
-            let ok_type = enum_def
+            let (_, ok_type) = enum_def
                 .get_variant("Ok", instance)
                 .expect("Result type missing");
-            let err_type = enum_def
+            let (_, err_type) = enum_def
                 .get_variant("Err", instance)
                 .expect("Result type missing");
 

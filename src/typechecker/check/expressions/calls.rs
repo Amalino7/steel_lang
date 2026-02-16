@@ -108,6 +108,7 @@ impl<'src> TypeChecker<'src> {
                     func.return_type.clone()
                 };
 
+                // TODO likely unreliable
                 let uninferred: Vec<_> = map
                     .iter()
                     .filter(|(_, v)| **v == Type::Unknown)
