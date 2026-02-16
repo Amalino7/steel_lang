@@ -30,7 +30,7 @@ impl<'src> TypeChecker<'src> {
     ) -> Option<TypedExpr> {
         let enum_def = self.sys.get_enum(type_name)?;
 
-        let (idx, variant_types) = enum_def.get_variant(variant_name.lexeme)?;
+        let (idx, variant_types): (u16, Type) = todo!(); // enum_def.get_variant(variant_name.lexeme, )?;
 
         let map = generics_to_map(
             &enum_def.generic_params,

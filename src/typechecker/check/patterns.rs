@@ -101,23 +101,20 @@ impl<'src> TypeChecker<'src> {
                     });
                 }
 
-                let (variant_idx, field_types) =
-                    enum_def.get_variant(variant_name.lexeme).ok_or_else(|| {
-                        let variant_names: Vec<&str> =
-                            enum_def.variants.keys().map(|s| s.as_ref()).collect();
-                        let suggestions = crate::typechecker::similarity::find_similar(
-                            variant_name.lexeme,
-                            variant_names,
-                            3,
-                        );
-                        TypeCheckerError::UndefinedField {
-                            struct_name: enum_def.name.to_string(),
-                            field_name: variant_name.lexeme.to_string(),
-                            span: variant_name.span,
-                            struct_origin: Some(enum_def.origin),
-                            suggestions,
-                        }
-                    })?;
+                let (variant_idx, field_types): (u16, Type) = todo!("Pattern matching");
+                // enum_def.get_variant(variant_name.lexeme).ok_or_else(|| {
+                //     let variant_names: Vec<&str> =
+                //         enum_def.variants.keys().map(|s| s.as_ref()).collect();
+                //     let suggestions =
+                //         similarity::find_similar(variant_name.lexeme, variant_names, 3);
+                //     TypeCheckerError::UndefinedField {
+                //         struct_name: enum_def.name.to_string(),
+                //         field_name: variant_name.lexeme.to_string(),
+                //         span: variant_name.span,
+                //         struct_origin: Some(enum_def.origin),
+                //         suggestions,
+                //     }
+                // })?;
 
                 if matched_variants.contains(variant_name.lexeme) {
                     return Err(TypeCheckerError::UnreachablePattern {
@@ -201,7 +198,7 @@ impl<'src> TypeChecker<'src> {
                     for (field_name, binding) in fields {
                         let Some(&field_idx) = struct_def.fields.get(field_name.lexeme) else {
                             let field_names: Vec<&str> =
-                                struct_def.fields.keys().map(|s| s.as_str()).collect();
+                                struct_def.fields.keys().map(|s| s.as_ref()).collect();
                             let suggestions = crate::typechecker::similarity::find_similar(
                                 field_name.lexeme,
                                 field_names,

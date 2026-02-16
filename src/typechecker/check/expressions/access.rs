@@ -3,8 +3,8 @@ use crate::scanner::Token;
 use crate::typechecker::core::ast::{ExprKind, TypedExpr};
 use crate::typechecker::core::error::{TypeCheckerError, TypeCheckerWarning};
 use crate::typechecker::core::types::{GenericArgs, Type};
-use crate::typechecker::system::{generics_to_map, TypeSystem};
-use crate::typechecker::{Symbol, TypeChecker};
+use crate::typechecker::system::TypeSystem;
+use crate::typechecker::{similarity, Symbol, TypeChecker};
 
 impl<'src> TypeChecker<'src> {
     pub(crate) fn check_get(
@@ -176,8 +176,7 @@ impl<'src> TypeChecker<'src> {
         let iface = self.sys.get_interface(name).unwrap();
         let Some((idx, method_ty)) = iface.methods.get(member_token.lexeme) else {
             let method_names: Vec<&str> = iface.methods.keys().map(|s| s.as_str()).collect();
-            let suggestions =
-                crate::typechecker::similarity::find_similar(member_token.lexeme, method_names, 3);
+            let suggestions = similarity::find_similar(member_token.lexeme, method_names, 3);
             return Err(TypeCheckerError::UndefinedMethod {
                 span: member_token.span,
                 found: Type::Interface(iface.name.clone(), generics.clone()),
@@ -355,15 +354,12 @@ fn resolve_member_type(
                 .get_struct(name)
                 .expect("Struct def missing after type check");
 
-            let (field_id, raw_type) = struct_def
-                .fields
-                .get(field.lexeme)
-                .map(|id| (*id, struct_def.ordered_fields[*id].1.clone()))
+            let (field_id, ty) = struct_def
+                .get_field(field.lexeme, generics)
                 .ok_or_else(|| {
                     let field_names: Vec<&str> =
-                        struct_def.fields.keys().map(|s| s.as_str()).collect();
-                    let suggestions =
-                        crate::typechecker::similarity::find_similar(field.lexeme, field_names, 3);
+                        struct_def.fields.keys().map(|s| s.as_ref()).collect();
+                    let suggestions = similarity::find_similar(field.lexeme, field_names, 3);
                     TypeCheckerError::UndefinedField {
                         struct_name: struct_def.name.to_string(),
                         field_name: field.lexeme.to_string(),
@@ -372,13 +368,8 @@ fn resolve_member_type(
                         suggestions,
                     }
                 })?;
-            let concrete_type = raw_type.generic_to_concrete(&generics_to_map(
-                &struct_def.generic_params,
-                generics,
-                None,
-            ));
 
-            Ok((field_id as u8, concrete_type))
+            Ok((field_id as u8, ty))
         }
         _ => Err(TypeCheckerError::TypeHasNoFields {
             found: parent_type.clone(),

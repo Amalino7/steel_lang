@@ -4,6 +4,7 @@ use crate::typechecker::core::types::Symbol;
 use crate::typechecker::core::types::Type::GenericParam;
 use crate::typechecker::core::types::{EnumType, InterfaceType, StructType, Type};
 use crate::typechecker::inference::InferenceContext;
+use crate::typechecker::resolver::convert_generics;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -77,26 +78,14 @@ impl TypeSystem {
     pub fn declare_struct(&mut self, origin: Span, name: Symbol, generic_params: &[Token]) {
         self.structs.insert(
             name.clone(),
-            StructType {
-                origin,
-                name,
-                fields: HashMap::new(),
-                ordered_fields: vec![],
-                generic_params: generic_params.iter().map(|t| t.lexeme.into()).collect(),
-            },
+            StructType::new(name, origin, convert_generics(generic_params)),
         );
     }
 
     pub fn declare_enum(&mut self, origin: Span, name: Symbol, generic_params: &[Token]) {
         self.enums.insert(
             name.clone(),
-            EnumType {
-                origin,
-                name,
-                variants: HashMap::new(),
-                ordered_variants: vec![],
-                generic_params: generic_params.iter().map(|t| t.lexeme.into()).collect(),
-            },
+            EnumType::new(name, origin, convert_generics(generic_params)),
         );
     }
 
@@ -111,9 +100,9 @@ impl TypeSystem {
         );
     }
 
-    pub fn define_struct(&mut self, name: &str, fields_map: HashMap<String, (usize, Type)>) {
+    pub fn define_struct(&mut self, name: &str, fields_map: HashMap<Symbol, (usize, Type)>) {
         if let Some(s) = self.structs.get_mut(name) {
-            s.fields = fields_map
+            let fields = fields_map
                 .iter()
                 .map(|(k, (idx, _))| (k.clone(), *idx))
                 .collect();
@@ -124,12 +113,15 @@ impl TypeSystem {
                     vec_fields[idx] = Some((k, t));
                 }
             }
-            s.ordered_fields = vec_fields.into_iter().map(|opt| opt.unwrap()).collect();
+            s.init(
+                fields,
+                vec_fields.into_iter().map(|opt| opt.unwrap()).collect(),
+            );
         }
     }
     pub fn define_enum(&mut self, name: &str, variants: HashMap<Symbol, (usize, Type)>) {
         if let Some(e) = self.enums.get_mut(name) {
-            e.variants = variants
+            let new_variants = variants
                 .iter()
                 .map(|(k, (idx, _))| (k.clone(), *idx))
                 .collect();
@@ -139,7 +131,10 @@ impl TypeSystem {
                     vec_variants[idx] = Some((k, t));
                 }
             }
-            e.ordered_variants = vec_variants.into_iter().map(|opt| opt.unwrap()).collect();
+            e.init(
+                new_variants,
+                vec_variants.into_iter().map(|opt| opt.unwrap()).collect(),
+            );
         }
     }
 

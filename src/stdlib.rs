@@ -10,7 +10,7 @@ pub struct NativeDef {
 }
 
 fn instance_method(
-    params: Vec<(String, Type)>,
+    params: Vec<(Symbol, Type)>,
     return_type: Type,
     type_params: Vec<Symbol>,
 ) -> Type {

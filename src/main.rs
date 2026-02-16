@@ -102,7 +102,7 @@ pub fn run_file(file_name: &str, source: &str, debug: bool, mode: &str, force: b
         StmtKind::Global { global_count, .. } => global_count,
         _ => panic!("Global statement expected"),
     };
-
+    drop(typechecker);
     let mut vm = VM::new(global_count as usize, gc);
     vm.set_native_functions(natives);
 

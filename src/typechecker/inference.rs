@@ -2,7 +2,6 @@ use crate::typechecker::core::types::{FunctionType, TupleType, Type};
 use crate::typechecker::Symbol;
 use std::collections::HashMap;
 use std::fmt;
-use std::rc::Rc;
 
 pub struct InferenceContext {
     substitutions: HashMap<u32, Type>,
@@ -66,91 +65,122 @@ impl InferenceContext {
     }
 
     fn occurs_in(&self, id: u32, ty: &Type) -> bool {
-        match ty {
+        ty.any(&|t| match t {
             Type::Infer(other_id) => {
                 if id == *other_id {
                     return true;
                 }
-                if let Some(resolved) = self.resolve(*other_id) {
-                    return self.occurs_in(id, resolved);
+                if let Some(res) = self.resolve(*other_id) {
+                    return self.occurs_in(id, res);
                 }
                 false
             }
-            Type::Optional(inner) | Type::List(inner) => self.occurs_in(id, inner),
-            Type::Map(key, value) => self.occurs_in(id, key) || self.occurs_in(id, value),
-            Type::Function(func_type) => {
-                func_type
-                    .params
-                    .iter()
-                    .any(|(_, param_ty)| self.occurs_in(id, param_ty))
-                    || self.occurs_in(id, &func_type.return_type)
-            }
-            Type::Tuple(tuple_type) => tuple_type.types.iter().any(|t| self.occurs_in(id, t)),
-            Type::Struct(_, args) | Type::Interface(_, args) | Type::Enum(_, args) => {
-                args.iter().any(|arg| self.occurs_in(id, arg))
-            }
             _ => false,
-        }
+        })
     }
 
-    pub fn substitute(&mut self, ty: &Type) -> Type {
-        match ty {
-            Type::Error => ty.clone(),
-            Type::Infer(id) => {
-                if let Some(resolved) = self.substitutions.get(id) {
-                    let resolved = resolved.clone();
-                    self.substitute(&resolved)
-                } else {
-                    ty.clone()
+    pub fn substitute(&self, ty: &Type) -> Type {
+        ty.clone().transform(
+            &|ty| match ty {
+                Type::Infer(id) => {
+                    if let Some(resolved) = self.substitutions.get(&id).cloned() {
+                        self.substitute(&resolved)
+                    } else {
+                        ty
+                    }
                 }
-            }
-            Type::Optional(inner) => Type::Optional(Box::new(self.substitute(inner))),
-            Type::Function(func_type) => {
-                let params = func_type
-                    .params
-                    .iter()
-                    .map(|(name, param_ty)| (name.clone(), self.substitute(param_ty)))
-                    .collect();
-                let return_type = self.substitute(&func_type.return_type);
-                Type::new_function(params, return_type, func_type.type_params.clone())
-            }
-            Type::Tuple(tuple_type) => {
-                let types = tuple_type
-                    .types
-                    .iter()
-                    .map(|t| self.substitute(t))
-                    .collect();
-                Type::Tuple(Rc::new(TupleType { types }))
-            }
-            Type::Struct(name, args) => {
-                let resolved_args = args.iter().map(|t| self.substitute(t)).collect();
-                Type::Struct(name.clone(), Rc::new(resolved_args))
-            }
-            Type::Interface(name, args) => {
-                let resolved_args = args.iter().map(|t| self.substitute(t)).collect();
-                Type::Interface(name.clone(), Rc::new(resolved_args))
-            }
-            Type::Enum(name, args) => {
-                let resolved_args = args.iter().map(|t| self.substitute(t)).collect();
-                Type::Enum(name.clone(), Rc::new(resolved_args))
-            }
-            Type::List(inner) => Type::List(Box::new(self.substitute(inner))),
-            Type::Map(key, value) => Type::Map(
-                Box::new(self.substitute(key)),
-                Box::new(self.substitute(value)),
-            ),
-            Type::Metatype(_, _)
-            | Type::Nil
-            | Type::Number
-            | Type::String
-            | Type::Boolean
-            | Type::Void
-            | Type::Unknown
-            | Type::Never
-            | Type::Any
-            | Type::GenericParam(_) => ty.clone(),
-        }
+                other => other,
+            },
+            &|type_params| type_params.to_vec(),
+        )
     }
+
+    // fn occurs_in(&self, id: u32, ty: &Type) -> bool {
+    //     match ty {
+    //         Type::Infer(other_id) => {
+    //             if id == *other_id {
+    //                 return true;
+    //             }
+    //             if let Some(resolved) = self.resolve(*other_id) {
+    //                 return self.occurs_in(id, resolved);
+    //             }
+    //             false
+    //         }
+    //         Type::Optional(inner) | Type::List(inner) => self.occurs_in(id, inner),
+    //         Type::Map(key, value) => self.occurs_in(id, key) || self.occurs_in(id, value),
+    //         Type::Function(func_type) => {
+    //             func_type
+    //                 .params
+    //                 .iter()
+    //                 .any(|(_, param_ty)| self.occurs_in(id, param_ty))
+    //                 || self.occurs_in(id, &func_type.return_type)
+    //         }
+    //         Type::Tuple(tuple_type) => tuple_type.types.iter().any(|t| self.occurs_in(id, t)),
+    //         Type::Struct(_, args) | Type::Interface(_, args) | Type::Enum(_, args) => {
+    //             args.iter().any(|arg| self.occurs_in(id, arg))
+    //         }
+    //         _ => false,
+    //     }
+    // }
+
+    // pub fn substitute(&self, ty: &Type) -> Type {
+    //     match ty {
+    //         Type::Error => ty.clone(),
+    //         Type::Infer(id) => {
+    //             if let Some(resolved) = self.substitutions.get(id) {
+    //                 let resolved = resolved.clone();
+    //                 self.substitute(&resolved)
+    //             } else {
+    //                 ty.clone()
+    //             }
+    //         }
+    //         Type::Optional(inner) => Type::Optional(Box::new(self.substitute(inner))),
+    //         Type::Function(func_type) => {
+    //             let params = func_type
+    //                 .params
+    //                 .iter()
+    //                 .map(|(name, param_ty)| (name.clone(), self.substitute(param_ty)))
+    //                 .collect();
+    //             let return_type = self.substitute(&func_type.return_type);
+    //             Type::new_function(params, return_type, func_type.type_params.clone())
+    //         }
+    //         Type::Tuple(tuple_type) => {
+    //             let types = tuple_type
+    //                 .types
+    //                 .iter()
+    //                 .map(|t| self.substitute(t))
+    //                 .collect();
+    //             Type::Tuple(Rc::new(TupleType { types }))
+    //         }
+    //         Type::Struct(name, args) => {
+    //             let resolved_args = args.iter().map(|t| self.substitute(t)).collect();
+    //             Type::Struct(name.clone(), Rc::new(resolved_args))
+    //         }
+    //         Type::Interface(name, args) => {
+    //             let resolved_args = args.iter().map(|t| self.substitute(t)).collect();
+    //             Type::Interface(name.clone(), Rc::new(resolved_args))
+    //         }
+    //         Type::Enum(name, args) => {
+    //             let resolved_args = args.iter().map(|t| self.substitute(t)).collect();
+    //             Type::Enum(name.clone(), Rc::new(resolved_args))
+    //         }
+    //         Type::List(inner) => Type::List(Box::new(self.substitute(inner))),
+    //         Type::Map(key, value) => Type::Map(
+    //             Box::new(self.substitute(key)),
+    //             Box::new(self.substitute(value)),
+    //         ),
+    //         Type::Metatype(_, _)
+    //         | Type::Nil
+    //         | Type::Number
+    //         | Type::String
+    //         | Type::Boolean
+    //         | Type::Void
+    //         | Type::Unknown
+    //         | Type::Never
+    //         | Type::Any
+    //         | Type::GenericParam(_) => ty.clone(),
+    //     }
+    // }
 
     pub(crate) fn unify_types(
         &mut self,

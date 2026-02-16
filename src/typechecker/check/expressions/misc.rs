@@ -1,7 +1,7 @@
 use crate::parser::ast::Expr;
 use crate::typechecker::core::ast::{ExprKind, LogicalOp, TypedExpr, UnaryOp};
 use crate::typechecker::core::error::{Recoverable, TypeCheckerError};
-use crate::typechecker::core::types::{TupleType, Type};
+use crate::typechecker::core::types::Type;
 use crate::typechecker::scope::FunctionContext;
 use crate::typechecker::system::generics_to_map;
 use crate::typechecker::TypeChecker;
@@ -126,8 +126,7 @@ impl<'src> TypeChecker<'src> {
             type_vec.push(el.ty.clone());
             typed_elements.push(el);
         }
-
-        let ty = Type::Tuple(Rc::new(TupleType { types: type_vec }));
+        let ty = Type::new_tuple(type_vec);
         Ok(TypedExpr {
             ty,
             kind: ExprKind::Tuple {
@@ -149,15 +148,13 @@ impl<'src> TypeChecker<'src> {
             && name.as_ref() == "Result"
         {
             let enum_def = self.sys.get_enum(name.as_ref()).unwrap();
-            let map = generics_to_map(&enum_def.generic_params, instance, None);
-            let ok_type = enum_def.ordered_variants[0]
-                .1
-                .clone()
-                .generic_to_concrete(&map);
-            let err_type = enum_def.ordered_variants[1]
-                .1
-                .clone()
-                .generic_to_concrete(&map);
+
+            let ok_type = enum_def
+                .get_variant("Ok", instance)
+                .expect("Result type missing");
+            let err_type = enum_def
+                .get_variant("Err", instance)
+                .expect("Result type missing");
 
             if let FunctionContext::Function(func_return_type, _) = self.current_function.clone() {
                 let provided_err = Type::Enum(name.clone(), vec![Type::Never, err_type].into());

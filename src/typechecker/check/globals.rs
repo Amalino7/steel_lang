@@ -4,6 +4,7 @@ use crate::scanner::{Span, Token};
 use crate::typechecker::core::ast::{ExprKind, StmtKind, TypedExpr, TypedStmt};
 use crate::typechecker::core::error::{Recoverable, TypeCheckerError};
 use crate::typechecker::core::types::Type;
+use crate::typechecker::resolver::convert_generics;
 use crate::typechecker::scope::guards::{ScopeGuard, TypeScopeGuard};
 use crate::typechecker::scope::manager::ScopeKind;
 use crate::typechecker::scope::variables::Declaration;
@@ -379,25 +380,21 @@ impl<'src> TypeChecker<'src> {
     fn define_struct_fields(
         &mut self,
         fields: &[(Token, TypeAst)],
-    ) -> HashMap<String, (usize, Type)> {
+    ) -> HashMap<Symbol, (usize, Type)> {
         let mut field_types = HashMap::new();
         for (i, (name, type_ast)) in fields.iter().enumerate() {
             let field_type = self.res().resolve(type_ast);
             match field_type {
                 Ok(field_type) => {
-                    field_types.insert(name.lexeme.to_string(), (i, field_type));
+                    field_types.insert(name.lexeme.into(), (i, field_type));
                 }
                 Err(err) => {
                     // Parsing error - mark field with Error to avoid treating as undecided.
-                    field_types.insert(name.lexeme.to_string(), (i, Type::Error));
+                    field_types.insert(name.lexeme.into(), (i, Type::Error));
                     self.errors.push(err);
                 }
             }
         }
         field_types
     }
-}
-
-fn convert_generics(generics: &[Token<'_>]) -> Vec<Symbol> {
-    generics.iter().map(|g| g.lexeme.into()).collect()
 }

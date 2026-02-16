@@ -2,11 +2,10 @@ use crate::parser::ast::{CallArg, Expr};
 use crate::scanner::Span;
 use crate::typechecker::core::ast::{ExprKind, TypedExpr};
 use crate::typechecker::core::error::TypeCheckerError;
-use crate::typechecker::core::types::{TupleType, Type};
+use crate::typechecker::core::types::Type;
 use crate::typechecker::system::generics_to_map;
 use crate::typechecker::{Symbol, TypeChecker};
 use std::collections::HashMap;
-use std::rc::Rc;
 
 impl<'src> TypeChecker<'src> {
     pub(crate) fn check_call(
@@ -21,33 +20,15 @@ impl<'src> TypeChecker<'src> {
         if let Type::Metatype(name, generics) = &callee_typed.ty
             && let Some(struct_def) = self.sys.get_struct(name)
         {
-            let map: HashMap<Symbol, Type> = generics_to_map(
-                &struct_def.generic_params,
-                generics,
-                Some(&mut self.infer_ctx),
-            );
-            let abstract_type_args = struct_def
-                .generic_params
-                .iter()
-                .map(|name| map.get(name).unwrap())
-                .collect::<Vec<_>>();
-            let abstracted_field = struct_def
-                .ordered_fields
-                .iter()
-                .map(|(s, ty)| (s.clone(), ty.clone().generic_to_concrete(&map)))
-                .collect::<Vec<_>>();
+            let constructor = struct_def.get_constructor(generics, &mut self.infer_ctx);
 
             let owned_name = struct_def.name.clone();
             let bound_args =
-                self.bind_arguments(callee.span(), &abstracted_field, arguments, false)?;
-
-            let type_args = abstract_type_args
-                .iter()
-                .map(|t| self.infer_ctx.substitute(t))
-                .collect::<Vec<_>>();
+                self.bind_arguments(callee.span(), &constructor.resolved_args, arguments, false)?;
+            let final_type = self.infer_ctx.substitute(&constructor.constructed_type);
 
             return Ok(TypedExpr {
-                ty: Type::Struct(owned_name.clone(), Rc::new(type_args)),
+                ty: final_type,
                 kind: ExprKind::StructInit {
                     name: Box::from(owned_name.to_string()),
                     args: bound_args,
@@ -62,30 +43,36 @@ impl<'src> TypeChecker<'src> {
                 variant_idx, value, ..
             } = &mut callee_typed.kind
         {
-            let map = generics_to_map(
-                &enum_def.generic_params,
-                generics,
-                Some(&mut self.infer_ctx),
-            );
-            let (variant_name, variant_type) = &enum_def.ordered_variants[*variant_idx as usize];
-            let concrete_generics = enum_def
-                .generic_params
-                .iter()
-                .map(|s| map.get(s).unwrap().clone())
-                .collect::<Vec<_>>();
+            let constructor = enum_def
+                .get_constructor(*variant_idx, generics, &mut self.infer_ctx, &self.sys)
+                .unwrap();
 
-            let init_expr = self.handle_enum_call(
-                variant_name.clone(),
-                &variant_type.clone(),
-                &map,
-                arguments,
-                callee.span(),
-            )?;
+            let span = callee.span();
+            let mut bound_args =
+                self.bind_arguments(span, &constructor.resolved_args, arguments, false)?;
+            let final_type = self.infer_ctx.substitute(&constructor.constructed_type);
+            let init_expr = match &final_type {
+                Type::Tuple(_) => TypedExpr {
+                    ty: final_type,
+                    kind: ExprKind::Tuple {
+                        elements: bound_args,
+                    },
+                    span,
+                },
+                Type::Struct(struct_name, ..) => TypedExpr {
+                    kind: ExprKind::StructInit {
+                        name: struct_name.to_string().into(),
+                        args: bound_args,
+                    },
+                    ty: final_type,
+                    span,
+                },
+                _ => bound_args.pop().unwrap(),
+            };
 
-            *value = Box::from(init_expr);
-            let result = Type::Enum(name.clone(), Rc::new(concrete_generics));
-            callee_typed.ty = self.infer_ctx.substitute(&result);
+            callee_typed.ty = init_expr.ty.clone();
             callee_typed.span = expr.span();
+            *value = Box::from(init_expr);
 
             return Ok(callee_typed);
         }
@@ -151,100 +138,100 @@ impl<'src> TypeChecker<'src> {
         }
     }
 
-    fn handle_enum_call(
-        &mut self,
-        _variant_name: Symbol,
-        variant_type: &Type,
-        map: &HashMap<Symbol, Type>,
-        inferred_args: &Vec<CallArg<'src>>,
-        span: Span,
-    ) -> Result<TypedExpr, TypeCheckerError> {
-        let bind_and_process = |this: &mut Self,
-                                raw_params: Vec<(String, Type)>|
-         -> Result<Vec<TypedExpr>, TypeCheckerError> {
-            let concrete_params: Vec<(String, Type)> = raw_params
-                .into_iter()
-                .map(|(name, ty)| (name, ty.generic_to_concrete(map)))
-                .collect();
-
-            this.bind_arguments(span, &concrete_params, inferred_args, false)
-        };
-
-        let val_expr = match variant_type {
-            // Case: MyEnum.Struct(a: 1, b: 2)
-            Type::Struct(struct_name, _) => {
-                let struct_def = self
-                    .sys
-                    .get_struct(struct_name)
-                    .expect("Enum variant points to non-existent struct");
-
-                let concrete_struct_generics = struct_def
-                    .generic_params
-                    .iter()
-                    .map(|t| Type::GenericParam(t.clone()).generic_to_concrete(map))
-                    .collect::<Vec<_>>();
-
-                let params = struct_def.ordered_fields.clone();
-
-                let bound_args = bind_and_process(self, params)?;
-
-                TypedExpr {
-                    ty: Type::Struct(struct_name.clone(), Rc::new(concrete_struct_generics)),
-                    kind: ExprKind::StructInit {
-                        name: Box::from(struct_name.to_string()),
-                        args: bound_args,
-                    },
-                    span,
-                }
-            }
-
-            // Case: MyEnum.Tuple(1, 2)
-            Type::Tuple(tuple_types) => {
-                let params: Vec<(String, Type)> = tuple_types
-                    .types
-                    .iter()
-                    .enumerate()
-                    .map(|(i, t)| (i.to_string(), t.clone()))
-                    .collect();
-
-                let bound_args = bind_and_process(self, params)?;
-                let concrete_tuple_types = tuple_types
-                    .types
-                    .iter()
-                    .map(|t| t.clone().generic_to_concrete(map))
-                    .collect::<Vec<_>>();
-
-                TypedExpr {
-                    ty: Type::Tuple(Rc::new(TupleType {
-                        types: concrete_tuple_types,
-                    })),
-                    kind: ExprKind::Tuple {
-                        elements: bound_args,
-                    },
-                    span,
-                }
-            }
-
-            // Case: MyEnum.Value(5)
-            _ => {
-                let params = vec![("value".to_string(), variant_type.clone())];
-
-                let mut bound_args = bind_and_process(self, params)?;
-                bound_args.pop().ok_or(TypeCheckerError::MissingArgument {
-                    param_name: "value".into(),
-                    span,
-                    callee_origin: None, // TODO: track function definition span
-                })?
-            }
-        };
-
-        Ok(val_expr)
-    }
+    // fn handle_enum_call(
+    //     &mut self,
+    //     _variant_name: Symbol,
+    //     variant_type: &Type,
+    //     map: &HashMap<Symbol, Type>,
+    //     inferred_args: &Vec<CallArg<'src>>,
+    //     span: Span,
+    // ) -> Result<TypedExpr, TypeCheckerError> {
+    //     let bind_and_process = |this: &mut Self,
+    //                             raw_params: Vec<(String, Type)>|
+    //      -> Result<Vec<TypedExpr>, TypeCheckerError> {
+    //         let concrete_params: Vec<(String, Type)> = raw_params
+    //             .into_iter()
+    //             .map(|(name, ty)| (name, ty.generic_to_concrete(map)))
+    //             .collect();
+    //
+    //         this.bind_arguments(span, &concrete_params, inferred_args, false)
+    //     };
+    //
+    //     let val_expr = match variant_type {
+    //         // Case: MyEnum.Struct(a: 1, b: 2)
+    //         Type::Struct(struct_name, _) => {
+    //             let struct_def = self
+    //                 .sys
+    //                 .get_struct(struct_name)
+    //                 .expect("Enum variant points to non-existent struct");
+    //
+    //             let concrete_struct_generics = struct_def
+    //                 .generic_params
+    //                 .iter()
+    //                 .map(|t| Type::GenericParam(t.clone()).generic_to_concrete(map))
+    //                 .collect::<Vec<_>>();
+    //
+    //             let params = struct_def.ordered_fields.clone();
+    //
+    //             let bound_args = bind_and_process(self, params)?;
+    //
+    //             TypedExpr {
+    //                 ty: Type::Struct(struct_name.clone(), Rc::new(concrete_struct_generics)),
+    //                 kind: ExprKind::StructInit {
+    //                     name: Box::from(struct_name.to_string()),
+    //                     args: bound_args,
+    //                 },
+    //                 span,
+    //             }
+    //         }
+    //
+    //         // Case: MyEnum.Tuple(1, 2)
+    //         Type::Tuple(tuple_types) => {
+    //             let params: Vec<(String, Type)> = tuple_types
+    //                 .types
+    //                 .iter()
+    //                 .enumerate()
+    //                 .map(|(i, t)| (i.to_string(), t.clone()))
+    //                 .collect();
+    //
+    //             let bound_args = bind_and_process(self, params)?;
+    //             let concrete_tuple_types = tuple_types
+    //                 .types
+    //                 .iter()
+    //                 .map(|t| t.clone().generic_to_concrete(map))
+    //                 .collect::<Vec<_>>();
+    //
+    //             TypedExpr {
+    //                 ty: Type::Tuple(Rc::new(TupleType {
+    //                     types: concrete_tuple_types,
+    //                 })),
+    //                 kind: ExprKind::Tuple {
+    //                     elements: bound_args,
+    //                 },
+    //                 span,
+    //             }
+    //         }
+    //
+    //         // Case: MyEnum.Value(5)
+    //         _ => {
+    //             let params = vec![("value".to_string(), variant_type.clone())];
+    //
+    //             let mut bound_args = bind_and_process(self, params)?;
+    //             bound_args.pop().ok_or(TypeCheckerError::MissingArgument {
+    //                 param_name: "value".into(),
+    //                 span,
+    //                 callee_origin: None, // TODO: track function definition span
+    //             })?
+    //         }
+    //     };
+    //
+    //     Ok(val_expr)
+    // }
 
     fn bind_arguments(
         &mut self,
         callee: Span,
-        params: &[(String, Type)],
+        params: &[(Symbol, Type)],
         args: &[CallArg<'src>],
         is_vararg: bool,
     ) -> Result<Vec<TypedExpr>, TypeCheckerError> {
@@ -265,7 +252,7 @@ impl<'src> TypeChecker<'src> {
 
                     if used[idx] {
                         return Err(TypeCheckerError::DuplicateArgument {
-                            name: params[idx].0.clone(),
+                            name: params[idx].0.to_string(),
                             span: name.span.merge(span),
                         });
                     }
@@ -313,7 +300,7 @@ impl<'src> TypeChecker<'src> {
         for (i, opt) in fixed.into_iter().enumerate() {
             result.push(opt.ok_or_else(|| {
                 TypeCheckerError::MissingArgument {
-                    param_name: params[i].0.clone(),
+                    param_name: params[i].0.to_string(),
                     span: args
                         .last()
                         .map(|arg| arg.expr.span().merge(callee))
@@ -328,13 +315,13 @@ impl<'src> TypeChecker<'src> {
     }
 }
 fn resolve_named_arg(
-    params: &[(String, Type)],
+    params: &[(Symbol, Type)],
     name: &str,
     span: Span,
 ) -> Result<usize, TypeCheckerError> {
     params
         .iter()
-        .position(|(pname, _)| pname == name)
+        .position(|(pname, _)| pname.as_ref() == name)
         .ok_or_else(|| TypeCheckerError::UndefinedParameter {
             param_name: name.to_string(),
             span,

@@ -76,7 +76,7 @@ impl<'a> TypeResolver<'a> {
         let params = signature
             .params
             .iter()
-            .map(|(name, ty)| Ok((name.lexeme.to_string(), self.resolve(ty)?)))
+            .map(|(name, ty)| Ok((name.lexeme.into(), self.resolve(ty)?)))
             .collect::<Result<Vec<_>, _>>()?;
 
         let return_type = self.resolve(&signature.return_type)?;
@@ -87,4 +87,8 @@ impl<'a> TypeResolver<'a> {
             type_params: active_generics,
         }))
     }
+}
+
+pub fn convert_generics(generics: &[Token<'_>]) -> Vec<Symbol> {
+    generics.iter().map(|g| g.lexeme.into()).collect()
 }
