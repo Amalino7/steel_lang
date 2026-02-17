@@ -32,6 +32,7 @@ pub struct EnumType {
     pub(crate) generic_params: Vec<Symbol>,
 }
 
+#[derive(Debug, PartialEq, Clone)]
 pub struct TypeConstructor {
     pub constructed_type: Type,
     pub resolved_args: Vec<(Symbol, Type)>,
@@ -56,7 +57,32 @@ impl EnumType {
         self.variants = variants;
         self.ordered_variants = ordered_variants;
     }
-    pub fn get_variant(&self, name: &str, generic_args: &GenericArgs) -> Option<(u16, Type)> {
+
+    pub fn get_variant(
+        &self,
+        variant: &str,
+        instance: &GenericArgs,
+        ctx: &mut InferenceContext,
+    ) -> Option<(u16, Type, GenericArgs)> {
+        let idx = self.variants.get(variant)?;
+        let map = generics_to_map(&self.generic_params, instance, Some(ctx));
+        let fresh_generics: GenericArgs = self
+            .generic_params
+            .iter()
+            .map(|s| map[s].clone())
+            .collect::<Vec<_>>()
+            .into();
+        let raw_ty = self.ordered_variants[*idx].1.clone();
+        let final_ty = raw_ty.generic_to_concrete(&map);
+        Some((*idx as u16, final_ty, fresh_generics))
+    }
+
+    // TODO consider how to change logic
+    pub fn get_variant_from_instance(
+        &self,
+        name: &str,
+        generic_args: &GenericArgs,
+    ) -> Option<(u16, Type)> {
         let map = generics_to_map(&self.generic_params, generic_args, None);
         self.variants.get(name).map(|idx| {
             let raw_ty = self.ordered_variants[*idx].1.clone();
@@ -72,47 +98,38 @@ impl EnumType {
     }
     pub fn get_constructor(
         &self,
-        variant_idx: u16,
-        instance: &[Type],
-        ctx: &mut InferenceContext,
+        instance: GenericArgs,
+        variant_ty: Type,
         sys: &TypeSystem,
     ) -> Option<TypeConstructor> {
-        let map = generics_to_map(&self.generic_params, instance, Some(ctx));
-        let generic_args = Rc::new(self.generic_params.iter().map(|s| map[s].clone()).collect());
-
-        let variant = self.get_variant_by_index(variant_idx as usize, &generic_args)?;
-        let params = match &variant {
-            Type::Tuple(tuple) => {
-                let params = tuple
-                    .types
-                    .iter()
-                    .enumerate()
-                    .map(|(s, ty)| {
-                        let name = s.to_string().into();
-                        let final_ty = ty.clone().generic_to_concrete(&map);
-                        (name, final_ty)
-                    })
-                    .collect();
-                params
-            }
+        let map = generics_to_map(&self.generic_params, &instance, None);
+        let params = match &variant_ty {
+            Type::Tuple(tuple) => tuple
+                .types
+                .iter()
+                .enumerate()
+                .map(|(s, ty)| {
+                    let name = s.to_string().into();
+                    let final_ty = ty.clone().generic_to_concrete(&map);
+                    (name, final_ty)
+                })
+                .collect(),
             Type::Struct(struct_name, _) => {
                 let struct_def = sys.get_struct(struct_name).unwrap();
-                let params: Vec<_> = struct_def
+                struct_def
                     .ordered_fields
                     .iter()
                     .map(|(s, t)| {
                         let final_ty = t.clone().generic_to_concrete(&map);
                         (s.clone(), final_ty)
                     })
-                    .collect();
-                params
+                    .collect()
             }
             other => {
-                let params = vec![("_".into(), other.clone().generic_to_concrete(&map))];
-                params
+                vec![("_".into(), other.clone().generic_to_concrete(&map))]
             }
         };
-        let self_type = Type::Enum(self.name.clone(), generic_args);
+        let self_type = Type::Enum(self.name.clone(), instance);
         Some(TypeConstructor {
             constructed_type: self_type,
             resolved_args: params,

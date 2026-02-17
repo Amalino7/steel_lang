@@ -393,7 +393,7 @@ mod tests {
 
     #[test]
     fn test_impl_block() {
-        let source = "impl Point { func new(): Point { return Point { x: 0, y: 0 }; } }";
+        let source = "impl Point { func new(): Point { return Point ( x: 0, y: 0 ); } }";
         let output = parse_snapshot(source);
         assert!(output.contains("impl"));
         assert!(output.contains("Point"));

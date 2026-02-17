@@ -39,21 +39,19 @@ impl<'src> TypeChecker<'src> {
 
         if let Type::Metatype(name, generics) = &callee_typed.ty
             && let Some(enum_def) = self.sys.get_enum(name)
-            && let ExprKind::EnumInit {
-                variant_idx, value, ..
-            } = &mut callee_typed.kind
+            && let ExprKind::EnumInit { value, .. } = &mut callee_typed.kind
         {
             let constructor = enum_def
-                .get_constructor(*variant_idx, generics, &mut self.infer_ctx, &self.sys)
+                .get_constructor(generics.clone(), value.ty.clone(), &self.sys)
                 .unwrap();
 
             let span = callee.span();
             let mut bound_args =
                 self.bind_arguments(span, &constructor.resolved_args, arguments, false)?;
             let final_type = self.infer_ctx.substitute(&constructor.constructed_type);
-            let init_expr = match &final_type {
+            let init_expr = match &value.ty {
                 Type::Tuple(_) => TypedExpr {
-                    ty: final_type,
+                    ty: value.ty.clone(),
                     kind: ExprKind::Tuple {
                         elements: bound_args,
                     },
@@ -64,16 +62,14 @@ impl<'src> TypeChecker<'src> {
                         name: struct_name.to_string().into(),
                         args: bound_args,
                     },
-                    ty: final_type,
+                    ty: value.ty.clone(),
                     span,
                 },
                 _ => bound_args.pop().unwrap(),
             };
-
-            callee_typed.ty = init_expr.ty.clone();
+            callee_typed.ty = final_type;
             callee_typed.span = expr.span();
             *value = Box::from(init_expr);
-
             return Ok(callee_typed);
         }
 

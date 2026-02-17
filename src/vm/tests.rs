@@ -1415,7 +1415,7 @@ fn test_structure_enums() {
                 _ => {println("Not a change color");}
             }
            "#;
-    execute_source(src, false, "run", true);
+    execute_source(src, true, "run", true);
 }
 #[test]
 fn test_val_enums() {
@@ -1439,7 +1439,7 @@ fn test_val_enums() {
             assert(area(Shape.Circle(5)), 78.5);
             assert(area(Shape.Rectangle(10, 5)), 50);
         "#;
-    execute_source(src, false, "run", true);
+    execute_source(src, false, "run", false);
 }
 #[test]
 fn test_enum_branch_analysis() {
@@ -1913,7 +1913,7 @@ fn test_enum_loop() {
             }
         }
     "#;
-    execute_source(src, false, "run", true);
+    execute_source(src, true, "run", true);
 }
 #[test]
 fn test_list() {

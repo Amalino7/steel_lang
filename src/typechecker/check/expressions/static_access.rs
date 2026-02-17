@@ -15,14 +15,14 @@ impl<'src> TypeChecker<'src> {
         member_token: &Token,
         generics: &GenericArgs,
     ) -> Result<TypedExpr, TypeCheckerError> {
-        let enum_access = self.handle_enum_access(type_token, member_token, generics);
+        let enum_access = self.handle_enum_variant_access(type_token, member_token, generics);
         match enum_access {
             Some(expr) => Ok(expr),
             None => self.handle_static_method_access(type_token, member_token, generics),
         }
     }
 
-    fn handle_enum_access(
+    fn handle_enum_variant_access(
         &mut self,
         type_name: &Symbol,
         variant_name: &Token,
@@ -30,32 +30,22 @@ impl<'src> TypeChecker<'src> {
     ) -> Option<TypedExpr> {
         let enum_def = self.sys.get_enum(type_name)?;
 
-        let (idx, variant_types): (u16, Type) = todo!(); // enum_def.get_variant(variant_name.lexeme, )?;
+        let (idx, variant_type, generics) =
+            enum_def.get_variant(variant_name.lexeme, generics, &mut self.infer_ctx)?;
 
-        let map = generics_to_map(
-            &enum_def.generic_params,
-            generics,
-            Some(&mut self.infer_ctx),
-        );
-        let concrete_generics = enum_def
-            .generic_params
-            .iter()
-            .map(|s| map.get(s).unwrap().clone())
-            .collect::<Vec<_>>();
-
-        let ty = if variant_types == Type::Void {
-            Type::Enum(enum_def.name.clone(), concrete_generics.into())
+        let ty = if variant_type == Type::Void {
+            Type::Enum(enum_def.name.clone(), generics)
         } else {
-            Type::Metatype(type_name.clone(), generics.clone())
+            Type::Metatype(type_name.clone(), generics)
         };
         // Handle Type.Variant
         Some(TypedExpr {
             ty,
             kind: ExprKind::EnumInit {
                 enum_name: enum_def.name.clone(),
-                variant_idx: idx as u16,
+                variant_idx: idx,
                 value: Box::new(TypedExpr {
-                    ty: Type::Nil,
+                    ty: variant_type,
                     kind: ExprKind::Literal(Literal::Nil),
                     span: variant_name.span,
                 }),

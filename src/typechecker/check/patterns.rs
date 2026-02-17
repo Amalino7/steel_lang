@@ -102,7 +102,7 @@ impl<'src> TypeChecker<'src> {
                 }
 
                 let (variant_idx, field_types): (u16, Type) = enum_def
-                    .get_variant(variant_name.lexeme, generic_args)
+                    .get_variant_from_instance(variant_name.lexeme, generic_args)
                     .ok_or_else(|| {
                         let variant_names: Vec<&str> =
                             enum_def.variants.keys().map(|s| s.as_ref()).collect();

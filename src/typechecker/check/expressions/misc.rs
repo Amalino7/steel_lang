@@ -150,10 +150,10 @@ impl<'src> TypeChecker<'src> {
             let enum_def = self.sys.get_enum(name.as_ref()).unwrap();
 
             let (_, ok_type) = enum_def
-                .get_variant("Ok", instance)
+                .get_variant_from_instance("Ok", instance)
                 .expect("Result type missing");
             let (_, err_type) = enum_def
-                .get_variant("Err", instance)
+                .get_variant_from_instance("Err", instance)
                 .expect("Result type missing");
 
             if let FunctionContext::Function(func_return_type, _) = self.current_function.clone() {

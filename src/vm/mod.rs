@@ -490,7 +490,7 @@ impl VM {
                     if let Value::Instance(instance) = instance_val {
                         self.stack.push(instance.fields[index]);
                     } else {
-                        unreachable!("GetField on non-instance");
+                        unreachable!("GetField on non-instance {instance_val}");
                     }
                 }
                 Opcode::SetField => unsafe {
