@@ -2,10 +2,10 @@ use crate::parser::ast::Literal;
 use crate::scanner::Token;
 use crate::typechecker::core::ast::{ExprKind, TypedExpr};
 use crate::typechecker::core::error::TypeCheckerError;
+use crate::typechecker::core::types::Type::Metatype;
 use crate::typechecker::core::types::{GenericArgs, Type};
 use crate::typechecker::system::generics_to_map;
 use crate::typechecker::{Symbol, TypeChecker};
-use std::rc::Rc;
 
 impl<'src> TypeChecker<'src> {
     pub(crate) fn resolve_static_access(
@@ -69,11 +69,13 @@ impl<'src> TypeChecker<'src> {
                 methods.iter().map(|s| s.as_str()),
                 3,
             );
+            let type_origin = self.sys.get_origin(type_name);
+            let found = Metatype(type_name.clone(), generics.clone());
             TypeCheckerError::UndefinedMethod {
                 span: method_name.span,
-                found: Type::Struct(Rc::from(type_name.to_string()), vec![].into()),
+                found,
                 method_name: method_name.lexeme.to_string(),
-                type_origin: None, // TODO: track struct definition span
+                type_origin,
                 suggestions,
             }
         })?;

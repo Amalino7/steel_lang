@@ -12,6 +12,7 @@ use crate::typechecker::core::ast::{ExprKind, TypedExpr};
 use crate::typechecker::core::error::TypeCheckerError;
 use crate::typechecker::core::error::TypeCheckerError::AssignmentToCapturedVariable;
 use crate::typechecker::core::types::Type;
+use crate::typechecker::scope::variables::Mutability;
 use crate::typechecker::similarity::find_similar;
 use crate::typechecker::TypeChecker;
 
@@ -100,12 +101,21 @@ impl<'src> TypeChecker<'src> {
             }
 
             Expr::Assignment { identifier, value } => {
-                let var_lookup = self.scopes.lookup(identifier.lexeme);
+                let var_lookup = self.scopes.lookup_for_write(identifier.lexeme);
                 if let Some((ctx, resolved)) = var_lookup {
                     if let ResolvedVar::Closure(_) = &resolved {
                         return Err(AssignmentToCapturedVariable {
                             name: ctx.name.to_string(),
                             span: identifier.span,
+                        });
+                    }
+
+                    if matches!(ctx.mutability, Mutability::Immutable | Mutability::Unique) {
+                        return Err(TypeCheckerError::AssignmentToImmutableBinding {
+                            kind: ctx.kind,
+                            name: ctx.name.to_string(),
+                            span: identifier.span,
+                            definition_span: ctx.span,
                         });
                     }
 
@@ -239,24 +249,30 @@ impl<'src> TypeChecker<'src> {
                 expr.ty = expr_ty;
                 Ok(expr)
             } else {
+                let uninferred_generics = self.infer_ctx.uninferred_names(&expr_ty);
                 Err(TypeCheckerError::CannotInferType {
                     span: expr.span,
-                    uninferred_generics: vec![], // TODO Think how to report error
+                    uninferred_generics,
                 })
             };
         }
 
-        let expected_type = if let Type::Optional(inner) = expected {
-            inner
+        let (expected_type, was_optional) = if let Type::Optional(inner) = expected {
+            (inner.as_ref(), true)
         } else {
-            expected
+            (expected, false)
         };
 
         if let (Type::Interface(iface_name), Some(name)) = (expected_type, expr.ty.get_name())
             && let Some(idx) = self.sys.get_vtable_idx(name, iface_name.clone())
         {
+            let result_ty = if was_optional {
+                Type::Optional(Box::new(Type::Interface(iface_name.clone())))
+            } else {
+                Type::Interface(iface_name.clone())
+            };
             return Ok(TypedExpr {
-                ty: Type::Interface(iface_name.clone()),
+                ty: result_ty,
                 span: expr.span,
                 kind: ExprKind::InterfaceUpcast {
                     expr: Box::new(expr),

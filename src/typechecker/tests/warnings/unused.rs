@@ -1,10 +1,7 @@
-// These tests are expected to FAIL until unused binding warnings for local
-// variables and parameters are implemented in the typechecker.
 use crate::typechecker::core::error::TypeCheckerWarning;
 use crate::typechecker::tests::helpers::*;
 
 #[test]
-#[ignore = "UnusedBinding warning for local variables is not yet implemented"]
 fn test_unused_local_variable() {
     Tester::new(
         r#"
@@ -20,7 +17,6 @@ fn test_unused_local_variable() {
 }
 
 #[test]
-#[ignore = "UnusedBinding warning for function parameters is not yet implemented"]
 fn test_unused_function_parameter() {
     Tester::new(
         r#"
@@ -36,7 +32,6 @@ fn test_unused_function_parameter() {
 }
 
 #[test]
-#[ignore = "UnusedBinding warning for local variables is not yet implemented"]
 fn test_unused_variable_in_block() {
     Tester::new(
         r#"

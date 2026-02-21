@@ -6,6 +6,7 @@ use std::fmt;
 
 pub struct InferenceContext {
     substitutions: HashMap<u32, Type>,
+    debug_names: HashMap<u32, Symbol>,
     next_id: u32,
 }
 impl Default for InferenceContext {
@@ -36,6 +37,7 @@ impl InferenceContext {
     pub fn new() -> Self {
         Self {
             substitutions: HashMap::new(),
+            debug_names: HashMap::new(),
             next_id: 0,
         }
     }
@@ -45,6 +47,69 @@ impl InferenceContext {
         self.next_id += 1;
         Type::Infer(id)
     }
+
+    /// Like [`new_type_var`] but records `name` as the human-readable origin of this
+    /// inference variable (e.g. the generic parameter name `"T"`).
+    /// The name is used when building [`CannotInferType`] error messages.
+    pub fn new_named_type_var(&mut self, name: Symbol) -> Type {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.debug_names.insert(id, name);
+        Type::Infer(id)
+    }
+
+    /// Collect the human-readable names of every unresolved inference variable
+    /// reachable inside `ty`.  Variables that have no recorded name are rendered
+    /// as `"?<id>"` so they are never silently dropped.
+    pub fn uninferred_names(&self, ty: &Type) -> Vec<String> {
+        let mut names: Vec<String> = Vec::new();
+        self.collect_uninferred(ty, &mut names);
+        names.sort();
+        names.dedup();
+        names
+    }
+
+    fn collect_uninferred(&self, ty: &Type, names: &mut Vec<String>) {
+        match ty {
+            Type::Infer(id) => {
+                if self.is_resolved(*id) {
+                    let resolved = self.resolve(*id).unwrap().clone();
+                    self.collect_uninferred(&resolved, names);
+                } else {
+                    let name = self
+                        .debug_names
+                        .get(id)
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| format!("?{}", id));
+                    names.push(name);
+                }
+            }
+            Type::Optional(inner) => self.collect_uninferred(inner, names),
+            Type::List(args) | Type::Map(args) => {
+                for t in args.iter() {
+                    self.collect_uninferred(t, names);
+                }
+            }
+            Type::Tuple(tt) => {
+                for t in tt.types.iter() {
+                    self.collect_uninferred(t, names);
+                }
+            }
+            Type::Function(ft) => {
+                for (_, t) in ft.params.iter() {
+                    self.collect_uninferred(t, names);
+                }
+                self.collect_uninferred(&ft.return_type, names);
+            }
+            Type::Struct(_, args) | Type::Enum(_, args) => {
+                for t in args.iter() {
+                    self.collect_uninferred(t, names);
+                }
+            }
+            _ => {}
+        }
+    }
+
     pub fn is_resolved(&self, id: u32) -> bool {
         self.substitutions.contains_key(&id)
     }
@@ -183,7 +248,7 @@ impl InferenceContext {
                 if exp_name == prov_name {
                     Ok(())
                 } else {
-                    Err(type_mismatch(&expected, &provided))
+                    Err(type_mismatch(expected, provided))
                 }
             }
             _ if expected == provided => Ok(()),

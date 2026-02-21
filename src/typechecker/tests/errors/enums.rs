@@ -103,7 +103,7 @@ fn test_valid_is_usage_on_enum() {
         enum Option<T> { Some(T), None }
         let x: Option<number> = Option.None;
         if x is None {
-            let y = 1;
+            let _y = 1;
         }
         "#,
     );

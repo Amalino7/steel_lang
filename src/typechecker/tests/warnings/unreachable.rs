@@ -40,7 +40,7 @@ fn test_unreachable_in_if_branch() {
         func foo(): number {
             if true {
                 return 1;
-                let dead = 2;
+                let _dead = 2;
             }
             return 0;
         }
@@ -55,7 +55,7 @@ fn test_no_unreachable_with_correct_returns() {
     // All code is reachable - no warnings expected
     assert_typechecks(
         r#"
-        func add(a: number, b: number): number {
+        func larger(a: number, b: number): number {
             if a > b {
                 return a;
             } else {

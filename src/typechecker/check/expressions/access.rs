@@ -236,14 +236,16 @@ impl<'src> TypeChecker<'src> {
                 candidates.iter().map(|s| s.as_str()),
                 3,
             );
+            let type_origin = self.sys.get_origin(type_name);
             return Err(TypeCheckerError::UndefinedMethod {
                 span: method_token.span,
                 found: obj_type.clone(),
                 method_name: method_token.lexeme.to_string(),
-                type_origin: None, // TODO: track type definition span
+                type_origin,
                 suggestions,
             });
         };
+        let definition_span = ctx.span;
 
         let generics_map = self.sys.get_generics_map(&obj_type);
         let Type::Function(func) = &ctx.type_info else {
@@ -286,6 +288,7 @@ impl<'src> TypeChecker<'src> {
             kind: ExprKind::MethodGet {
                 object: Box::new(object_expr),
                 method: resolved_var,
+                origin: definition_span,
                 safe,
             },
         })

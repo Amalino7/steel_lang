@@ -28,7 +28,7 @@ impl<'src> TypeChecker<'src> {
                         .res()
                         .resolve_func(signature, guard.type_scopes.all_generics())
                         .map(Type::Function);
-                    guard.declare_function(name.lexeme.into(), name.span, func_ty);
+                    guard.declare_function(name.lexeme.into(), name.span, func_ty, false);
                 }
                 Stmt::Impl {
                     interfaces,
@@ -77,7 +77,7 @@ impl<'src> TypeChecker<'src> {
                         let mangled_name: Symbol =
                             format!("{}.{}", name.0.lexeme, func_name.lexeme).into();
 
-                        inner_guard.declare_function(mangled_name, func_name.span, func_ty);
+                        inner_guard.declare_function(mangled_name, func_name.span, func_ty, true);
                     }
                 }
                 Stmt::Interface {
@@ -197,11 +197,11 @@ impl<'src> TypeChecker<'src> {
         let decl = Declaration::function(name.lexeme.into(), func_type.clone(), name.span);
         guard.scopes.declare(decl)?;
 
-        // Declare parameters.
+        // Declare parameters. Use ok_log so duplicate-param errors don't prevent body checking.
         for (i, (param, _)) in sig.params.iter().enumerate() {
             let param_decl =
                 Declaration::parameter(param.lexeme.into(), func.params[i].1.clone(), param.span);
-            guard.scopes.declare(param_decl)?;
+            guard.scopes.declare(param_decl).ok_log(&mut guard.errors);
         }
 
         let func_body = guard.check_stmt(body);
@@ -243,9 +243,13 @@ impl<'src> TypeChecker<'src> {
         name: Symbol,
         span: Span,
         func_type: Result<Type, TypeCheckerError>,
+        is_method: bool,
     ) {
         let func_type = func_type.recover(&mut self.errors, Type::Error);
-        let decl = Declaration::global_function(name, func_type, span);
+        let decl = match is_method {
+            true => Declaration::method(name, func_type, span),
+            false => Declaration::global_function(name, func_type, span),
+        };
         self.scopes.declare(decl).ok_log(&mut self.errors);
     }
 

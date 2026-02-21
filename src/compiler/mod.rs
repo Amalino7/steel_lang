@@ -502,6 +502,7 @@ impl<'a> Compiler<'a> {
                     object,
                     method,
                     safe,
+                    ..
                 } = &callee.kind
                 {
                     self.emit_var_access(method, line);
@@ -631,6 +632,7 @@ impl<'a> Compiler<'a> {
                 object,
                 method,
                 safe,
+                ..
             } => {
                 self.compile_expr(object);
                 if *safe {

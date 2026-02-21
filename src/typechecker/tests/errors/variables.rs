@@ -87,7 +87,7 @@ fn test_self_in_function_outside_impl() {
     Tester::new(
         r#"
         func foo() {
-            let x = self;
+            let _x = self;
         }
         "#,
     )

@@ -37,8 +37,14 @@ impl<'src> TypeChecker<'src> {
             let constructor = struct_def.get_constructor(generics, &mut self.infer_ctx);
 
             let owned_name = struct_def.name.clone();
-            let bound_args =
-                self.bind_arguments(callee.span(), &constructor.resolved_args, arguments, false)?;
+            let definition_span = struct_def.origin;
+            let bound_args = self.bind_arguments(
+                callee.span(),
+                Some(definition_span),
+                &constructor.resolved_args,
+                arguments,
+                false,
+            )?;
             let final_type = self.infer_ctx.substitute(&constructor.constructed_type);
 
             return Ok(TypedExpr {
@@ -59,9 +65,15 @@ impl<'src> TypeChecker<'src> {
                 .get_constructor(generics.clone(), value.ty.clone(), &self.sys)
                 .unwrap();
 
+            let definition_span = enum_def.origin;
             let span = callee.span();
-            let mut bound_args =
-                self.bind_arguments(span, &constructor.resolved_args, arguments, false)?;
+            let mut bound_args = self.bind_arguments(
+                span,
+                Some(definition_span),
+                &constructor.resolved_args,
+                arguments,
+                false,
+            )?;
             let final_type = self.infer_ctx.substitute(&constructor.constructed_type);
             let init_expr = match &value.ty {
                 Type::Tuple(_) => TypedExpr {
@@ -97,8 +109,21 @@ impl<'src> TypeChecker<'src> {
                 panic!("Should have errored earlier");
             };
 
-            let bound_args =
-                self.bind_arguments(callee.span(), &func.params, arguments, func.is_vararg)?;
+            let definition_span = if let ExprKind::GetVar(_, ref name) = callee_typed.kind {
+                self.scopes.lookup(name.as_ref()).map(|(ctx, _)| ctx.span)
+            } else if let ExprKind::MethodGet { ref origin, .. } = callee_typed.kind {
+                Some(*origin)
+            } else {
+                None
+            };
+
+            let bound_args = self.bind_arguments(
+                callee.span(),
+                definition_span,
+                &func.params,
+                arguments,
+                func.is_vararg,
+            )?;
             let ret_type = if safe {
                 func.return_type.clone().wrap_in_optional()
             } else {
@@ -124,11 +149,13 @@ impl<'src> TypeChecker<'src> {
 
     fn bind_arguments(
         &mut self,
-        callee: Span,
+        call_site: Span,
+        definition_span: Option<Span>,
         params: &[(Symbol, Type)],
         args: &[CallArg<'src>],
         is_vararg: bool,
     ) -> Result<Vec<TypedExpr>, TypeCheckerError> {
+        let callee = call_site;
         let fixed_len = params.len();
         let mut fixed: Vec<Option<TypedExpr>> = (0..fixed_len).map(|_| None).collect();
         let mut used = vec![false; fixed_len];
@@ -142,7 +169,7 @@ impl<'src> TypeChecker<'src> {
                 Some(name) => {
                     seen_named = true;
 
-                    let idx = resolve_named_arg(params, name.lexeme, name.span)?;
+                    let idx = resolve_named_arg(params, name.lexeme, name.span, definition_span)?;
 
                     if used[idx] {
                         return Err(TypeCheckerError::DuplicateArgument {
@@ -181,6 +208,7 @@ impl<'src> TypeChecker<'src> {
                         return Err(TypeCheckerError::TooManyArguments {
                             expected: fixed_len,
                             found: fixed_len + extras.len() + 1,
+                            callee_origin: definition_span,
                             span,
                             callee,
                         });
@@ -199,7 +227,7 @@ impl<'src> TypeChecker<'src> {
                         .last()
                         .map(|arg| arg.expr.span().merge(callee))
                         .unwrap_or_else(|| callee),
-                    callee_origin: Some(callee), // TODO: pass actual function definition span
+                    callee_origin: definition_span,
                 }
             })?);
         }
@@ -212,6 +240,7 @@ fn resolve_named_arg(
     params: &[(Symbol, Type)],
     name: &str,
     span: Span,
+    definition_span: Option<Span>,
 ) -> Result<usize, TypeCheckerError> {
     params
         .iter()
@@ -219,6 +248,6 @@ fn resolve_named_arg(
         .ok_or_else(|| TypeCheckerError::UndefinedParameter {
             param_name: name.to_string(),
             span,
-            callee_origin: None, // TODO: pass actual function definition span
+            callee_origin: definition_span,
         })
 }

@@ -293,7 +293,7 @@ impl<'src> TypeChecker<'src> {
         if elements.is_empty() {
             let inner = expected_inner.ok_or(TypeCheckerError::CannotInferType {
                 span: bracket_token.span,
-                uninferred_generics: vec![],
+                uninferred_generics: vec!["T".to_string()],
             })?;
             return Ok(TypedExpr {
                 ty: Type::new_list(inner),
@@ -314,9 +314,10 @@ impl<'src> TypeChecker<'src> {
 
         let inferred_inner = self.infer_ctx.substitute(&inner_ty);
         if !inferred_inner.is_concrete() {
+            let uninferred_generics = self.infer_ctx.uninferred_names(&inferred_inner);
             return Err(TypeCheckerError::CannotInferType {
                 span: bracket_token.span,
-                uninferred_generics: vec![],
+                uninferred_generics,
             });
         }
 

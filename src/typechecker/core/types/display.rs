@@ -21,7 +21,7 @@ impl Display for Type {
             Type::Error => write!(f, "Error"),
             Type::Infer(n) => write!(f, "?{}", n),
             Type::Metatype(name, generic_args) => {
-                write!(f, "Type {}", name)?;
+                write!(f, "{}", name)?;
                 print_generics(generic_args, f)
             }
             Type::GenericParam(name) => write!(f, "{}", name),

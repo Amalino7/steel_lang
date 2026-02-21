@@ -2,7 +2,7 @@ use crate::compiler::analysis::ResolvedVar;
 use crate::scanner::Span;
 use crate::typechecker::core::error::TypeCheckerError;
 use crate::typechecker::core::types::Type;
-use crate::typechecker::scope::variables::{Declaration, Mutability, VariableContext};
+use crate::typechecker::scope::variables::{Declaration, DeclarationKind, Mutability, VariableContext};
 use crate::typechecker::Symbol;
 use std::cmp::PartialEq;
 use std::collections::HashMap;
@@ -87,6 +87,7 @@ impl ScopeManager {
                 name: decl.name.to_string(),
                 span: decl.span,
                 original: prev.span,
+                original_kind: prev.kind,
             });
         }
 
@@ -100,11 +101,26 @@ impl ScopeManager {
     }
 
     pub fn lookup(&mut self, name: &str) -> Option<(&VariableContext, ResolvedVar)> {
+        self.lookup_impl(name, false)
+    }
+
+    /// Like [`lookup`] but marks the binding as written rather than read.
+    /// Use this when resolving the left-hand side of an assignment so that
+    /// write-only bindings are not incorrectly counted as "used".
+    pub fn lookup_for_write(&mut self, name: &str) -> Option<(&VariableContext, ResolvedVar)> {
+        self.lookup_impl(name, true)
+    }
+
+    fn lookup_impl(&mut self, name: &str, is_write: bool) -> Option<(&VariableContext, ResolvedVar)> {
         let mut is_closure = false;
 
         for scope in self.scopes.iter_mut().rev() {
             if let Some(ctx) = scope.variables.get_mut(name) {
-                ctx.was_read = true;
+                if is_write {
+                    ctx.was_written = true;
+                } else {
+                    ctx.was_read = true;
+                }
                 let resolved = if scope.kind == ScopeKind::Global {
                     ResolvedVar::Global(ctx.index as u16)
                 } else if is_closure {
@@ -209,6 +225,27 @@ impl ScopeManager {
             }
         }
         names
+    }
+
+    /// Returns bindings in the current scope that were never read.
+    /// Only covers `Variable` and `Parameter` kinds; skips names starting with `_`
+    /// and compiler-generated entries (those with a default span from `refine()`).
+    pub fn drain_unused(&self) -> Vec<(String, Span)> {
+        let Some(scope) = self.scopes.last() else {
+            return vec![];
+        };
+        scope
+            .variables
+            .values()
+            .filter(|ctx| {
+                !ctx.was_read
+                    && matches!(ctx.kind, DeclarationKind::Variable | DeclarationKind::Parameter)
+                    && !ctx.name.starts_with('_')
+                    && ctx.name.as_ref() != "self"
+                    && ctx.span != Span::default()
+            })
+            .map(|ctx| (ctx.name.to_string(), ctx.span))
+            .collect()
     }
 
     /// Get all method names for a given type (for suggestions)

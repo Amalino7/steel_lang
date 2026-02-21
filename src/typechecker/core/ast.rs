@@ -109,6 +109,7 @@ pub enum ExprKind {
     MethodGet {
         object: Box<TypedExpr>,
         method: ResolvedVar,
+        origin: Span,
         safe: bool,
     },
     Tuple {

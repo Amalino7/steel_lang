@@ -84,7 +84,7 @@ fn test_too_many_arguments_zero_params() {
 #[test]
 fn test_duplicate_parameter_name() {
     // Duplicate parameters produce a Redeclaration error (not DuplicateArgument which is for invocation)
-    Tester::new(r#"func foo(x: number, x: string): void {}"#)
+    Tester::new(r#"func foo(x: number, x: string): void { x; }"#)
         .expect_error(|e| matches!(e, TypeCheckerError::Redeclaration { name, .. } if name == "x"))
         .run();
 }
@@ -156,6 +156,7 @@ fn test_missing_return_statement() {
     Tester::new(
         r#"
         func add(a: number, b: number): number {
+            a + b;
             // Missing return statement
         }
         "#,

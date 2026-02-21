@@ -91,7 +91,7 @@ fn test_nested_function_correct_return() {
 fn test_complex_function_types() {
     assert_typechecks(
         r#"
-        func foo(a: number, b: func(): string): func(number): number {
+        func foo(a: number, _b: func(): string): func(number): number {
             func bar(c: number): number {
                 return a + c;
             }
@@ -146,7 +146,12 @@ fn test_multiple_errors_collected() {
             return 10;                // Error 3: Return outside function
             "#,
     )
-    .expect_error(|e| matches!(e, TypeCheckerError::TypeMismatch { .. } | TypeCheckerError::ComplexTypeMismatch { .. }))
+    .expect_error(|e| {
+        matches!(
+            e,
+            TypeCheckerError::TypeMismatch { .. } | TypeCheckerError::ComplexTypeMismatch { .. }
+        )
+    })
     .expect_error(|e| matches!(e, TypeCheckerError::UndefinedVariable { .. }))
     .expect_error(|e| matches!(e, TypeCheckerError::InvalidReturnOutsideFunction { .. }))
     .run();

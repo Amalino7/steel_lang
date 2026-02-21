@@ -182,6 +182,16 @@ impl TypeSystem {
         })
     }
 
+    pub fn get_origin(&self, name: &str) -> Option<Span> {
+        if let Some(s) = self.structs.get(name) {
+            Some(s.origin)
+        } else if let Some(e) = self.enums.get(name) {
+            Some(e.origin)
+        } else {
+            self.interfaces.get(name).map(|i| i.origin)
+        }
+    }
+
     pub fn instantiate(
         &self,
         name: &str,
@@ -263,7 +273,7 @@ pub fn generics_to_map(
         .map(|(idx, s)| {
             let type_var = generics_provided.get(idx).cloned().unwrap_or_else(|| {
                 if let Some(ctx) = auto_fil.as_mut() {
-                    InferenceContext::new_type_var(ctx)
+                    ctx.new_named_type_var(s.clone())
                 } else {
                     Type::Unknown
                 }

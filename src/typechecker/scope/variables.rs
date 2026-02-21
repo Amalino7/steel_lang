@@ -34,6 +34,17 @@ pub enum DeclarationKind {
     Parameter,
 }
 
+impl DeclarationKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DeclarationKind::Variable => "variable",
+            DeclarationKind::Function => "function",
+            DeclarationKind::Method => "method",
+            DeclarationKind::Parameter => "parameter",
+        }
+    }
+}
+
 impl VariableContext {
     pub(crate) fn new(
         name: Symbol,

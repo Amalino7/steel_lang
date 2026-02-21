@@ -1,3 +1,4 @@
+use crate::typechecker::core::error::TypeCheckerWarning;
 use crate::typechecker::core::types::Type;
 use crate::typechecker::scope::manager::ScopeKind;
 use crate::typechecker::scope::types::TypeScopeKind;
@@ -59,6 +60,12 @@ impl<'a, 'src> ScopeGuard<'a, 'src> {
 }
 impl<'a, 'src> Drop for ScopeGuard<'a, 'src> {
     fn drop(&mut self) {
+        let unused = self.checker.scopes.drain_unused();
+        for (name, span) in unused {
+            self.checker
+                .warnings
+                .push(TypeCheckerWarning::UnusedBinding { name, span });
+        }
         self.checker.scopes.end_scope();
     }
 }

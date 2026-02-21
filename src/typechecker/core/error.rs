@@ -1,5 +1,6 @@
 use crate::scanner::Span;
 use crate::typechecker::core::types::Type;
+use crate::typechecker::scope::variables::DeclarationKind;
 use ariadne::{Color, Label, Report, ReportKind};
 use std::ops::Range;
 
@@ -82,6 +83,12 @@ pub enum TypeCheckerError {
         name: String,
         span: Span,
     },
+    AssignmentToImmutableBinding {
+        kind: DeclarationKind,
+        name: String,
+        span: Span,
+        definition_span: Span,
+    },
     TypeHasNoFields {
         found: Type,
         span: Span,
@@ -112,6 +119,7 @@ pub enum TypeCheckerError {
         name: String,
         span: Span,
         original: Span,
+        original_kind: DeclarationKind,
     },
     MissingInterfaceMethods {
         missing_methods: Vec<String>,
@@ -136,6 +144,7 @@ pub enum TypeCheckerError {
         found: usize,
         span: Span,
         callee: Span,
+        callee_origin: Option<Span>,
     },
     DuplicateArgument {
         name: String,
@@ -394,45 +403,42 @@ impl TypeCheckerError {
                     ))
                     .with_labels(labels);
             }
-
-            TypeCheckerError::TooManyArguments {
-                expected,
-                found,
-                span,
-                callee,
-            } => {
-                let labels = vec![
-                    Label::new((source_id, span.to_range()))
-                        .with_message(format!(
-                            "Too many arguments. Expected {} but found {}.",
-                            expected, found
-                        ))
-                        .with_color(Color::Red),
-                    Label::new((source_id, callee.to_range()))
-                        .with_message("Called function is here")
-                        .with_color(Color::Yellow),
-                ];
-                report = report
-                    .with_message("Too many arguments")
-                    .with_labels(labels);
-            }
             TypeCheckerError::Redeclaration {
                 name,
                 span,
                 original,
+                original_kind,
             } => {
-                let mut labels = vec![
+                let kind_str = original_kind.as_str();
+                let labels = vec![
                     Label::new((source_id, span.to_range()))
-                        .with_message(format!("Redeclaration of type or variable '{}'.", name))
+                        .with_message(format!("Cannot redeclare {} '{}'", kind_str, name))
                         .with_color(Color::Red),
-                ];
-                labels.push(
                     Label::new((source_id, original.to_range()))
-                        .with_message("Previous declaration here.".to_string())
+                        .with_message(format!("{} '{}' originally declared here", kind_str, name))
                         .with_color(Color::Yellow),
-                );
+                ];
                 report = report
-                    .with_message(format!("Redeclaration of type or variable '{}'", name))
+                    .with_message(format!("Redeclaration of {} '{}'", kind_str, name))
+                    .with_labels(labels);
+            }
+            TypeCheckerError::AssignmentToImmutableBinding {
+                kind,
+                name,
+                span,
+                definition_span,
+            } => {
+                let kind_str = kind.as_str();
+                let labels = vec![
+                    Label::new((source_id, span.to_range()))
+                        .with_message(format!("'{}' is a {}, not a variable", name, kind_str))
+                        .with_color(Color::Red),
+                    Label::new((source_id, definition_span.to_range()))
+                        .with_message(format!("{} '{}' declared here", kind_str, name))
+                        .with_color(Color::Blue),
+                ];
+                report = report
+                    .with_message(format!("Cannot assign to {} '{}'", kind_str, name))
                     .with_labels(labels);
             }
             TypeCheckerError::UndefinedField {
@@ -522,6 +528,35 @@ impl TypeCheckerError {
                         report.with_help(format!("Did you mean '{}'?", suggestions.join("', '")));
                 }
             }
+            TypeCheckerError::TooManyArguments {
+                expected,
+                found,
+                span,
+                callee,
+                callee_origin,
+            } => {
+                let mut labels = vec![
+                    Label::new((source_id, span.to_range()))
+                        .with_message(format!(
+                            "Too many arguments. Expected {} but found {}.",
+                            expected, found
+                        ))
+                        .with_color(Color::Red),
+                    Label::new((source_id, callee.to_range()))
+                        .with_message("Called function is here")
+                        .with_color(Color::Yellow),
+                ];
+                if let Some(origin) = callee_origin {
+                    labels.push(
+                        Label::new((source_id, origin.to_range()))
+                            .with_message("Callee declared here")
+                            .with_color(Color::Blue),
+                    );
+                }
+                report = report
+                    .with_message("Too many arguments")
+                    .with_labels(labels);
+            }
             TypeCheckerError::MissingArgument {
                 param_name,
                 span,
@@ -536,7 +571,7 @@ impl TypeCheckerError {
                 if let Some(origin) = callee_origin {
                     labels.push(
                         Label::new((source_id, origin.to_range()))
-                            .with_message("Function signature declared here")
+                            .with_message("Callee declared here")
                             .with_color(Color::Blue),
                     );
                 }
@@ -559,7 +594,7 @@ impl TypeCheckerError {
                 if let Some(origin) = callee_origin {
                     labels.push(
                         Label::new((source_id, origin.to_range()))
-                            .with_message("Function signature declared here")
+                            .with_message("Callee declared here")
                             .with_color(Color::Blue),
                     );
                 }
@@ -568,6 +603,30 @@ impl TypeCheckerError {
                     .with_message(format!("Undefined parameter '{}'", param_name))
                     .with_labels(labels);
             }
+            TypeCheckerError::CannotInferType {
+                span,
+                uninferred_generics,
+            } => {
+                let label_msg = if uninferred_generics.is_empty() {
+                    "cannot infer the type here".to_string()
+                } else {
+                    format!(
+                        "cannot infer generic type parameter(s): {}",
+                        uninferred_generics.join(", ")
+                    )
+                };
+                report = report
+                    .with_message("Cannot infer type")
+                    .with_label(
+                        Label::new((source_id, span.to_range()))
+                            .with_message(label_msg)
+                            .with_color(Color::Red),
+                    )
+                    .with_help(
+                        "Add a type annotation or specify generics explicitly using .<Type> syntax",
+                    );
+            }
+
             err => {
                 report = report.with_message(err.short_message()).with_label(
                     Label::new((source_id, err.span().to_range()))
@@ -600,6 +659,7 @@ impl TypeCheckerError {
             TypeCheckerError::UndefinedMethod { span, .. } => *span,
             TypeCheckerError::StaticMethodOnInstance { span, .. } => *span,
             TypeCheckerError::Redeclaration { span, .. } => *span,
+            TypeCheckerError::AssignmentToImmutableBinding { span, .. } => *span,
             TypeCheckerError::MissingInterfaceMethods { span, .. } => *span,
             TypeCheckerError::InterfaceMethodTypeMismatch { span, .. } => *span,
             TypeCheckerError::UncoveredPattern { span, .. } => *span,
@@ -712,8 +772,19 @@ impl TypeCheckerError {
                     method_name
                 )
             }
-            TypeCheckerError::Redeclaration { name, .. } => {
-                format!("Redeclaration of type or variable '{}'.", name)
+            TypeCheckerError::Redeclaration {
+                name,
+                original_kind,
+                ..
+            } => {
+                format!(
+                    "Redeclaration of {} '{}'.",
+                    original_kind.as_str(),
+                    name
+                )
+            }
+            TypeCheckerError::AssignmentToImmutableBinding { kind, name, .. } => {
+                format!("Cannot assign to {} '{}'.", kind.as_str(), name)
             }
             TypeCheckerError::MissingInterfaceMethods {
                 interface,
@@ -776,10 +847,14 @@ impl TypeCheckerError {
                 uninferred_generics,
                 ..
             } => {
-                format!(
-                    "Cannot infer generic type for: {}. Use explicit annotations.",
-                    uninferred_generics.join(", ")
-                )
+                if uninferred_generics.is_empty() {
+                    "Cannot infer type. Add an explicit type annotation.".to_string()
+                } else {
+                    format!(
+                        "Cannot infer generic type parameter(s): {}. Add an explicit type annotation.",
+                        uninferred_generics.join(", ")
+                    )
+                }
             }
             TypeCheckerError::InvalidGenericSpecification { message, .. } => {
                 format!("Invalid generic specification. {}", message)
@@ -823,6 +898,7 @@ impl TypeCheckerError {
             TypeCheckerError::StructOutsideOfGlobalScope { .. } => "E017",
             TypeCheckerError::StaticMethodOnInstance { .. } => "E018",
             TypeCheckerError::Redeclaration { .. } => "E019",
+            TypeCheckerError::AssignmentToImmutableBinding { .. } => "E029",
             TypeCheckerError::MissingInterfaceMethods { .. } => "E020",
             TypeCheckerError::InterfaceMethodTypeMismatch { .. } => "E028",
             TypeCheckerError::UncoveredPattern { .. } => "E021",
@@ -859,6 +935,7 @@ impl TypeCheckerError {
                 "Cannot call static method on instance"
             }
             TypeCheckerError::Redeclaration { .. } => "Redeclaration",
+            TypeCheckerError::AssignmentToImmutableBinding { .. } => "Cannot assign to binding",
             TypeCheckerError::MissingInterfaceMethods { .. } => "Interface not implemented",
             TypeCheckerError::InterfaceMethodTypeMismatch { .. } => {
                 "Interface method type mismatch"

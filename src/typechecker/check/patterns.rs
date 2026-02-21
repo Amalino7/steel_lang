@@ -270,9 +270,9 @@ impl<'src> TypeChecker<'src> {
                     return Ok(TypedBinding::Ignored);
                 }
                 let decl =
-                    Declaration::variable(token.lexeme.into(), type_to_match.clone(), token.span);
+                    Declaration::mutable(token.lexeme.into(), type_to_match.clone(), token.span);
                 self.scopes.declare(decl)?;
-                let (_, resolved) = self.scopes.lookup(token.lexeme).unwrap();
+                let (_, resolved) = self.scopes.lookup_for_write(token.lexeme).unwrap();
                 Ok(TypedBinding::Variable(resolved))
             }
         }
