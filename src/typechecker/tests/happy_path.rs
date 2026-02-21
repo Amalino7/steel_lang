@@ -139,12 +139,15 @@ fn test_assign_void() {
 
 #[test]
 fn test_multiple_errors_collected() {
-    assert_type_errors(
+    Tester::new(
         r#"
-        let a: number = "hello"; // Error 1: Type mismatch
-        b(1);                     // Error 2: Undefined variable 'b'
-        return 10;                // Error 3: Return outside function
-        "#,
-        3,
-    );
+            let a: number = "hello"; // Error 1: Type mismatch
+            b(1);                     // Error 2: Undefined variable 'b'
+            return 10;                // Error 3: Return outside function
+            "#,
+    )
+    .expect_error(|e| matches!(e, TypeCheckerError::TypeMismatch { .. } | TypeCheckerError::ComplexTypeMismatch { .. }))
+    .expect_error(|e| matches!(e, TypeCheckerError::UndefinedVariable { .. }))
+    .expect_error(|e| matches!(e, TypeCheckerError::InvalidReturnOutsideFunction { .. }))
+    .run();
 }

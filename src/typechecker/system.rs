@@ -194,12 +194,12 @@ impl TypeSystem {
 
         if let Some(struct_type) = self.get_struct(name) {
             check_generic_arity(name, struct_type.generic_count(), generics.len(), source)?;
-            return Ok(Type::Struct(struct_type.name.clone(), Rc::new(generics)));
+            return Ok(Type::Struct(struct_type.name.clone(), Rc::from(generics)));
         }
 
         if let Some(enum_type) = self.get_enum(name) {
             check_generic_arity(name, enum_type.generic_count(), generics.len(), source)?;
-            return Ok(Type::Enum(enum_type.name.clone(), Rc::new(generics)));
+            return Ok(Type::Enum(enum_type.name.clone(), Rc::from(generics)));
         }
 
         if let Some(iface) = self.get_interface(name) {

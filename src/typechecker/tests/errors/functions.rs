@@ -3,142 +3,170 @@ use crate::typechecker::tests::helpers::*;
 
 #[test]
 fn test_callee_not_callable() {
-    assert_type_error(
+    Tester::new(
         r#"
         let a = 10;
         a(1);
         "#,
-        |e| matches!(e, TypeCheckerError::CalleeIsNotCallable { .. }),
-    );
+    )
+    .expect_error(|e| matches!(e, TypeCheckerError::CalleeIsNotCallable { .. }))
+    .run();
 }
 
 #[test]
 fn test_string_not_callable() {
-    assert_type_error(
+    Tester::new(
         r#"
         let s = "hello";
         s();
         "#,
-        |e| matches!(e, TypeCheckerError::CalleeIsNotCallable { .. }),
-    );
+    )
+    .expect_error(|e| matches!(e, TypeCheckerError::CalleeIsNotCallable { .. }))
+    .run();
 }
 
 #[test]
 fn test_missing_argument() {
-    assert_type_error(
+    Tester::new(
         r#"
         func add(a: number, b: number): number { return a + b; }
         let x = add(1);
         "#,
+    )
+    .expect_error(
         |e| matches!(e, TypeCheckerError::MissingArgument { param_name, .. } if param_name == "b"),
-    );
+    )
+    .run();
 }
 
 #[test]
 fn test_too_many_arguments() {
-    assert_type_error(
+    Tester::new(
         r#"
         func add(a: number, b: number): number { return a + b; }
         let x = add(1, 2, 3);
         "#,
-        |e| matches!(e, TypeCheckerError::TooManyArguments { expected: 2, found: 3, .. }),
-    );
+    )
+    .expect_error(|e| {
+        matches!(
+            e,
+            TypeCheckerError::TooManyArguments {
+                expected: 2,
+                found: 3,
+                ..
+            }
+        )
+    })
+    .run();
 }
 
 #[test]
 fn test_too_many_arguments_zero_params() {
-    assert_type_error(
+    Tester::new(
         r#"
         func foo(): void {}
         foo(1);
         "#,
-        |e| matches!(e, TypeCheckerError::TooManyArguments { expected: 0, found: 1, .. }),
-    );
+    )
+    .expect_error(|e| {
+        matches!(
+            e,
+            TypeCheckerError::TooManyArguments {
+                expected: 0,
+                found: 1,
+                ..
+            }
+        )
+    })
+    .run();
 }
 
 #[test]
 fn test_duplicate_parameter_name() {
-    // Duplicate parameters produce a Redeclaration error (not DuplicateArgument)
-    assert_type_error(
-        r#"func foo(x: number, x: string): void {}"#,
-        |e| matches!(e, TypeCheckerError::Redeclaration { name, .. } if name == "x"),
-    );
+    // Duplicate parameters produce a Redeclaration error (not DuplicateArgument which is for invocation)
+    Tester::new(r#"func foo(x: number, x: string): void {}"#)
+        .expect_error(|e| matches!(e, TypeCheckerError::Redeclaration { name, .. } if name == "x"))
+        .run();
 }
 
 #[test]
 fn test_undefined_named_parameter() {
-    assert_type_error(
+    Tester::new(
         r#"
         func add(a: number, b: number): number { return a + b; }
         let x = add(a: 1, c: 2);
-        "#,
+        "#).expect_error(
         |e| matches!(e, TypeCheckerError::UndefinedParameter { param_name, .. } if param_name == "c"),
-    );
+    ).run();
 }
 
 #[test]
 fn test_positional_after_named_argument() {
-    assert_type_error(
+    Tester::new(
         r#"
         func add(a: number, b: number): number { return a + b; }
         let x = add(a: 1, 2);
         "#,
-        |e| matches!(e, TypeCheckerError::PositionalArgumentAfterNamed { .. }),
-    );
+    )
+    .expect_error(|e| matches!(e, TypeCheckerError::PositionalArgumentAfterNamed { .. }))
+    .run();
 }
 
 #[test]
 fn test_parameter_type_mismatch() {
-    assert_type_error(
+    Tester::new(
         r#"
         func add(a: number, b: number): number { return a + b; }
         let x = add(1, true);
         "#,
-        |e| {
-            matches!(
-                e,
-                TypeCheckerError::TypeMismatch { .. }
-                    | TypeCheckerError::ComplexTypeMismatch { .. }
-                    | TypeCheckerError::ComplexTypeMismatchWithOrigins { .. }
-            )
-        },
-    );
+    )
+    .expect_error(|e| {
+        matches!(
+            e,
+            TypeCheckerError::TypeMismatch { .. }
+                | TypeCheckerError::ComplexTypeMismatch { .. }
+                | TypeCheckerError::ComplexTypeMismatchWithOrigins { .. }
+        )
+    })
+    .run();
 }
 
 #[test]
 fn test_return_type_mismatch() {
-    assert_type_error(
+    Tester::new(
         r#"
         func get_number(): number {
             return "string";
         }
         "#,
-        |e| {
-            matches!(
-                e,
-                TypeCheckerError::TypeMismatch { .. }
-                    | TypeCheckerError::ComplexTypeMismatch { .. }
-                    | TypeCheckerError::ComplexTypeMismatchWithOrigins { .. }
-            )
-        },
-    );
+    )
+    .expect_error(|e| {
+        matches!(
+            e,
+            TypeCheckerError::TypeMismatch { .. }
+                | TypeCheckerError::ComplexTypeMismatch { .. }
+                | TypeCheckerError::ComplexTypeMismatchWithOrigins { .. }
+        )
+    })
+    .run();
 }
 
 #[test]
 fn test_missing_return_statement() {
-    assert_type_error(
+    Tester::new(
         r#"
         func add(a: number, b: number): number {
             // Missing return statement
         }
         "#,
-        |e| matches!(e, TypeCheckerError::MissingReturnStatement { .. }),
-    );
+    )
+    .expect_error(|e| matches!(e, TypeCheckerError::MissingReturnStatement { .. }))
+    .run();
 }
 
 #[test]
 fn test_missing_return_one_branch() {
-    assert_type_error(
+    Tester::new(
         r#"
         func foo(x: number): number {
             if x > 0 {
@@ -147,25 +175,27 @@ fn test_missing_return_one_branch() {
             // Missing else branch return
         }
         "#,
-        |e| matches!(e, TypeCheckerError::MissingReturnStatement { .. }),
-    );
+    )
+    .expect_error(|e| matches!(e, TypeCheckerError::MissingReturnStatement { .. }))
+    .run();
 }
 
 #[test]
 fn test_invalid_return_outside_function() {
-    assert_type_error("return 5;", |e| {
-        matches!(e, TypeCheckerError::InvalidReturnOutsideFunction { .. })
-    });
+    Tester::new("return 5;")
+        .expect_error(|e| matches!(e, TypeCheckerError::InvalidReturnOutsideFunction { .. }))
+        .run();
 }
 
 #[test]
 fn test_invalid_return_in_global_block() {
-    assert_type_error(
+    Tester::new(
         r#"
         {
             return 10;
         }
         "#,
-        |e| matches!(e, TypeCheckerError::InvalidReturnOutsideFunction { .. }),
-    );
+    )
+    .expect_error(|e| matches!(e, TypeCheckerError::InvalidReturnOutsideFunction { .. }))
+    .run();
 }

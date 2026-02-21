@@ -3,24 +3,26 @@ use crate::typechecker::tests::helpers::*;
 
 #[test]
 fn test_invalid_tuple_index_out_of_bounds() {
-    assert_type_error(
+    Tester::new(
         r#"
         let t = (1, 2, 3);
         let x = t.3;
         "#,
-        |e| matches!(e, TypeCheckerError::TypeHasNoFields { .. }),
-    );
+    )
+    .expect_error(|e| matches!(e, TypeCheckerError::TypeHasNoFields { .. }))
+    .run();
 }
 
 #[test]
 fn test_invalid_tuple_index_non_numeric() {
-    assert_type_error(
+    Tester::new(
         r#"
         let t = (1, 2);
         let x = t.foo;
         "#,
-        |e| matches!(e, TypeCheckerError::TypeHasNoFields { .. }),
-    );
+    )
+    .expect_error(|e| matches!(e, TypeCheckerError::TypeHasNoFields { .. }))
+    .run();
 }
 
 #[test]

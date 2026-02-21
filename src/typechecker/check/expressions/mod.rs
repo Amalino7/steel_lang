@@ -252,8 +252,7 @@ impl<'src> TypeChecker<'src> {
             expected
         };
 
-        if let (Type::Interface(iface_name), Some(name)) =
-            (expected_type, expr.ty.get_name())
+        if let (Type::Interface(iface_name), Some(name)) = (expected_type, expr.ty.get_name())
             && let Some(idx) = self.sys.get_vtable_idx(name, iface_name.clone())
         {
             return Ok(TypedExpr {

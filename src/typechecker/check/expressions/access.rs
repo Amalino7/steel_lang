@@ -5,6 +5,7 @@ use crate::typechecker::core::error::{TypeCheckerError, TypeCheckerWarning};
 use crate::typechecker::core::types::Type;
 use crate::typechecker::system::TypeSystem;
 use crate::typechecker::{similarity, Symbol, TypeChecker};
+use std::rc::Rc;
 
 impl<'src> TypeChecker<'src> {
     pub(crate) fn check_get(
@@ -37,7 +38,7 @@ impl<'src> TypeChecker<'src> {
             object,
             field,
             *safe,
-            |this, typed_obj, index, field_type| {
+            |this, typed_obj, index, field_type, safe| {
                 let typed_value = this.coerce_expression(value, &field_type)?;
                 Ok(TypedExpr {
                     ty: field_type,
@@ -46,7 +47,7 @@ impl<'src> TypeChecker<'src> {
                         object: Box::new(typed_obj),
                         index,
                         value: Box::new(typed_value),
-                        safe: *safe,
+                        safe,
                     },
                 })
             },
@@ -61,22 +62,25 @@ impl<'src> TypeChecker<'src> {
         index: &Expr<'src>,
     ) -> Result<TypedExpr, TypeCheckerError> {
         let object_typed = self.check_expression(object, &Type::Unknown)?;
-        let parent_type = object_typed
-            .ty
-            .unwrap_optional_safe(*safe, object_typed.span)?;
+        let (parent_type, safe) =
+            object_typed
+                .ty
+                .unwrap_optional_safe(*safe, object_typed.span, &mut self.warnings);
 
-        let inner = parent_type.list_element().cloned().ok_or_else(|| {
-            TypeCheckerError::TypeMismatch {
-                expected: Type::new_list(Type::Any),
-                found: parent_type,
-                span: object_typed.span,
-                message: "Indexing is only supported on lists.",
-            }
-        })?;
+        let inner =
+            parent_type
+                .list_element()
+                .cloned()
+                .ok_or_else(|| TypeCheckerError::TypeMismatch {
+                    expected: Type::new_list(Type::Any),
+                    found: parent_type,
+                    span: object_typed.span,
+                    message: "Indexing is only supported on lists.",
+                })?;
 
         let index_typed = self.coerce_expression(index, &Type::Number)?;
         let mut ty = inner;
-        if *safe {
+        if safe {
             ty = ty.wrap_in_optional();
         }
 
@@ -86,7 +90,7 @@ impl<'src> TypeChecker<'src> {
             kind: ExprKind::GetIndex {
                 object: Box::new(object_typed),
                 index: Box::new(index_typed),
-                safe: *safe,
+                safe,
             },
         })
     }
@@ -100,18 +104,21 @@ impl<'src> TypeChecker<'src> {
         value: &Expr<'src>,
     ) -> Result<TypedExpr, TypeCheckerError> {
         let object_typed = self.check_expression(object, &Type::Unknown)?;
-        let parent_type = object_typed
-            .ty
-            .unwrap_optional_safe(*safe, object_typed.span)?;
+        let (parent_type, safe) =
+            object_typed
+                .ty
+                .unwrap_optional_safe(*safe, object_typed.span, &mut self.warnings);
 
-        let inner = parent_type.list_element().cloned().ok_or_else(|| {
-            TypeCheckerError::TypeMismatch {
-                expected: Type::new_list(Type::Any),
-                found: parent_type,
-                span: object_typed.span,
-                message: "Indexing is only supported on lists.",
-            }
-        })?;
+        let inner =
+            parent_type
+                .list_element()
+                .cloned()
+                .ok_or_else(|| TypeCheckerError::TypeMismatch {
+                    expected: Type::new_list(Type::Any),
+                    found: parent_type,
+                    span: object_typed.span,
+                    message: "Indexing is only supported on lists.",
+                })?;
 
         let index_typed = self.coerce_expression(index, &Type::Number)?;
         let value_typed = self.coerce_expression(value, &inner)?;
@@ -123,7 +130,7 @@ impl<'src> TypeChecker<'src> {
                 object: Box::new(object_typed),
                 index: Box::new(index_typed),
                 value: Box::new(value_typed),
-                safe: *safe,
+                safe,
             },
         })
     }
@@ -131,11 +138,12 @@ impl<'src> TypeChecker<'src> {
         &mut self,
         object_typed: TypedExpr,
         member_token: &Token,
-        is_safe: bool,
+        safe: bool,
     ) -> Result<TypedExpr, TypeCheckerError> {
-        let actual_ty = object_typed
-            .ty
-            .unwrap_optional_safe(is_safe, member_token.span)?;
+        let (actual_ty, safe) =
+            object_typed
+                .ty
+                .unwrap_optional_safe(safe, member_token.span, &mut self.warnings);
 
         if let Ok((idx, field_type)) = resolve_member_type(&actual_ty, member_token, &self.sys) {
             let mut expr = TypedExpr {
@@ -144,20 +152,20 @@ impl<'src> TypeChecker<'src> {
                 kind: ExprKind::GetField {
                     object: Box::new(object_typed),
                     index: idx,
-                    safe: is_safe,
+                    safe,
                 },
             };
-            if is_safe {
+            if safe {
                 expr.ty = expr.ty.wrap_in_optional();
             }
             return Ok(expr);
         }
 
         if let Type::Interface(name) = &actual_ty {
-            return self.resolve_interface_method(name, object_typed, member_token, is_safe);
+            return self.resolve_interface_method(name, object_typed, member_token, safe);
         }
 
-        self.resolve_regular_method(actual_ty, object_typed, member_token, is_safe)
+        self.resolve_regular_method(actual_ty, object_typed, member_token, safe)
     }
     fn resolve_interface_method(
         &self,
@@ -215,72 +223,57 @@ impl<'src> TypeChecker<'src> {
         // Type.method
         let mangled_name = format!("{}.{}", type_name, method_token.lexeme);
 
-        let methods = self.scopes.get_methods_for_type(type_name);
         let lookup_result = self.scopes.lookup(&mangled_name);
-        let (ctx, resolved_var) = lookup_result.ok_or_else(|| {
-            // Combine methods and fields for suggestions (user might have meant either)
-            let mut candidates: Vec<String> = methods.clone();
-
+        let Some((ctx, resolved_var)) = lookup_result else {
+            let mut candidates: Vec<String> = self.scopes.get_methods_for_type(type_name);
             // Add field names if this is a struct type
             if let Some(struct_def) = self.sys.get_struct(type_name) {
                 candidates.extend(struct_def.fields.keys().map(|s| s.to_string()));
             }
 
-            let suggestions = crate::typechecker::similarity::find_similar(
+            let suggestions = similarity::find_similar(
                 method_token.lexeme,
                 candidates.iter().map(|s| s.as_str()),
                 3,
             );
-            TypeCheckerError::UndefinedMethod {
+            return Err(TypeCheckerError::UndefinedMethod {
                 span: method_token.span,
                 found: obj_type.clone(),
                 method_name: method_token.lexeme.to_string(),
                 type_origin: None, // TODO: track type definition span
                 suggestions,
-            }
-        })?;
+            });
+        };
 
-        if let Type::Function(func) = &ctx.type_info
-            && func.is_static()
-        {
+        let generics_map = self.sys.get_generics_map(&obj_type);
+        let Type::Function(func) = &ctx.type_info else {
+            unreachable!("Method should be of type function")
+        };
+
+        if func.is_static() {
             return Err(TypeCheckerError::StaticMethodOnInstance {
                 method_name: method_token.lexeme.to_string(),
                 span: method_token.span,
             });
         }
 
-        let generics_map = self.sys.get_generics_map(&obj_type);
-        let mut method_ty = match &ctx.type_info {
-            Type::Function(func) => {
-                let expected_self = func.params[0].1.clone().generic_to_concrete(&generics_map);
-                self.infer_ctx
-                    .unify_types(&obj_type, &expected_self)
-                    .map_err(|msg| TypeCheckerError::ComplexTypeMismatch {
-                        expected: expected_self,
-                        found: obj_type.clone(),
-                        span: method_token.span,
-                        message: msg.into(),
-                    })?;
+        let expected_self = func.params[0].1.generic_to_concrete(&generics_map);
+        self.infer_ctx
+            .unify_types(&obj_type, &expected_self)
+            .map_err(|msg| TypeCheckerError::ComplexTypeMismatch {
+                expected: expected_self,
+                found: obj_type.clone(),
+                span: method_token.span,
+                message: msg.into(),
+            })?;
 
-                let params = func
-                    .params
-                    .iter()
-                    .skip(1) // skip self
-                    .map(|(name, ty)| (name.clone(), ty.clone().generic_to_concrete(&generics_map)))
-                    .collect();
-
-                let ret = func.return_type.clone().generic_to_concrete(&generics_map);
-
-                let remaining_generics = func
-                    .type_params
-                    .iter()
-                    .filter(|g| !generics_map.contains_key(*g))
-                    .cloned()
-                    .collect();
-
-                Type::new_function(params, ret, remaining_generics)
-            }
-            _ => unreachable!("Methods are only of type function"),
+        let mut method_ty = ctx.type_info.generic_to_concrete(&generics_map);
+        let mut method_ty = if let Type::Function(ref mut func) = method_ty {
+            let func = Rc::make_mut(func);
+            func.params.remove(0);
+            method_ty
+        } else {
+            unreachable!("Method should be of type function")
         };
 
         if safe {
@@ -305,13 +298,16 @@ impl<'src> TypeChecker<'src> {
         callback: F,
     ) -> Result<TypedExpr, TypeCheckerError>
     where
-        F: FnOnce(&mut Self, TypedExpr, u8, Type) -> Result<TypedExpr, TypeCheckerError>,
+        F: FnOnce(&mut Self, TypedExpr, u8, Type, bool) -> Result<TypedExpr, TypeCheckerError>,
     {
         let object_typed = self.check_expression(object_expr, &Type::Unknown)?;
-        let parent_type = object_typed.ty.unwrap_optional_safe(safe, field.span)?;
+        let (parent_type, safe) =
+            object_typed
+                .ty
+                .unwrap_optional_safe(safe, field.span, &mut self.warnings);
 
         let (index, field_type) = resolve_member_type(&parent_type, field, &self.sys)?;
-        callback(self, object_typed, index, field_type)
+        callback(self, object_typed, index, field_type, safe)
     }
 }
 

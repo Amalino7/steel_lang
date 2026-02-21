@@ -199,7 +199,12 @@ impl StructType {
 
         let self_type = Type::Struct(
             self.name.clone(),
-            Rc::new(self.generic_params.iter().map(|s| map[s].clone()).collect()),
+            Rc::from(
+                self.generic_params
+                    .iter()
+                    .map(|s| map[s].clone())
+                    .collect::<Vec<_>>(),
+            ),
         );
 
         TypeConstructor {

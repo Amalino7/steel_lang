@@ -2,7 +2,7 @@ mod display;
 pub mod type_defs;
 
 use crate::scanner::Span;
-use crate::typechecker::core::error::TypeCheckerError;
+use crate::typechecker::core::error::TypeCheckerWarning;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -42,9 +42,7 @@ impl PartialEq for FunctionType {
 pub struct TupleType {
     pub types: Vec<Type>,
 }
-
-// TODO use Rc<[Type]>
-pub type GenericArgs = Rc<Vec<Type>>;
+pub type GenericArgs = Rc<[Type]>;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Type {
@@ -72,11 +70,11 @@ pub enum Type {
 
 impl Type {
     pub fn new_list(element: Type) -> Type {
-        Type::List(Rc::new(vec![element]))
+        Type::List(Rc::from(vec![element]))
     }
 
     pub fn new_map(key: Type, value: Type) -> Type {
-        Type::Map(Rc::new(vec![key, value]))
+        Type::Map(Rc::from(vec![key, value]))
     }
 
     pub fn list_element(&self) -> Option<&Type> {
@@ -106,7 +104,7 @@ impl Type {
     pub fn generic_args(&self) -> &[Type] {
         match self {
             Type::Struct(_, args) | Type::Enum(_, args) | Type::List(args) | Type::Map(args) => {
-                args.as_slice()
+                args
             }
             _ => &[],
         }
@@ -119,7 +117,7 @@ impl Type {
 
 impl Type {
     pub fn transform(
-        self,
+        &self,
         f: &impl Fn(Type) -> Type,
         u: &impl Fn(&[Symbol]) -> Vec<Symbol>,
     ) -> Type {
@@ -136,20 +134,20 @@ impl Type {
             | Type::Any
             | Type::GenericParam(_)
             | Type::Metatype(_, _)
-            | Type::Interface(_) => self,
+            | Type::Interface(_) => self.clone(),
 
             Type::Optional(inner) => Type::Optional(Box::new(inner.transform(f, u))),
             Type::List(args) => {
-                let new_args = args.iter().map(|t| t.clone().transform(f, u)).collect();
-                Type::List(Rc::new(new_args))
+                let new_args: Vec<_> = args.iter().map(|t| t.clone().transform(f, u)).collect();
+                Type::List(Rc::from(new_args))
             }
             Type::Map(args) => {
-                let new_args = args.iter().map(|t| t.clone().transform(f, u)).collect();
-                Type::Map(Rc::new(new_args))
+                let new_args: Vec<_> = args.iter().map(|t| t.clone().transform(f, u)).collect();
+                Type::Map(Rc::from(new_args))
             }
             Type::Tuple(tt) => {
-                let types = tt.types.iter().map(|t| t.clone().transform(f, u)).collect();
-                Type::Tuple(Rc::new(TupleType { types }))
+                let types: Vec<_> = tt.types.iter().map(|t| t.clone().transform(f, u)).collect();
+                Type::Tuple(Rc::from(TupleType { types }))
             }
             Type::Function(ft) => {
                 let params = ft
@@ -161,12 +159,12 @@ impl Type {
                 Type::new_general_function(params, ret, u(&ft.type_params), ft.is_vararg)
             }
             Type::Struct(name, args) => {
-                let args = args.iter().map(|t| t.clone().transform(f, u)).collect();
-                Type::Struct(name.clone(), Rc::new(args))
+                let args: Vec<_> = args.iter().map(|t| t.clone().transform(f, u)).collect();
+                Type::Struct(name.clone(), Rc::from(args))
             }
             Type::Enum(name, args) => {
-                let args = args.iter().map(|t| t.clone().transform(f, u)).collect();
-                Type::Enum(name.clone(), Rc::new(args))
+                let args: Vec<_> = args.iter().map(|t| t.clone().transform(f, u)).collect();
+                Type::Enum(name.clone(), Rc::from(args))
             }
         };
         f(transformed)
@@ -206,39 +204,24 @@ impl Type {
         self.all(&|ty| !matches!(ty, Type::Infer(_) | Type::Unknown | Type::Metatype(..)))
     }
 
-    pub fn unwrap_optional_safe(&self, safe: bool, span: Span) -> Result<Type, TypeCheckerError> {
-        if safe {
-            match self {
-                Type::Optional(inner) => Ok(inner.as_ref().clone()),
-                _ => Err(TypeCheckerError::TypeMismatch {
-                    expected: Type::Optional(Box::new(Type::Any)),
-                    found: self.clone(),
-                    span,
-                    message: "Cannot access safe navigation of non-optional type. Remove ?.",
-                }),
-            }
-        } else {
-            Ok(self.clone())
-        }
-    }
-
-    /// Unwraps optional for safe access, emitting a warning instead of error if used on non-optional
-    pub fn unwrap_optional_safe_warn(
+    /// Unwraps optional for safe access, emitting a warning instead if used on non-optional
+    /// Returns also whether this is should be a safe access or a normal one.
+    pub fn unwrap_optional_safe(
         &self,
         safe: bool,
         span: Span,
-        warnings: &mut Vec<crate::typechecker::core::error::TypeCheckerWarning>,
-    ) -> Type {
+        warnings: &mut Vec<TypeCheckerWarning>,
+    ) -> (Type, bool) {
         if safe {
             match self {
-                Type::Optional(inner) => inner.as_ref().clone(),
-                _ => {
-                    warnings.push(crate::typechecker::core::error::TypeCheckerWarning::SafeAccessOnNonOptional { span });
-                    self.clone()
+                Type::Optional(inner) => (inner.as_ref().clone(), true),
+                ty => {
+                    warnings.push(TypeCheckerWarning::SafeAccessOnNonOptional { span });
+                    (ty.clone(), false)
                 }
             }
         } else {
-            self.clone()
+            (self.clone(), false)
         }
     }
 
@@ -333,7 +316,7 @@ impl Type {
         }
     }
 
-    pub fn generic_to_concrete(self, map: &HashMap<Symbol, Type>) -> Type {
+    pub fn generic_to_concrete(&self, map: &HashMap<Symbol, Type>) -> Type {
         self.transform(
             &|ty| match ty {
                 Type::GenericParam(ref sym) => match map.get(sym) {

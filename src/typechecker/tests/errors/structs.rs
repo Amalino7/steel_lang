@@ -6,26 +6,32 @@ fn test_undefined_field_access() {
     // Note: field read access on structs falls through to method lookup and
     // produces UndefinedMethod (not UndefinedField). UndefinedField is only
     // emitted for assignment (write) to an undefined field.
-    assert_type_error(
+    Tester::new(
         r#"
         struct Point { x: number, y: number }
         let p = Point(x: 1, y: 2);
         let z = p.z;
         "#,
+    )
+    .expect_error(
         |e| matches!(e, TypeCheckerError::UndefinedMethod { method_name, .. } if method_name == "z"),
-    );
+    )
+    .run();
 }
 
 #[test]
 fn test_undefined_field_assignment() {
-    assert_type_error(
+    Tester::new(
         r#"
         struct Point { x: number, y: number }
         let p = Point(x: 1, y: 2);
         p.z = 10;
         "#,
+    )
+    .expect_error(
         |e| matches!(e, TypeCheckerError::UndefinedField { field_name, .. } if field_name == "z"),
-    );
+    )
+    .run();
 }
 
 // Note: field access on primitives (number, string, boolean) produces UndefinedMethod
@@ -34,64 +40,71 @@ fn test_undefined_field_assignment() {
 
 #[test]
 fn test_field_access_on_number_gives_undefined_method() {
-    assert_type_error(
+    Tester::new(
         r#"
         let x = 5;
         let y = x.non_existent_field;
         "#,
-        |e| matches!(e, TypeCheckerError::UndefinedMethod { .. }),
-    );
+    )
+    .expect_error(|e| matches!(e, TypeCheckerError::UndefinedMethod { .. }))
+    .run();
 }
 
 #[test]
 fn test_field_access_on_string_gives_undefined_method() {
-    assert_type_error(
+    Tester::new(
         r#"
         let s = "hello";
         let x = s.non_existent_field;
         "#,
-        |e| matches!(e, TypeCheckerError::UndefinedMethod { .. }),
-    );
+    )
+    .expect_error(|e| matches!(e, TypeCheckerError::UndefinedMethod { .. }))
+    .run();
 }
 
 #[test]
 fn test_field_access_on_boolean_gives_undefined_method() {
-    assert_type_error(
+    Tester::new(
         r#"
         let b = true;
         let x = b.non_existent_field;
         "#,
-        |e| matches!(e, TypeCheckerError::UndefinedMethod { .. }),
-    );
+    )
+    .expect_error(|e| matches!(e, TypeCheckerError::UndefinedMethod { .. }))
+    .run();
 }
 
 #[test]
 fn test_struct_outside_global_scope_in_function() {
-    assert_type_error(
+    Tester::new(
         r#"
         func foo() {
             struct Point { x: number }
         }
         "#,
+    )
+    .expect_error(
         |e| matches!(e, TypeCheckerError::StructOutsideOfGlobalScope { name, .. } if name == "Point"),
-    );
+    )
+    .run();
 }
 
 #[test]
 fn test_struct_outside_global_scope_in_block() {
-    assert_type_error(
+    Tester::new(
         r#"
         {
             struct Point { x: number }
         }
         "#,
-        |e| matches!(e, TypeCheckerError::StructOutsideOfGlobalScope { .. }),
-    );
+    )
+    .expect_error(|e| matches!(e, TypeCheckerError::StructOutsideOfGlobalScope { .. }))
+    .run();
 }
 
 #[test]
 fn test_undefined_method() {
-    assert_type_error(
+    Tester::new(
         r#"
         struct Point { x: number }
         impl Point {
@@ -100,15 +113,16 @@ fn test_undefined_method() {
         let p = Point(x: 5);
         p.undefined_method();
         "#,
-        |e| {
-            matches!(e, TypeCheckerError::UndefinedMethod { method_name, .. } if method_name == "undefined_method")
-        },
-    );
+    )
+    .expect_error(|e| {
+        matches!(e, TypeCheckerError::UndefinedMethod { method_name, .. } if method_name == "undefined_method")
+    })
+    .run();
 }
 
 #[test]
 fn test_static_method_on_instance() {
-    assert_type_error(
+    Tester::new(
         r#"
         struct Point { x: number }
         impl Point {
@@ -117,6 +131,9 @@ fn test_static_method_on_instance() {
         let p = Point(x: 5);
         p.new();
         "#,
+    )
+    .expect_error(
         |e| matches!(e, TypeCheckerError::StaticMethodOnInstance { method_name, .. } if method_name == "new"),
-    );
+    )
+    .run();
 }

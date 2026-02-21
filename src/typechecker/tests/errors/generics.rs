@@ -22,21 +22,48 @@ fn test_generic_type_explicit_struct() {
         "#,
     );
 }
-
+#[test]
+fn test_cannot_infer_fn_type() {
+    Tester::new(
+        r#"
+        func fake_identity<T,U>(x: T): T { return x; }
+        let x = fake_identity(1);
+        "#,
+    )
+    .expect_error(|e| matches!(e, TypeCheckerError::CannotInferType { .. }))
+    .run();
+}
+#[test]
+fn test_cannot_infer_method() {
+    Tester::new(
+        r#"
+        struct Box<T,U> { value: T }
+        impl<T,U> Box<T,U> {
+            func new(a: T): Self {
+                return Box(value: a);
+            }
+        }
+        let b = Box.new(1);
+        "#,
+    )
+    .expect_error(|e| matches!(e, TypeCheckerError::CannotInferType { .. }))
+    .run();
+}
 #[test]
 fn test_cannot_infer() {
-    assert_type_error(
+    Tester::new(
         r#"
         struct Box<T,U> { value: T }
         let b = Box(value: 5);
         "#,
-        |e| matches!(e, TypeCheckerError::CannotInferType { .. }),
     )
+    .expect_error(|e| matches!(e, TypeCheckerError::CannotInferType { .. }))
+    .run();
 }
 
 #[test]
 fn test_wrong_specialization() {
-    assert_type_error(
+    Tester::new(
         r#"
         struct Box<T> { top: T }
         impl<T> Box<T> {
@@ -49,89 +76,96 @@ fn test_wrong_specialization() {
         let box2 = Box.<number>(top: 10);
         let box3 = Box.new.<number>(top: 10); // This should fail, generic is on number
         "#,
-        |e| matches!(e, TypeCheckerError::InvalidGenericSpecification { .. }),
     )
+    .expect_error(|e| matches!(e, TypeCheckerError::InvalidGenericSpecification { .. }))
+    .run();
 }
 
 #[test]
 fn test_generic_count_mismatch_too_many() {
-    assert_type_error(
+    Tester::new(
         r#"
         struct Box<T> { value: T }
         let b: Box<number, string> = Box(value: 5);
         "#,
-        |e| {
-            matches!(
-                e,
-                TypeCheckerError::GenericCountMismatch {
-                    found: 2,
-                    expected: 1,
-                    ..
-                }
-            )
-        },
-    );
+    )
+    .expect_error(|e| {
+        matches!(
+            e,
+            TypeCheckerError::GenericCountMismatch {
+                found: 2,
+                expected: 1,
+                ..
+            }
+        )
+    })
+    .run();
 }
 
 #[test]
 fn test_generic_count_mismatch_too_few() {
-    assert_type_error(
+    Tester::new(
         r#"
         struct Pair<T, U> { first: T, second: U }
         let p: Pair<number> = Pair(first: 1, second: 2);
         "#,
-        |e| {
-            matches!(
-                e,
-                TypeCheckerError::GenericCountMismatch {
-                    found: 1,
-                    expected: 2,
-                    ..
-                }
-            )
-        },
-    );
+    )
+    .expect_error(|e| {
+        matches!(
+            e,
+            TypeCheckerError::GenericCountMismatch {
+                found: 1,
+                expected: 2,
+                ..
+            }
+        )
+    })
+    .run();
 }
 
 #[test]
 fn test_generic_count_mismatch_zero_given() {
-    assert_type_error(
+    Tester::new(
         r#"
         struct Box<T> { value: T }
         let b: Box = Box(value: 5);
         "#,
-        |e| {
-            matches!(
-                e,
-                TypeCheckerError::GenericCountMismatch {
-                    found: 0,
-                    expected: 1,
-                    ..
-                }
-            )
-        },
-    );
+    )
+    .expect_error(|e| {
+        matches!(
+            e,
+            TypeCheckerError::GenericCountMismatch {
+                found: 0,
+                expected: 1,
+                ..
+            }
+        )
+    })
+    .run();
 }
 
 #[test]
 fn test_generic_mismatch() {
-    assert_type_error(
+    Tester::new(
         r#"
         struct Box<T> { value: T }
         let b: Box<string> = Box(value: 5);
         "#,
-        |e| matches!(e, TypeCheckerError::ComplexTypeMismatch { .. }),
-    );
+    )
+    .expect_error(|e| matches!(e, TypeCheckerError::ComplexTypeMismatch { .. }))
+    .run();
 }
+
 #[test]
 fn test_generic_mismatch2() {
-    assert_type_error(
+    Tester::new(
         r#"
         struct Box<T> { value: T }
         let b = Box.<string>(value: 5);
         "#,
-        |e| matches!(e, TypeCheckerError::ComplexTypeMismatch { .. }),
-    );
+    )
+    .expect_error(|e| matches!(e, TypeCheckerError::ComplexTypeMismatch { .. }))
+    .run();
 }
 
 #[test]
@@ -158,22 +192,24 @@ fn test_generic_function_inferred_type() {
 
 #[test]
 fn test_invalid_generic_specification() {
-    assert_type_error(
+    Tester::new(
         r#"
         struct Box<T> { value: T }
         let b = Box.<number, string>(value: 5);
-        b.value = "hello";"#,
-        |e| matches!(e, TypeCheckerError::InvalidGenericSpecification { .. }),
+        "#,
     )
+    .expect_error(|e| matches!(e, TypeCheckerError::InvalidGenericSpecification { .. }))
+    .run();
 }
 
 #[test]
 fn test_invalid_generic_specialization() {
-    assert_type_error(
+    Tester::new(
         r#"
         struct Vec3 { x: number, y: number, z: number }
         let b = Vec3.<number>(1,2,3);
         "#,
-        |e| matches!(e, TypeCheckerError::InvalidGenericSpecification { .. }),
     )
+    .expect_error(|e| matches!(e, TypeCheckerError::InvalidGenericSpecification { .. }))
+    .run();
 }

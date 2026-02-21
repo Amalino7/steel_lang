@@ -16,8 +16,22 @@ impl<'src> TypeChecker<'src> {
         safe: &bool,
     ) -> Result<TypedExpr, TypeCheckerError> {
         let mut callee_typed = self.check_expression(callee, &Type::Unknown)?;
+
+        let safe = if let ExprKind::MethodGet { safe, .. } = callee_typed.kind {
+            safe
+        } else if let ExprKind::InterfaceMethodGet { safe, .. } = callee_typed.kind {
+            safe
+        } else {
+            *safe
+        };
+
+        let (lookup_type, safe) =
+            callee_typed
+                .ty
+                .unwrap_optional_safe(safe, callee_typed.span, &mut self.warnings);
+
         // Handle Struct constructor
-        if let Type::Metatype(name, generics) = &callee_typed.ty
+        if let Type::Metatype(name, generics) = &lookup_type
             && let Some(struct_def) = self.sys.get_struct(name)
         {
             let constructor = struct_def.get_constructor(generics, &mut self.infer_ctx);
@@ -37,7 +51,7 @@ impl<'src> TypeChecker<'src> {
             });
         }
 
-        if let Type::Metatype(name, generics) = &callee_typed.ty
+        if let Type::Metatype(name, generics) = &lookup_type
             && let Some(enum_def) = self.sys.get_enum(name)
             && let ExprKind::EnumInit { value, .. } = &mut callee_typed.kind
         {
@@ -73,157 +87,40 @@ impl<'src> TypeChecker<'src> {
             return Ok(callee_typed);
         }
 
-        let safe = if let ExprKind::MethodGet { safe, .. } = callee_typed.kind {
-            safe
-        } else if let ExprKind::InterfaceMethodGet { safe, .. } = callee_typed.kind {
-            safe
-        } else {
-            *safe
+        // Check for Normal Function Call
+        if let Type::Function(func) = &lookup_type {
+            let map: HashMap<Symbol, Type> =
+                generics_to_map(&func.type_params, &[], Some(&mut self.infer_ctx));
+
+            let Type::Function(func) = Type::Function(func.clone()).generic_to_concrete(&map)
+            else {
+                panic!("Should have errored earlier");
+            };
+
+            let bound_args =
+                self.bind_arguments(callee.span(), &func.params, arguments, func.is_vararg)?;
+            let ret_type = if safe {
+                func.return_type.clone().wrap_in_optional()
+            } else {
+                func.return_type.clone()
+            };
+            let ret_type = self.infer_ctx.substitute(&ret_type);
+            return Ok(TypedExpr {
+                ty: ret_type,
+                span: expr.span(),
+                kind: ExprKind::Call {
+                    callee: Box::new(callee_typed),
+                    arguments: bound_args,
+                    safe,
+                },
+            });
         };
 
-        let lookup_type = callee_typed
-            .ty
-            .unwrap_optional_safe(safe, callee_typed.span)?;
-
-        // Check for Normal Function Call
-        match lookup_type {
-            Type::Function(func) => {
-                let map: HashMap<Symbol, Type> =
-                    generics_to_map(&func.type_params, &[], Some(&mut self.infer_ctx));
-
-                let Type::Function(func) = Type::Function(func.clone()).generic_to_concrete(&map)
-                else {
-                    panic!("Should have errored earlier");
-                };
-
-                let bound_args =
-                    self.bind_arguments(callee.span(), &func.params, arguments, func.is_vararg)?;
-                let ret_type = if safe {
-                    func.return_type.clone().wrap_in_optional()
-                } else {
-                    func.return_type.clone()
-                };
-
-                // TODO likely unreliable
-                let uninferred: Vec<_> = map
-                    .iter()
-                    .filter(|(_, v)| **v == Type::Unknown)
-                    .map(|(name, _)| name.to_string())
-                    .collect();
-                if !uninferred.is_empty() {
-                    return Err(TypeCheckerError::CannotInferType {
-                        span: callee.span(),
-                        uninferred_generics: uninferred,
-                    });
-                }
-                let ret_type = self.infer_ctx.substitute(&ret_type);
-
-                Ok(TypedExpr {
-                    ty: ret_type,
-                    span: expr.span(),
-                    kind: ExprKind::Call {
-                        callee: Box::new(callee_typed),
-                        arguments: bound_args,
-                        safe,
-                    },
-                })
-            }
-            _ => Err(TypeCheckerError::CalleeIsNotCallable {
-                found: callee_typed.ty,
-                span: callee_typed.span,
-            }),
-        }
+        Err(TypeCheckerError::CalleeIsNotCallable {
+            found: callee_typed.ty,
+            span: callee_typed.span,
+        })
     }
-
-    // fn handle_enum_call(
-    //     &mut self,
-    //     _variant_name: Symbol,
-    //     variant_type: &Type,
-    //     map: &HashMap<Symbol, Type>,
-    //     inferred_args: &Vec<CallArg<'src>>,
-    //     span: Span,
-    // ) -> Result<TypedExpr, TypeCheckerError> {
-    //     let bind_and_process = |this: &mut Self,
-    //                             raw_params: Vec<(String, Type)>|
-    //      -> Result<Vec<TypedExpr>, TypeCheckerError> {
-    //         let concrete_params: Vec<(String, Type)> = raw_params
-    //             .into_iter()
-    //             .map(|(name, ty)| (name, ty.generic_to_concrete(map)))
-    //             .collect();
-    //
-    //         this.bind_arguments(span, &concrete_params, inferred_args, false)
-    //     };
-    //
-    //     let val_expr = match variant_type {
-    //         // Case: MyEnum.Struct(a: 1, b: 2)
-    //         Type::Struct(struct_name, _) => {
-    //             let struct_def = self
-    //                 .sys
-    //                 .get_struct(struct_name)
-    //                 .expect("Enum variant points to non-existent struct");
-    //
-    //             let concrete_struct_generics = struct_def
-    //                 .generic_params
-    //                 .iter()
-    //                 .map(|t| Type::GenericParam(t.clone()).generic_to_concrete(map))
-    //                 .collect::<Vec<_>>();
-    //
-    //             let params = struct_def.ordered_fields.clone();
-    //
-    //             let bound_args = bind_and_process(self, params)?;
-    //
-    //             TypedExpr {
-    //                 ty: Type::Struct(struct_name.clone(), Rc::new(concrete_struct_generics)),
-    //                 kind: ExprKind::StructInit {
-    //                     name: Box::from(struct_name.to_string()),
-    //                     args: bound_args,
-    //                 },
-    //                 span,
-    //             }
-    //         }
-    //
-    //         // Case: MyEnum.Tuple(1, 2)
-    //         Type::Tuple(tuple_types) => {
-    //             let params: Vec<(String, Type)> = tuple_types
-    //                 .types
-    //                 .iter()
-    //                 .enumerate()
-    //                 .map(|(i, t)| (i.to_string(), t.clone()))
-    //                 .collect();
-    //
-    //             let bound_args = bind_and_process(self, params)?;
-    //             let concrete_tuple_types = tuple_types
-    //                 .types
-    //                 .iter()
-    //                 .map(|t| t.clone().generic_to_concrete(map))
-    //                 .collect::<Vec<_>>();
-    //
-    //             TypedExpr {
-    //                 ty: Type::Tuple(Rc::new(TupleType {
-    //                     types: concrete_tuple_types,
-    //                 })),
-    //                 kind: ExprKind::Tuple {
-    //                     elements: bound_args,
-    //                 },
-    //                 span,
-    //             }
-    //         }
-    //
-    //         // Case: MyEnum.Value(5)
-    //         _ => {
-    //             let params = vec![("value".to_string(), variant_type.clone())];
-    //
-    //             let mut bound_args = bind_and_process(self, params)?;
-    //             bound_args.pop().ok_or(TypeCheckerError::MissingArgument {
-    //                 param_name: "value".into(),
-    //                 span,
-    //                 callee_origin: None, // TODO: track function definition span
-    //             })?
-    //         }
-    //     };
-    //
-    //     Ok(val_expr)
-    // }
 
     fn bind_arguments(
         &mut self,

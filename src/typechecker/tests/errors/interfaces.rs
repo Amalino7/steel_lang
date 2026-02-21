@@ -3,7 +3,7 @@ use crate::typechecker::tests::helpers::*;
 
 #[test]
 fn test_missing_interface_method() {
-    assert_type_error(
+    Tester::new(
         r#"
         interface Printable {
             func print(self): void;
@@ -15,17 +15,18 @@ fn test_missing_interface_method() {
             func print(self): void { }
         }
         "#,
-        |e| {
-            matches!(e, TypeCheckerError::MissingInterfaceMethods {
-                missing_methods, ..
-            } if missing_methods.iter().any(|m| m == "debug"))
-        },
-    );
+    )
+    .expect_error(|e| {
+        matches!(e, TypeCheckerError::MissingInterfaceMethods {
+            missing_methods, ..
+        } if missing_methods.iter().any(|m| m == "debug"))
+    })
+    .run();
 }
 
 #[test]
 fn test_missing_all_interface_methods() {
-    assert_type_error(
+    Tester::new(
         r#"
         interface Drawable {
             func draw(self): void;
@@ -35,15 +36,16 @@ fn test_missing_all_interface_methods() {
         impl Point : Drawable {
         }
         "#,
-        |e| matches!(e, TypeCheckerError::MissingInterfaceMethods { .. }),
-    );
+    )
+    .expect_error(|e| matches!(e, TypeCheckerError::MissingInterfaceMethods { .. }))
+    .run();
 }
 
 #[test]
 fn test_interface_method_return_type_mismatch() {
     // When a method has the wrong return type, the typechecker reports it as
     // DoesNotImplementInterface with "print (type mismatch)" in missing_methods
-    assert_type_error(
+    Tester::new(
         r#"
         interface Printable {
             func print(self): void;
@@ -54,8 +56,9 @@ fn test_interface_method_return_type_mismatch() {
             func print(self): string { return "hi"; }
         }
         "#,
-        |e| matches!(e, TypeCheckerError::InterfaceMethodTypeMismatch { .. }),
-    );
+    )
+    .expect_error(|e| matches!(e, TypeCheckerError::InterfaceMethodTypeMismatch { .. }))
+    .run();
 }
 
 #[test]

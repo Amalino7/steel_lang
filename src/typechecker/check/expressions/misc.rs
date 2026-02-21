@@ -59,7 +59,7 @@ impl<'src> TypeChecker<'src> {
                         ),
                     })
                 } else {
-                    Rc::get_mut(generics).unwrap().extend(generic_args); // Shouldn't fail
+                    callee_typed.ty = Type::Metatype(type_name.clone(), Rc::from(generic_args));
                     callee_typed.span = expr.span();
                     Ok(callee_typed)
                 }

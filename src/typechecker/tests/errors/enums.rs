@@ -3,7 +3,7 @@ use crate::typechecker::tests::helpers::*;
 
 #[test]
 fn test_uncovered_pattern_simple() {
-    assert_type_error(
+    Tester::new(
         r#"
         enum Bool { True, False }
         let x = Bool.True;
@@ -11,13 +11,16 @@ fn test_uncovered_pattern_simple() {
             Bool.True => { 1; }
         }
         "#,
+    )
+    .expect_error(
         |e| matches!(e, TypeCheckerError::UncoveredPattern { variant, .. } if variant == "False"),
-    );
+    )
+    .run();
 }
 
 #[test]
 fn test_uncovered_pattern_multiple_missing() {
-    assert_type_error(
+    Tester::new(
         r#"
         enum Color { Red, Green, Blue }
         let c = Color.Red;
@@ -25,13 +28,14 @@ fn test_uncovered_pattern_multiple_missing() {
             Color.Red => { 1; }
         }
         "#,
-        |e| matches!(e, TypeCheckerError::UncoveredPattern { .. }),
-    );
+    )
+    .expect_error(|e| matches!(e, TypeCheckerError::UncoveredPattern { .. }))
+    .run();
 }
 
 #[test]
 fn test_uncovered_pattern_with_data() {
-    assert_type_error(
+    Tester::new(
         r#"
         enum Option<T> { Some(T), None }
         let x: Option<number> = Option.Some(5);
@@ -39,13 +43,16 @@ fn test_uncovered_pattern_with_data() {
             Option.Some(v) => { v; }
         }
         "#,
+    )
+    .expect_error(
         |e| matches!(e, TypeCheckerError::UncoveredPattern { variant, .. } if variant == "None"),
-    );
+    )
+    .run();
 }
 
 #[test]
 fn test_unreachable_pattern_duplicate() {
-    assert_type_error(
+    Tester::new(
         r#"
         enum Bool { True, False }
         let x = Bool.True;
@@ -55,34 +62,37 @@ fn test_unreachable_pattern_duplicate() {
             Bool.False => { 3; }
         }
         "#,
-        |e| matches!(e, TypeCheckerError::UnreachablePattern { .. }),
-    );
+    )
+    .expect_error(|e| matches!(e, TypeCheckerError::UnreachablePattern { .. }))
+    .run();
 }
 
 #[test]
 fn test_invalid_is_usage_on_number() {
     // 'is' is only valid on enum types - using it on a number is an error
-    assert_type_error(
+    Tester::new(
         r#"
         enum Color { Red }
         let x = 5;
         if x is Red { }
         "#,
-        |e| matches!(e, TypeCheckerError::InvalidIsUsage { .. }),
-    );
+    )
+    .expect_error(|e| matches!(e, TypeCheckerError::InvalidIsUsage { .. }))
+    .run();
 }
 
 #[test]
 fn test_invalid_is_usage_on_string() {
     // 'is' is only valid on enum types - using it on a string is an error
-    assert_type_error(
+    Tester::new(
         r#"
         enum Color { Red }
         let s = "hello";
         if s is Red { }
         "#,
-        |e| matches!(e, TypeCheckerError::InvalidIsUsage { .. }),
-    );
+    )
+    .expect_error(|e| matches!(e, TypeCheckerError::InvalidIsUsage { .. }))
+    .run();
 }
 
 #[test]
