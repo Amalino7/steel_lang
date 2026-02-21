@@ -30,8 +30,14 @@ impl Display for Type {
             Type::String => write!(f, "string"),
             Type::Void => write!(f, "void"),
             Type::Never => write!(f, "never"),
-            Type::List(inner) => write!(f, "List<{}>", inner),
-            Type::Map(key, value) => write!(f, "Map<{}, {}>", key, value),
+            Type::List(args) => {
+                write!(f, "List")?;
+                print_generics(args, f)
+            }
+            Type::Map(args) => {
+                write!(f, "Map")?;
+                print_generics(args, f)
+            }
             Type::Function(function_type) => {
                 write!(
                     f,
@@ -51,11 +57,7 @@ impl Display for Type {
                 write!(f, "struct {}", name,)?;
                 print_generics(generic_args, f)
             }
-            Type::Interface(name, generic_args) => {
-                write!(f, "interface {}", name,)?;
-                print_generics(generic_args, f)
-            }
-
+            Type::Interface(name) => write!(f, "interface {}", name),
             Type::Enum(name, generic_args) => {
                 write!(f, "enum {}", name,)?;
                 print_generics(generic_args, f)

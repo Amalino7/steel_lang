@@ -215,7 +215,7 @@ impl<'src> TypeChecker<'src> {
                         };
                         let (_, field_type) = struct_def.ordered_fields[field_idx].clone();
                         let map = generics_to_map(
-                            &struct_def.generic_params,
+                            struct_def.generic_params(),
                             generics,
                             Some(&mut self.infer_ctx),
                         );

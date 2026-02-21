@@ -281,11 +281,10 @@ impl<'src> TypeChecker<'src> {
         bracket_token: &crate::scanner::Token,
         expected: &Type,
     ) -> Result<TypedExpr, TypeCheckerError> {
-        let expected_owned = expected.clone();
-        let expected_inner = match expected_owned {
-            Type::List(inner) => Some(inner.as_ref().clone()),
+        let expected_inner = match expected {
+            Type::List(args) => args.first().cloned(),
             Type::Optional(inner) => match inner.as_ref() {
-                Type::List(list_inner) => Some(list_inner.as_ref().clone()),
+                Type::List(args) => args.first().cloned(),
                 _ => None,
             },
             _ => None,
@@ -297,7 +296,7 @@ impl<'src> TypeChecker<'src> {
                 uninferred_generics: vec![],
             })?;
             return Ok(TypedExpr {
-                ty: Type::List(Box::new(inner)),
+                ty: Type::new_list(inner),
                 kind: ExprKind::List { elements: vec![] },
                 span: expr.span(),
             });
@@ -322,7 +321,7 @@ impl<'src> TypeChecker<'src> {
         }
 
         Ok(TypedExpr {
-            ty: Type::List(Box::new(inferred_inner)),
+            ty: Type::new_list(inferred_inner),
             kind: ExprKind::List {
                 elements: typed_elements,
             },

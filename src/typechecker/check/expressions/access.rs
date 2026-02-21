@@ -2,7 +2,7 @@ use crate::parser::ast::Expr;
 use crate::scanner::Token;
 use crate::typechecker::core::ast::{ExprKind, TypedExpr};
 use crate::typechecker::core::error::{TypeCheckerError, TypeCheckerWarning};
-use crate::typechecker::core::types::{GenericArgs, Type};
+use crate::typechecker::core::types::Type;
 use crate::typechecker::system::TypeSystem;
 use crate::typechecker::{similarity, Symbol, TypeChecker};
 
@@ -65,17 +65,17 @@ impl<'src> TypeChecker<'src> {
             .ty
             .unwrap_optional_safe(*safe, object_typed.span)?;
 
-        let Type::List(inner) = parent_type else {
-            return Err(TypeCheckerError::TypeMismatch {
-                expected: Type::List(Box::new(Type::Any)),
+        let inner = parent_type.list_element().cloned().ok_or_else(|| {
+            TypeCheckerError::TypeMismatch {
+                expected: Type::new_list(Type::Any),
                 found: parent_type,
                 span: object_typed.span,
                 message: "Indexing is only supported on lists.",
-            });
-        };
+            }
+        })?;
 
         let index_typed = self.coerce_expression(index, &Type::Number)?;
-        let mut ty = *inner;
+        let mut ty = inner;
         if *safe {
             ty = ty.wrap_in_optional();
         }
@@ -104,20 +104,20 @@ impl<'src> TypeChecker<'src> {
             .ty
             .unwrap_optional_safe(*safe, object_typed.span)?;
 
-        let Type::List(inner) = parent_type else {
-            return Err(TypeCheckerError::TypeMismatch {
-                expected: Type::List(Box::new(Type::Any)),
+        let inner = parent_type.list_element().cloned().ok_or_else(|| {
+            TypeCheckerError::TypeMismatch {
+                expected: Type::new_list(Type::Any),
                 found: parent_type,
                 span: object_typed.span,
                 message: "Indexing is only supported on lists.",
-            });
-        };
+            }
+        })?;
 
         let index_typed = self.coerce_expression(index, &Type::Number)?;
         let value_typed = self.coerce_expression(value, &inner)?;
 
         Ok(TypedExpr {
-            ty: *inner,
+            ty: inner,
             span: expr.span(),
             kind: ExprKind::SetIndex {
                 object: Box::new(object_typed),
@@ -153,14 +153,8 @@ impl<'src> TypeChecker<'src> {
             return Ok(expr);
         }
 
-        if let Type::Interface(name, generics) = &actual_ty {
-            return self.resolve_interface_method(
-                name,
-                generics,
-                object_typed,
-                member_token,
-                is_safe,
-            );
+        if let Type::Interface(name) = &actual_ty {
+            return self.resolve_interface_method(name, object_typed, member_token, is_safe);
         }
 
         self.resolve_regular_method(actual_ty, object_typed, member_token, is_safe)
@@ -168,7 +162,6 @@ impl<'src> TypeChecker<'src> {
     fn resolve_interface_method(
         &self,
         name: &Symbol,
-        generics: &GenericArgs,
         object_typed: TypedExpr,
         member_token: &Token,
         is_safe: bool,
@@ -179,7 +172,7 @@ impl<'src> TypeChecker<'src> {
             let suggestions = similarity::find_similar(member_token.lexeme, method_names, 3);
             return Err(TypeCheckerError::UndefinedMethod {
                 span: member_token.span,
-                found: Type::Interface(iface.name.clone(), generics.clone()),
+                found: Type::Interface(iface.name.clone()),
                 method_name: member_token.lexeme.to_string(),
                 type_origin: Some(iface.origin),
                 suggestions,

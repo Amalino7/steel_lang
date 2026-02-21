@@ -35,16 +35,10 @@ impl TypeSystem {
         primitives.insert("void".into(), Type::Void);
         primitives.insert("any".into(), Type::Any);
         primitives.insert("never".into(), Type::Never);
-        primitives.insert(
-            "List".into(),
-            Type::List(Box::new(GenericParam("Val".into()))),
-        );
+        primitives.insert("List".into(), Type::new_list(GenericParam("T".into())));
         primitives.insert(
             "Map".into(),
-            Type::Map(
-                Box::new(GenericParam("Key".into())),
-                Box::new(GenericParam("Val".into())),
-            ),
+            Type::new_map(GenericParam("K".into()), GenericParam("V".into())),
         );
         primitives
     }
@@ -53,27 +47,32 @@ impl TypeSystem {
         self.impls.get(&(type_name.into(), iface_name)).copied()
     }
 
-    pub fn get_generics_map(&self, ty: &Type) -> HashMap<Symbol, Type> {
-        match ty {
-            Type::Struct(name, args) => {
-                generics_to_map(&self.get_struct(name).unwrap().generic_params, args, None)
-            }
-            Type::Enum(name, args) => {
-                generics_to_map(&self.get_enum(name).unwrap().generic_params, args, None)
-            }
-            Type::List(inner) => {
-                let mut map = HashMap::new();
-                map.insert("T".into(), *inner.clone());
-                map
-            }
-            Type::Map(key, value) => {
-                let mut map = HashMap::new();
-                map.insert("K".into(), *key.clone());
-                map.insert("V".into(), *value.clone());
-                map
-            }
-            _ => HashMap::new(),
+    /// Returns the names of the generic type parameters declared for a named type.
+    pub fn get_generic_param_names(&self, name: &str) -> Vec<Symbol> {
+        if let Some(s) = self.structs.get(name) {
+            s.generic_params().to_vec()
+        } else if let Some(e) = self.enums.get(name) {
+            e.generic_params().to_vec()
+        } else if name == "List" {
+            vec!["T".into()]
+        } else if name == "Map" {
+            vec!["K".into(), "V".into()]
+        } else {
+            vec![]
         }
+    }
+
+    /// Builds a substitution map from a named type and its concrete type arguments.
+    pub fn make_generics_map(&self, name: &str, args: &[Type]) -> HashMap<Symbol, Type> {
+        let params = self.get_generic_param_names(name);
+        generics_to_map(&params, args, None)
+    }
+
+    /// Builds a substitution map from a concrete [`Type`].
+    pub fn get_generics_map(&self, ty: &Type) -> HashMap<Symbol, Type> {
+        ty.get_name()
+            .map(|name| self.make_generics_map(name, ty.generic_args()))
+            .unwrap_or_default()
     }
 
     pub fn declare_struct(&mut self, origin: Span, name: Symbol, generic_params: &[Token]) {
@@ -166,19 +165,7 @@ impl TypeSystem {
     }
 
     pub fn get_generic_count_by_name(&self, name: &str) -> usize {
-        if let Some(s) = self.structs.get(name) {
-            s.generic_params.len()
-        } else if self.interfaces.contains_key(name) {
-            0
-        } else if let Some(e) = self.enums.get(name) {
-            e.generic_params.len()
-        } else if name == "List" {
-            1
-        } else if name == "Map" {
-            2
-        } else {
-            0
-        }
+        self.get_generic_param_names(name).len()
     }
     // TODO rethink logic, missing generics
     pub fn get_owned_name(&self, name: &str) -> Option<Symbol> {
@@ -195,16 +182,6 @@ impl TypeSystem {
         })
     }
 
-    pub fn get_generic_count(&self, ty: &Type) -> usize {
-        match ty {
-            Type::Struct(_, args) => args.len(),
-            Type::Enum(_, args) => args.len(),
-            Type::List(_) => 1,
-            Type::Map(_, _) => 2,
-            _ => 0,
-        }
-    }
-
     pub fn instantiate(
         &self,
         name: &str,
@@ -216,23 +193,18 @@ impl TypeSystem {
         }
 
         if let Some(struct_type) = self.get_struct(name) {
-            check_generic_arity(
-                name,
-                struct_type.generic_params.len(),
-                generics.len(),
-                source,
-            )?;
+            check_generic_arity(name, struct_type.generic_count(), generics.len(), source)?;
             return Ok(Type::Struct(struct_type.name.clone(), Rc::new(generics)));
         }
 
         if let Some(enum_type) = self.get_enum(name) {
-            check_generic_arity(name, enum_type.generic_params.len(), generics.len(), source)?;
+            check_generic_arity(name, enum_type.generic_count(), generics.len(), source)?;
             return Ok(Type::Enum(enum_type.name.clone(), Rc::new(generics)));
         }
 
         if let Some(iface) = self.get_interface(name) {
             check_generic_arity(name, 0, generics.len(), source)?;
-            return Ok(Type::Interface(iface.name.clone(), Rc::new(generics)));
+            return Ok(Type::Interface(iface.name.clone()));
         }
         Err(TypeCheckerError::UndefinedType {
             name: name.to_string(),
@@ -251,14 +223,11 @@ impl TypeSystem {
         match primitive {
             Type::List(_) => {
                 check_generic_arity(name, 1, generics.len(), source)?;
-                Ok(Type::List(Box::new(generics[0].clone())))
+                Ok(Type::new_list(generics[0].clone()))
             }
-            Type::Map(_, _) => {
+            Type::Map(_) => {
                 check_generic_arity(name, 2, generics.len(), source)?;
-                Ok(Type::Map(
-                    Box::new(generics[0].clone()),
-                    Box::new(generics[1].clone()),
-                ))
+                Ok(Type::new_map(generics[0].clone(), generics[1].clone()))
             }
             _ => Ok(primitive.clone()),
         }

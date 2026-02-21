@@ -5,7 +5,6 @@ use crate::typechecker::core::error::TypeCheckerError;
 use crate::typechecker::core::types::{GenericArgs, Type};
 use crate::typechecker::system::generics_to_map;
 use crate::typechecker::{Symbol, TypeChecker};
-use std::collections::HashMap;
 use std::rc::Rc;
 
 impl<'src> TypeChecker<'src> {
@@ -80,15 +79,8 @@ impl<'src> TypeChecker<'src> {
         })?;
 
         let (ctx, resolved_var) = method;
-        let pairs = if let Some(def) = self.sys.get_struct(type_name) {
-            if generics.len() != def.generic_params.len() {
-                HashMap::new()
-            } else {
-                generics_to_map(&def.generic_params, generics, Some(&mut self.infer_ctx))
-            }
-        } else {
-            HashMap::new()
-        };
+        let params = self.sys.get_generic_param_names(type_name);
+        let pairs = generics_to_map(&params, generics, Some(&mut self.infer_ctx));
         let ty = ctx.type_info.clone().generic_to_concrete(&pairs);
         Ok(TypedExpr {
             ty,

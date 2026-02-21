@@ -63,13 +63,58 @@ pub enum Type {
     GenericParam(Symbol),
     Metatype(Symbol, GenericArgs),
     Struct(Symbol, GenericArgs),
-    Interface(Symbol, GenericArgs),
+    Interface(Symbol),
     Enum(Symbol, GenericArgs),
-
-    // TODO use Rc<Type> or migrate to struct.
-    List(Box<Type>),
-    Map(Box<Type>, Box<Type>),
+    List(GenericArgs),
+    Map(GenericArgs),
     Any,
+}
+
+impl Type {
+    pub fn new_list(element: Type) -> Type {
+        Type::List(Rc::new(vec![element]))
+    }
+
+    pub fn new_map(key: Type, value: Type) -> Type {
+        Type::Map(Rc::new(vec![key, value]))
+    }
+
+    pub fn list_element(&self) -> Option<&Type> {
+        if let Type::List(args) = self {
+            args.get(0)
+        } else {
+            None
+        }
+    }
+
+    pub fn map_key(&self) -> Option<&Type> {
+        if let Type::Map(args) = self {
+            args.get(0)
+        } else {
+            None
+        }
+    }
+
+    pub fn map_value(&self) -> Option<&Type> {
+        if let Type::Map(args) = self {
+            args.get(1)
+        } else {
+            None
+        }
+    }
+
+    pub fn generic_args(&self) -> &[Type] {
+        match self {
+            Type::Struct(_, args) | Type::Enum(_, args) | Type::List(args) | Type::Map(args) => {
+                args.as_slice()
+            }
+            _ => &[],
+        }
+    }
+
+    pub fn generic_count(&self) -> usize {
+        self.generic_args().len()
+    }
 }
 
 impl Type {
@@ -90,11 +135,18 @@ impl Type {
             | Type::Unknown
             | Type::Any
             | Type::GenericParam(_)
-            | Type::Metatype(_, _) => self,
+            | Type::Metatype(_, _)
+            | Type::Interface(_) => self,
 
             Type::Optional(inner) => Type::Optional(Box::new(inner.transform(f, u))),
-            Type::List(inner) => Type::List(Box::new(inner.transform(f, u))),
-            Type::Map(k, v) => Type::Map(Box::new(k.transform(f, u)), Box::new(v.transform(f, u))),
+            Type::List(args) => {
+                let new_args = args.iter().map(|t| t.clone().transform(f, u)).collect();
+                Type::List(Rc::new(new_args))
+            }
+            Type::Map(args) => {
+                let new_args = args.iter().map(|t| t.clone().transform(f, u)).collect();
+                Type::Map(Rc::new(new_args))
+            }
             Type::Tuple(tt) => {
                 let types = tt.types.iter().map(|t| t.clone().transform(f, u)).collect();
                 Type::Tuple(Rc::new(TupleType { types }))
@@ -112,10 +164,6 @@ impl Type {
                 let args = args.iter().map(|t| t.clone().transform(f, u)).collect();
                 Type::Struct(name.clone(), Rc::new(args))
             }
-            Type::Interface(name, args) => {
-                let args = args.iter().map(|t| t.clone().transform(f, u)).collect();
-                Type::Interface(name.clone(), Rc::new(args))
-            }
             Type::Enum(name, args) => {
                 let args = args.iter().map(|t| t.clone().transform(f, u)).collect();
                 Type::Enum(name.clone(), Rc::new(args))
@@ -129,13 +177,11 @@ impl Type {
             return true;
         }
         match self {
-            Type::Optional(inner) | Type::List(inner) => inner.any(f),
-            Type::Map(k, v) => k.any(f) || v.any(f),
+            Type::Optional(inner) => inner.any(f),
+            Type::List(args) | Type::Map(args) => args.iter().any(|t| t.any(f)),
             Type::Tuple(tt) => tt.types.iter().any(|t| t.any(f)),
             Type::Function(ft) => ft.params.iter().any(|(_, t)| t.any(f)) || ft.return_type.any(f),
-            Type::Struct(_, args) | Type::Interface(_, args) | Type::Enum(_, args) => {
-                args.iter().any(|t| t.any(f))
-            }
+            Type::Struct(_, args) | Type::Enum(_, args) => args.iter().any(|t| t.any(f)),
             _ => false,
         }
     }
@@ -145,13 +191,11 @@ impl Type {
             return false;
         }
         match self {
-            Type::Optional(inner) | Type::List(inner) => inner.all(f),
-            Type::Map(k, v) => k.all(f) && v.all(f),
+            Type::Optional(inner) => inner.all(f),
+            Type::List(args) | Type::Map(args) => args.iter().all(|t| t.all(f)),
             Type::Tuple(tt) => tt.types.iter().all(|t| t.all(f)),
             Type::Function(ft) => ft.params.iter().all(|(_, t)| t.all(f)) && ft.return_type.all(f),
-            Type::Struct(_, args) | Type::Interface(_, args) | Type::Enum(_, args) => {
-                args.iter().all(|t| t.all(f))
-            }
+            Type::Struct(_, args) | Type::Enum(_, args) => args.iter().all(|t| t.all(f)),
             _ => true,
         }
     }
@@ -209,7 +253,7 @@ impl Type {
         match self {
             Type::Error => None,
             Type::Infer(_) => None,
-            Type::Interface(name, _) => Some(name),
+            Type::Interface(name) => Some(name),
             Type::Number => Some("number"),
             Type::String => Some("string"),
             Type::Boolean => Some("boolean"),
@@ -226,7 +270,7 @@ impl Type {
             Type::Tuple(_) => None,
             Type::Metatype(_, _) => None,
             Type::List(_) => Some("List"),
-            Type::Map(_, _) => Some("Map"),
+            Type::Map(_) => Some("Map"),
         }
     }
 
@@ -307,96 +351,4 @@ impl Type {
             },
         )
     }
-
-    // TODO consider using transform
-    // pub fn generic_to_concrete(self, generics_map: &HashMap<Symbol, Type>) -> Type {
-    //     match self {
-    //         Type::Metatype(_, _) => self,
-    //         Type::Nil
-    //         | Type::Number
-    //         | Type::String
-    //         | Type::Boolean
-    //         | Type::Void
-    //         | Type::Unknown
-    //         | Type::Never
-    //         | Type::Infer(_)
-    //         | Type::Error
-    //         | Type::Any => self,
-    //         Type::Optional(inner) => {
-    //             Type::Optional(Box::new(Self::generic_to_concrete(*inner, generics_map)))
-    //         }
-    //         Type::List(inner) => {
-    //             Type::List(Box::new(Self::generic_to_concrete(*inner, generics_map)))
-    //         }
-    //         Type::Map(key_type, value_type) => Type::Map(
-    //             Box::new(Self::generic_to_concrete(*key_type, generics_map)),
-    //             Box::new(Self::generic_to_concrete(*value_type, generics_map)),
-    //         ),
-    //         Type::Function(func_type) => {
-    //             if func_type.is_vararg {
-    //                 return Type::Function(func_type);
-    //             }
-    //             let params = func_type
-    //                 .params
-    //                 .iter()
-    //                 .map(|(s, t)| (s.to_string(), t.clone().generic_to_concrete(generics_map)))
-    //                 .collect();
-    //             let return_type = func_type
-    //                 .return_type
-    //                 .clone()
-    //                 .generic_to_concrete(generics_map);
-    // Remove generics>
-    // Type::new_function(
-    //     params,
-    //     return_type,
-    //     func_type
-    //         .type_params
-    //         .iter()
-    //         .filter(|s| !generics_map.contains_key(*s))
-    //         .cloned()
-    //         .collect(),
-    // )
-    //         }
-    //         Type::Tuple(types) => {
-    //             let new_types = types
-    //                 .types
-    //                 .iter()
-    //                 .map(|t| Self::generic_to_concrete(t.clone(), generics_map))
-    //                 .collect();
-    //             Type::Tuple(Rc::new(TupleType { types: new_types }))
-    //         }
-    //         Type::GenericParam(generic) => {
-    //             if let Some(new_type) = generics_map.get(&generic) {
-    //                 if new_type == &Type::Unknown {
-    //                     Type::GenericParam(generic)
-    //                 } else {
-    //                     new_type.clone()
-    //                 }
-    //             } else {
-    //                 Type::GenericParam(generic)
-    //             }
-    //         }
-    //         Type::Struct(name, args) => {
-    //             let resolved_args = args
-    //                 .iter()
-    //                 .map(|t| Self::generic_to_concrete(t.clone(), generics_map))
-    //                 .collect();
-    //             Type::Struct(name, Rc::new(resolved_args))
-    //         }
-    //         Type::Interface(name, args) => {
-    //             let resolved_args = args
-    //                 .iter()
-    //                 .map(|t| Self::generic_to_concrete(t.clone(), generics_map))
-    //                 .collect();
-    //             Type::Interface(name, Rc::new(resolved_args))
-    //         }
-    //         Type::Enum(name, args) => {
-    //             let resolved_args = args
-    //                 .iter()
-    //                 .map(|t| Self::generic_to_concrete(t.clone(), generics_map))
-    //                 .collect();
-    //             Type::Enum(name, Rc::new(resolved_args))
-    //         }
-    //     }
-    // }
 }

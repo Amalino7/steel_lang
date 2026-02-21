@@ -12,7 +12,7 @@ pub struct StructType {
     pub origin: Span,
     pub fields: HashMap<Symbol, usize>,
     pub(crate) ordered_fields: Vec<(Symbol, Type)>,
-    pub(crate) generic_params: Vec<Symbol>,
+    generic_params: Vec<Symbol>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -28,8 +28,7 @@ pub struct EnumType {
     pub origin: Span,
     pub variants: HashMap<Symbol, usize>,
     ordered_variants: Vec<(Symbol, Type)>, // Void, one arg, tuple, struct
-    // TODO remove pub
-    pub(crate) generic_params: Vec<Symbol>,
+    generic_params: Vec<Symbol>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -39,6 +38,14 @@ pub struct TypeConstructor {
 }
 
 impl EnumType {
+    pub fn generic_params(&self) -> &[Symbol] {
+        &self.generic_params
+    }
+
+    pub fn generic_count(&self) -> usize {
+        self.generic_params.len()
+    }
+
     pub fn new(name: Symbol, origin: Span, generic_params: Vec<Symbol>) -> Self {
         Self {
             name,
@@ -137,6 +144,14 @@ impl EnumType {
     }
 }
 impl StructType {
+    pub fn generic_params(&self) -> &[Symbol] {
+        &self.generic_params
+    }
+
+    pub fn generic_count(&self) -> usize {
+        self.generic_params.len()
+    }
+
     pub fn new(name: Symbol, origin: Span, generic_params: Vec<Symbol>) -> Self {
         Self {
             name,

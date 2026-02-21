@@ -113,10 +113,18 @@ pub enum TypeCheckerError {
         span: Span,
         original: Span,
     },
-    DoesNotImplementInterface {
+    MissingInterfaceMethods {
         missing_methods: Vec<String>,
         interface: String,
         span: Span,
+        interface_origin: Span,
+    },
+    InterfaceMethodTypeMismatch {
+        method_name: String,
+        interface: String,
+        expected: Type,
+        found: Type,
+        span: Span, // points at the concrete method's name token
         interface_origin: Span,
     },
     UncoveredPattern {
@@ -338,28 +346,52 @@ impl TypeCheckerError {
                     ])
                     .with_note("Functions with a return type must return a value on all paths.");
             }
-            TypeCheckerError::DoesNotImplementInterface {
+            TypeCheckerError::MissingInterfaceMethods {
                 missing_methods,
                 interface,
                 span,
                 interface_origin,
             } => {
-                let mut labels = vec![
+                let labels = vec![
                     Label::new((source_id, span.to_range()))
-                        .with_message(format!(
-                            "Block does not implement interface '{}'. Missing methods: {}",
-                            interface,
-                            missing_methods.join(", ")
-                        ))
+                        .with_message(format!("Missing methods: {}", missing_methods.join(", ")))
                         .with_color(Color::Red),
-                ];
-                labels.push(
                     Label::new((source_id, interface_origin.to_range()))
-                        .with_message(format!("Interface '{}' declared here.", interface))
+                        .with_message(format!("Interface '{}' declared here", interface))
                         .with_color(Color::Yellow),
-                );
+                ];
                 report = report
-                    .with_message(format!("Type does not implement interface '{}'", interface))
+                    .with_message(format!(
+                        "Methods needed to implement '{}' are missing",
+                        interface
+                    ))
+                    .with_labels(labels);
+            }
+
+            TypeCheckerError::InterfaceMethodTypeMismatch {
+                method_name,
+                interface,
+                expected,
+                found,
+                span,
+                interface_origin,
+            } => {
+                let labels = vec![
+                    Label::new((source_id, span.to_range()))
+                        .with_message(format!("Expected '{}' but found '{}'", expected, found))
+                        .with_color(Color::Red),
+                    Label::new((source_id, interface_origin.to_range()))
+                        .with_message(format!(
+                            "'{}' is declared with type '{}' in interface '{}'",
+                            method_name, expected, interface
+                        ))
+                        .with_color(Color::Yellow),
+                ];
+                report = report
+                    .with_message(format!(
+                        "Method '{}' does not satisfy interface '{}'",
+                        method_name, interface
+                    ))
                     .with_labels(labels);
             }
 
@@ -568,7 +600,8 @@ impl TypeCheckerError {
             TypeCheckerError::UndefinedMethod { span, .. } => *span,
             TypeCheckerError::StaticMethodOnInstance { span, .. } => *span,
             TypeCheckerError::Redeclaration { span, .. } => *span,
-            TypeCheckerError::DoesNotImplementInterface { span, .. } => *span,
+            TypeCheckerError::MissingInterfaceMethods { span, .. } => *span,
+            TypeCheckerError::InterfaceMethodTypeMismatch { span, .. } => *span,
             TypeCheckerError::UncoveredPattern { span, .. } => *span,
             TypeCheckerError::TooManyArguments { span, .. } => *span,
             TypeCheckerError::DuplicateArgument { span, .. } => *span,
@@ -682,8 +715,28 @@ impl TypeCheckerError {
             TypeCheckerError::Redeclaration { name, .. } => {
                 format!("Redeclaration of type or variable '{}'.", name)
             }
-            TypeCheckerError::DoesNotImplementInterface { interface, .. } => {
-                format!("Type does not implement interface '{}'.", interface,)
+            TypeCheckerError::MissingInterfaceMethods {
+                interface,
+                missing_methods,
+                ..
+            } => {
+                format!(
+                    "Type does not implement interface '{}': missing {}.",
+                    interface,
+                    missing_methods.join(", ")
+                )
+            }
+            TypeCheckerError::InterfaceMethodTypeMismatch {
+                method_name,
+                interface,
+                expected,
+                found,
+                ..
+            } => {
+                format!(
+                    "Method '{}' does not satisfy interface '{}': expected '{}' but found '{}'.",
+                    method_name, interface, expected, found
+                )
             }
             TypeCheckerError::UncoveredPattern { variant, .. } => {
                 format!("Uncovered pattern matching variant '{}'.", variant)
@@ -770,7 +823,8 @@ impl TypeCheckerError {
             TypeCheckerError::StructOutsideOfGlobalScope { .. } => "E017",
             TypeCheckerError::StaticMethodOnInstance { .. } => "E018",
             TypeCheckerError::Redeclaration { .. } => "E019",
-            TypeCheckerError::DoesNotImplementInterface { .. } => "E020",
+            TypeCheckerError::MissingInterfaceMethods { .. } => "E020",
+            TypeCheckerError::InterfaceMethodTypeMismatch { .. } => "E028",
             TypeCheckerError::UncoveredPattern { .. } => "E021",
             TypeCheckerError::InvalidTupleIndex { .. } => "E022",
             TypeCheckerError::UnreachablePattern { .. } => "E023",
@@ -805,7 +859,10 @@ impl TypeCheckerError {
                 "Cannot call static method on instance"
             }
             TypeCheckerError::Redeclaration { .. } => "Redeclaration",
-            TypeCheckerError::DoesNotImplementInterface { .. } => "Interface not implemented",
+            TypeCheckerError::MissingInterfaceMethods { .. } => "Interface not implemented",
+            TypeCheckerError::InterfaceMethodTypeMismatch { .. } => {
+                "Interface method type mismatch"
+            }
             TypeCheckerError::UncoveredPattern { .. } => "Uncovered pattern",
             TypeCheckerError::TooManyArguments { .. } => "Too many arguments",
             TypeCheckerError::DuplicateArgument { .. } => "Duplicate argument",

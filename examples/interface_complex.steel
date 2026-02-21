@@ -1,0 +1,12 @@
+interface Complex
+{
+    func print(self);
+    func add(self, other: number): number;
+    func sub(self, none: number): number;
+}
+
+impl number : Complex
+{
+    func print(self) { print(self);}
+    func add(self, other: number) { return self + other;}
+}

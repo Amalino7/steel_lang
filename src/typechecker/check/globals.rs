@@ -41,7 +41,7 @@ impl<'src> TypeChecker<'src> {
                     let self_ty = partial_guard
                         .res()
                         .resolve_named(&name.0, &name.1)
-                        .expect("Invalid type name.");
+                        .recover(&mut partial_guard.errors, Type::Error);
 
                     let mut guard = TypeScopeGuard::new_impl(&mut partial_guard, self_ty);
 
@@ -57,28 +57,27 @@ impl<'src> TypeChecker<'src> {
                     }
 
                     for method in methods {
-                        match method {
-                            Stmt::Function {
-                                name: func_name,
-                                signature,
-                                body: _,
-                                generics,
-                            } => {
-                                let mut inner_guard = TypeScopeGuard::new_type_params(
-                                    &mut guard,
-                                    &convert_generics(generics),
-                                );
-                                let func_ty = inner_guard
-                                    .res()
-                                    .resolve_func(signature, inner_guard.type_scopes.all_generics())
-                                    .map(Type::Function);
-                                let mangled_name: Symbol =
-                                    format!("{}.{}", name.0.lexeme, func_name.lexeme).into();
+                        let Stmt::Function {
+                            name: func_name,
+                            signature,
+                            generics,
+                            ..
+                        } = method
+                        else {
+                            unreachable!();
+                        };
+                        let mut inner_guard = TypeScopeGuard::new_type_params(
+                            &mut guard,
+                            &convert_generics(generics),
+                        );
+                        let func_ty = inner_guard
+                            .res()
+                            .resolve_func(signature, inner_guard.type_scopes.all_generics())
+                            .map(Type::Function);
+                        let mangled_name: Symbol =
+                            format!("{}.{}", name.0.lexeme, func_name.lexeme).into();
 
-                                inner_guard.declare_function(mangled_name, func_name.span, func_ty);
-                            }
-                            _ => unreachable!(),
-                        }
+                        inner_guard.declare_function(mangled_name, func_name.span, func_ty);
                     }
                 }
                 Stmt::Interface {
@@ -88,20 +87,14 @@ impl<'src> TypeChecker<'src> {
                 } => {
                     let mut guard =
                         TypeScopeGuard::new_type_params(self, &convert_generics(generics));
-                    let mut guard = TypeScopeGuard::new_impl(&mut guard, Type::Any);
+                    let mut guard = TypeScopeGuard::new_impl(&mut guard, Type::Never);
                     let mut method_map: HashMap<String, (usize, Type)> = HashMap::new();
                     for (i, sig) in methods.iter().enumerate() {
                         let ty = guard
                             .res()
                             .resolve_func(&sig.signature, guard.type_scopes.all_generics())
                             .map(Type::Function);
-                        let ty = match ty {
-                            Ok(t) => t,
-                            Err(e) => {
-                                guard.errors.push(e);
-                                Type::Error
-                            }
-                        };
+                        let ty = ty.recover(&mut guard.errors, Type::Error);
                         method_map.insert(sig.name.lexeme.to_string(), (i, ty));
                     }
                     guard.sys.define_interface(name.lexeme, method_map);
@@ -124,41 +117,40 @@ impl<'src> TypeChecker<'src> {
         let self_ty = outer_guard
             .res()
             .resolve_named(name, target_generics)
-            .expect("Invalid type name.");
+            .recover(&mut outer_guard.errors, Type::Error);
         let mut guard = TypeScopeGuard::new_impl(&mut outer_guard, self_ty);
         // define methods
         for method in methods {
-            match method {
-                Stmt::Function {
-                    name: func_name,
-                    body,
-                    signature,
-                    generics,
-                } => {
-                    let primary_mangled = format!("{}.{}", name.lexeme, func_name.lexeme);
+            let Stmt::Function {
+                name: func_name,
+                body,
+                signature,
+                generics,
+            } = method
+            else {
+                unreachable!();
+            };
+            let primary_mangled = format!("{}.{}", name.lexeme, func_name.lexeme);
 
-                    if let Some(expr) = guard
-                        .check_function(func_name, signature, body, generics)
-                        .ok_log(&mut guard.errors)
-                    {
-                        let (_, location) = guard
-                            .scopes
-                            .lookup(&primary_mangled)
-                            .expect("Function was added");
+            if let Some(expr) = guard
+                .check_function(func_name, signature, body, generics)
+                .ok_log(&mut guard.errors)
+            {
+                let (_, location) = guard
+                    .scopes
+                    .lookup(&primary_mangled)
+                    .expect("Function was added");
 
-                        let stmt = TypedStmt {
-                            kind: StmtKind::Function {
-                                name: primary_mangled.into_boxed_str(),
-                                target: location,
-                                function_decl: expr,
-                            },
-                            span: Default::default(),
-                            type_info: Type::Nil,
-                        };
-                        typed_methods.push(stmt)
-                    }
-                }
-                _ => unreachable!(),
+                let stmt = TypedStmt {
+                    kind: StmtKind::Function {
+                        name: primary_mangled.into_boxed_str(),
+                        target: location,
+                        function_decl: expr,
+                    },
+                    span: Default::default(),
+                    type_info: Type::Nil,
+                };
+                typed_methods.push(stmt)
             }
         }
         drop(guard);
@@ -166,49 +158,11 @@ impl<'src> TypeChecker<'src> {
         // generate vtables
         let mut vtables = vec![];
         for interface in interfaces {
-            // check if interface exists
-            let Some(interface_type) = self.sys.get_interface(interface.lexeme) else {
-                continue;
-            };
-
-            let mut vtable =
-                repeat_n(ResolvedVar::Local(0), interface_type.methods.len()).collect::<Vec<_>>();
-            let mut missing_methods = vec![];
-
-            for (method_name, (location, method_type)) in interface_type.methods.iter() {
-                let impl_method_name = format!("{}.{}", name.lexeme, method_name);
-
-                if let Some((resolved_type, method_location)) =
-                    self.scopes.lookup(&impl_method_name)
-                {
-                    // TODO better error report
-                    if self
-                        .infer_ctx
-                        .unify_types(&resolved_type.type_info, method_type)
-                        .is_ok()
-                    {
-                        vtable[*location] = method_location;
-                    } else {
-                        missing_methods.push(format!("{method_name} (type mismatch)"));
-                    }
-                } else {
-                    missing_methods.push(method_name.clone());
-                }
+            if let Some(vtable) =
+                self.check_interface_vtable(name.lexeme, interface, impl_block.span())
+            {
+                vtables.push(vtable);
             }
-
-            if !missing_methods.is_empty() {
-                self.errors
-                    .push(TypeCheckerError::DoesNotImplementInterface {
-                        missing_methods,
-                        interface: interface.lexeme.to_string(),
-                        span: impl_block.span(),
-                        interface_origin: interface_type.origin,
-                    });
-            }
-            self.sys
-                .define_impl(name.lexeme, interface_type.name.clone());
-
-            vtables.push(vtable);
         }
 
         TypedStmt {
@@ -230,7 +184,6 @@ impl<'src> TypeChecker<'src> {
     ) -> Result<TypedExpr, TypeCheckerError> {
         let enclosing_function_context = self.current_function.clone();
         let mut ty_guard = TypeScopeGuard::new_function(self, &convert_generics(generics));
-
         let func = ty_guard
             .res()
             .resolve_func(sig, ty_guard.type_scopes.all_generics())?;
@@ -291,17 +244,61 @@ impl<'src> TypeChecker<'src> {
         span: Span,
         func_type: Result<Type, TypeCheckerError>,
     ) {
-        if let Err(e) = func_type {
-            self.errors.push(e);
-            return;
-        }
-        let func_type = func_type.unwrap();
+        let func_type = func_type.recover(&mut self.errors, Type::Error);
         let decl = Declaration::global_function(name, func_type, span);
-        let res = self.scopes.declare(decl);
+        self.scopes.declare(decl).ok_log(&mut self.errors);
+    }
 
-        if let Err(e) = res {
-            self.errors.push(e);
+    fn check_interface_vtable(
+        &mut self,
+        type_name: &str,
+        interface: &Token,
+        impl_span: Span,
+    ) -> Option<Vec<ResolvedVar>> {
+        let interface_type = self.sys.get_interface(interface.lexeme)?.clone();
+
+        let mut vtable =
+            repeat_n(ResolvedVar::Local(0), interface_type.methods.len()).collect::<Vec<_>>();
+        let mut missing_methods = vec![];
+
+        for (method_name, (location, method_type)) in interface_type.methods.iter() {
+            let impl_method_name = format!("{}.{}", type_name, method_name);
+
+            if let Some((resolved_type, method_location)) = self.scopes.lookup(&impl_method_name) {
+                if self
+                    .infer_ctx
+                    .unify_types(method_type, &resolved_type.type_info)
+                    .is_ok()
+                {
+                    vtable[*location] = method_location;
+                } else {
+                    // TODO convert from unification error to type checker error
+                    self.errors
+                        .push(TypeCheckerError::InterfaceMethodTypeMismatch {
+                            method_name: method_name.clone(),
+                            interface: interface.lexeme.to_string(),
+                            expected: method_type.clone(),
+                            found: resolved_type.type_info.clone(),
+                            span: resolved_type.span,
+                            interface_origin: interface_type.origin,
+                        });
+                }
+            } else {
+                missing_methods.push(method_name.clone());
+            }
         }
+
+        if !missing_methods.is_empty() {
+            self.errors.push(TypeCheckerError::MissingInterfaceMethods {
+                missing_methods,
+                interface: interface.lexeme.to_string(),
+                span: impl_span,
+                interface_origin: interface_type.origin,
+            });
+        }
+        self.sys.define_impl(type_name, interface_type.name.clone());
+
+        Some(vtable)
     }
 
     pub(crate) fn declare_global_types(&mut self, ast: &[Stmt<'src>]) {
@@ -348,13 +345,7 @@ impl<'src> TypeChecker<'src> {
                     let ty = match fields {
                         VariantType::Tuple(tuple_def) => {
                             let res = guard.res().resolve_tuple(tuple_def);
-                            match res {
-                                Ok(ty) => ty,
-                                Err(err) => {
-                                    guard.errors.push(err);
-                                    Type::Error
-                                }
-                            }
+                            res.recover(&mut guard.errors, Type::Error)
                         }
                         VariantType::Struct(struct_def) => {
                             let field_types = guard.define_struct_fields(struct_def);
@@ -383,17 +374,11 @@ impl<'src> TypeChecker<'src> {
     ) -> HashMap<Symbol, (usize, Type)> {
         let mut field_types = HashMap::new();
         for (i, (name, type_ast)) in fields.iter().enumerate() {
-            let field_type = self.res().resolve(type_ast);
-            match field_type {
-                Ok(field_type) => {
-                    field_types.insert(name.lexeme.into(), (i, field_type));
-                }
-                Err(err) => {
-                    // Parsing error - mark field with Error to avoid treating as undecided.
-                    field_types.insert(name.lexeme.into(), (i, Type::Error));
-                    self.errors.push(err);
-                }
-            }
+            let field_type = self
+                .res()
+                .resolve(type_ast)
+                .recover(&mut self.errors, Type::Error);
+            field_types.insert(name.lexeme.into(), (i, field_type));
         }
         field_types
     }

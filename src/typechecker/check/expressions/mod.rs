@@ -12,6 +12,7 @@ use crate::typechecker::core::ast::{ExprKind, TypedExpr};
 use crate::typechecker::core::error::TypeCheckerError;
 use crate::typechecker::core::error::TypeCheckerError::AssignmentToCapturedVariable;
 use crate::typechecker::core::types::Type;
+use crate::typechecker::similarity::find_similar;
 use crate::typechecker::TypeChecker;
 
 impl<'src> TypeChecker<'src> {
@@ -67,8 +68,11 @@ impl<'src> TypeChecker<'src> {
                     })
                 } else {
                     let visible_vars = self.scopes.visible_variable_names();
-                    let suggestions =
-                        crate::typechecker::similarity::find_similar(name.lexeme, visible_vars, 3);
+                    let suggestions = find_similar(name.lexeme, visible_vars, 3);
+                    if name.lexeme == "self" {
+                        return Err(TypeCheckerError::SelfOutsideOfImpl { span: name.span });
+                    }
+
                     Err(TypeCheckerError::UndefinedVariable {
                         name: name.lexeme.to_string(),
                         span: name.span,
@@ -140,12 +144,13 @@ impl<'src> TypeChecker<'src> {
                         span: expr.span(),
                     })
                 } else {
+                    if identifier.lexeme == "self" {
+                        return Err(TypeCheckerError::SelfOutsideOfImpl {
+                            span: identifier.span,
+                        });
+                    }
                     let visible_vars = self.scopes.visible_variable_names();
-                    let suggestions = crate::typechecker::similarity::find_similar(
-                        identifier.lexeme,
-                        visible_vars,
-                        3,
-                    );
+                    let suggestions = find_similar(identifier.lexeme, visible_vars, 3);
                     Err(TypeCheckerError::UndefinedVariable {
                         name: identifier.lexeme.to_string(),
                         span: identifier.span,
@@ -247,12 +252,12 @@ impl<'src> TypeChecker<'src> {
             expected
         };
 
-        if let (Type::Interface(iface_name, generics), Some(name)) =
+        if let (Type::Interface(iface_name), Some(name)) =
             (expected_type, expr.ty.get_name())
             && let Some(idx) = self.sys.get_vtable_idx(name, iface_name.clone())
         {
             return Ok(TypedExpr {
-                ty: Type::Interface(iface_name.clone(), generics.clone()),
+                ty: Type::Interface(iface_name.clone()),
                 span: expr.span,
                 kind: ExprKind::InterfaceUpcast {
                     expr: Box::new(expr),

@@ -182,10 +182,7 @@ pub fn get_natives() -> Vec<NativeDef> {
         NativeDef {
             name: "List.len",
             type_: instance_method(
-                vec![(
-                    "self".into(),
-                    Type::List(Box::new(Type::GenericParam("T".into()))),
-                )],
+                vec![("self".into(), Type::new_list(Type::GenericParam("T".into())))],
                 Type::Number,
                 vec!["T".into()],
             ),
@@ -197,10 +194,7 @@ pub fn get_natives() -> Vec<NativeDef> {
         NativeDef {
             name: "List.is_empty",
             type_: instance_method(
-                vec![(
-                    "self".into(),
-                    Type::List(Box::new(Type::GenericParam("T".into()))),
-                )],
+                vec![("self".into(), Type::new_list(Type::GenericParam("T".into())))],
                 Type::Boolean,
                 vec!["T".into()],
             ),
@@ -213,10 +207,7 @@ pub fn get_natives() -> Vec<NativeDef> {
             name: "List.push",
             type_: instance_method(
                 vec![
-                    (
-                        "self".into(),
-                        Type::List(Box::new(Type::GenericParam("T".into()))),
-                    ),
+                    ("self".into(), Type::new_list(Type::GenericParam("T".into()))),
                     ("value".into(), Type::GenericParam("T".into())),
                 ],
                 Type::Void,
@@ -233,10 +224,7 @@ pub fn get_natives() -> Vec<NativeDef> {
         NativeDef {
             name: "List.pop",
             type_: instance_method(
-                vec![(
-                    "self".into(),
-                    Type::List(Box::new(Type::GenericParam("T".into()))),
-                )],
+                vec![("self".into(), Type::new_list(Type::GenericParam("T".into())))],
                 Type::Optional(Box::new(Type::GenericParam("T".into()))),
                 vec!["T".into()],
             ),

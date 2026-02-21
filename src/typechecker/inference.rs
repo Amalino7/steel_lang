@@ -1,4 +1,5 @@
 use crate::typechecker::core::types::{FunctionType, TupleType, Type};
+use crate::typechecker::system::generics_to_map;
 use crate::typechecker::Symbol;
 use std::collections::HashMap;
 use std::fmt;
@@ -222,15 +223,25 @@ impl InferenceContext {
             (expected, Type::Optional(provided_inner)) if variance == Variance::Contravariant => {
                 self.unify_with_variance(expected, provided_inner, variance)
             }
-            (Type::List(expected_inner), Type::List(provided_inner)) => {
-                self.unify_with_variance(expected_inner, provided_inner, Variance::Invariant)
+            (Type::List(expected_args), Type::List(provided_args)) => {
+                self.unify_with_variance(&expected_args[0], &provided_args[0], Variance::Invariant)
             }
-            (Type::Map(expected_key, expected_value), Type::Map(provided_key, provided_value)) => {
-                self.unify_with_variance(expected_key, provided_key, Variance::Invariant)?;
-                self.unify_with_variance(expected_value, provided_value, Variance::Invariant)
+            (Type::Map(expected_args), Type::Map(provided_args)) => {
+                self.unify_with_variance(&expected_args[0], &provided_args[0], Variance::Invariant)?;
+                self.unify_with_variance(&expected_args[1], &provided_args[1], Variance::Invariant)
             }
             (Type::Function(exp), Type::Function(prov)) => {
-                self.unify_functions(exp, prov, variance, mismatch)
+                if !prov.type_params.is_empty() {
+                    // TODO is this the appropriate place
+                    let map = generics_to_map(&prov.type_params, &[], Some(self));
+                    let new_prov = Type::Function(prov.clone()).generic_to_concrete(&map);
+                    let Type::Function(prov) = new_prov else {
+                        return Err(mismatch(UnificationErrorKind::GenericFunctionNotAllowed));
+                    };
+                    self.unify_functions(exp, &prov, variance, mismatch)
+                } else {
+                    self.unify_functions(exp, prov, variance, mismatch)
+                }
             }
             (Type::Tuple(exp), Type::Tuple(prov)) => self.unify_tuples(exp, prov, mismatch),
             (Type::Metatype(_, _), _) => Err(UnificationError {
@@ -241,8 +252,12 @@ impl InferenceContext {
             (Type::Struct(exp_name, exp_args), Type::Struct(prov_name, prov_args)) => {
                 self.unify_complex(exp_name, exp_args, prov_name, prov_args, variance, mismatch)
             }
-            (Type::Interface(exp_name, exp_args), Type::Interface(prov_name, prov_args)) => {
-                self.unify_complex(exp_name, exp_args, prov_name, prov_args, variance, mismatch)
+            (Type::Interface(exp_name), Type::Interface(prov_name)) => {
+                if exp_name == prov_name {
+                    Ok(())
+                } else {
+                    Err(mismatch(UnificationErrorKind::TypeMismatch))
+                }
             }
             (Type::Enum(exp_name, exp_args), Type::Enum(prov_name, prov_args)) => {
                 self.unify_complex(exp_name, exp_args, prov_name, prov_args, variance, mismatch)
@@ -331,9 +346,9 @@ impl InferenceContext {
         //     return Err(mismatch(UnificationErrorKind::VarargNotAllowed));
         // }
 
-        if !prov_inner.type_params.is_empty() {
-            return Err(mismatch(UnificationErrorKind::GenericFunctionNotAllowed));
-        }
+        // if !prov_inner.type_params.is_empty() {
+        //     return Err(mismatch(UnificationErrorKind::GenericFunctionNotAllowed));
+        // }
 
         if exp_inner.params.len() != prov_inner.params.len() {
             return Err(mismatch(UnificationErrorKind::ArityMismatch {
@@ -468,7 +483,7 @@ mod tests {
         let Type::Infer(id) = var else { panic!() };
 
         // Try to unify T = List<T> (should fail)
-        let list_of_var = Type::List(Box::new(Type::Infer(id)));
+        let list_of_var = Type::new_list(Type::Infer(id));
         let result = ctx.unify_types(&var, &list_of_var);
         assert!(result.is_err());
         assert!(matches!(
