@@ -4,7 +4,6 @@ use crate::scanner::{Span, Token};
 use crate::typechecker::core::ast::{ExprKind, StmtKind, TypedExpr, TypedStmt};
 use crate::typechecker::core::error::{Recoverable, TypeCheckerError};
 use crate::typechecker::core::types::Type;
-use crate::typechecker::resolver::convert_generics;
 use crate::typechecker::scope::guards::{ScopeGuard, TypeScopeGuard};
 use crate::typechecker::scope::manager::ScopeKind;
 use crate::typechecker::scope::variables::Declaration;
@@ -23,7 +22,7 @@ impl<'src> TypeChecker<'src> {
                     signature,
                     ..
                 } => {
-                    let mut guard = TypeScopeGuard::new_function(self, &convert_generics(generics));
+                    let mut guard = TypeScopeGuard::new_function(self, generics);
                     let func_ty = guard
                         .res()
                         .resolve_func(signature, guard.type_scopes.all_generics())
@@ -36,8 +35,7 @@ impl<'src> TypeChecker<'src> {
                     methods,
                     generics,
                 } => {
-                    let mut partial_guard =
-                        TypeScopeGuard::new_type_params(self, &convert_generics(generics));
+                    let mut partial_guard = TypeScopeGuard::new_type_params(self, generics);
                     let self_ty = partial_guard
                         .res()
                         .resolve_named(&name.0, &name.1)
@@ -66,10 +64,7 @@ impl<'src> TypeChecker<'src> {
                         else {
                             unreachable!();
                         };
-                        let mut inner_guard = TypeScopeGuard::new_type_params(
-                            &mut guard,
-                            &convert_generics(generics),
-                        );
+                        let mut inner_guard = TypeScopeGuard::new_type_params(&mut guard, generics);
                         let func_ty = inner_guard
                             .res()
                             .resolve_func(signature, inner_guard.type_scopes.all_generics())
@@ -85,8 +80,7 @@ impl<'src> TypeChecker<'src> {
                     methods,
                     generics,
                 } => {
-                    let mut guard =
-                        TypeScopeGuard::new_type_params(self, &convert_generics(generics));
+                    let mut guard = TypeScopeGuard::new_type_params(self, generics);
                     let mut guard = TypeScopeGuard::new_impl(&mut guard, Type::Never);
                     let mut method_map: HashMap<String, (usize, Type)> = HashMap::new();
                     for (i, sig) in methods.iter().enumerate() {
@@ -113,7 +107,7 @@ impl<'src> TypeChecker<'src> {
         generics: &[Token<'src>],
     ) -> TypedStmt {
         let mut typed_methods = vec![];
-        let mut outer_guard = TypeScopeGuard::new_type_params(self, &convert_generics(generics));
+        let mut outer_guard = TypeScopeGuard::new_type_params(self, generics);
         let self_ty = outer_guard
             .res()
             .resolve_named(name, target_generics)
@@ -183,7 +177,7 @@ impl<'src> TypeChecker<'src> {
         generics: &[Token<'src>],
     ) -> Result<TypedExpr, TypeCheckerError> {
         let enclosing_function_context = self.current_function.clone();
-        let mut ty_guard = TypeScopeGuard::new_function(self, &convert_generics(generics));
+        let mut ty_guard = TypeScopeGuard::new_function(self, generics);
         let func = ty_guard
             .res()
             .resolve_func(sig, ty_guard.type_scopes.all_generics())?;
@@ -309,14 +303,45 @@ impl<'src> TypeChecker<'src> {
         // declare global types by name
         for stmt in ast.iter() {
             if let Stmt::Struct { name, generics, .. } = stmt {
-                self.sys
-                    .declare_struct(stmt.span(), name.lexeme.into(), generics);
+                if self.redeclaration_check(name).is_ok() {
+                    self.sys
+                        .declare_struct(stmt.span(), name.lexeme.into(), generics);
+                }
             } else if let Stmt::Interface { name, .. } = stmt {
-                self.sys.declare_interface(name.lexeme.into(), stmt.span());
+                if self.redeclaration_check(name).is_ok() {
+                    self.sys.declare_interface(name.lexeme.into(), stmt.span())
+                }
             } else if let Stmt::Enum { name, generics, .. } = stmt {
-                self.sys
-                    .declare_enum(stmt.span(), name.lexeme.into(), generics);
+                if self.redeclaration_check(name).is_ok() {
+                    self.sys
+                        .declare_enum(stmt.span(), name.lexeme.into(), generics);
+                }
             }
+        }
+    }
+
+    fn redeclaration_check(&mut self, name: &Token<'src>) -> Result<(), ()> {
+        let primitive_error = TypeCheckerError::PrimitiveTypeShadowing {
+            name: name.lexeme.to_string(),
+            span: name.span,
+        };
+        if self.sys.get_primitive_name(name.lexeme).is_some() {
+            self.errors.push(primitive_error);
+            Err(())
+        } else if let Some(original) = self.sys.get_origin(name.lexeme) {
+            if original == Span::default() {
+                self.errors.push(primitive_error);
+            } else {
+                self.errors
+                    .push(TypeCheckerError::DuplicateTypeDeclaration {
+                        name: name.lexeme.to_string(),
+                        span: name.span,
+                        original,
+                    });
+            }
+            Err(())
+        } else {
+            Ok(())
         }
     }
 
@@ -328,9 +353,12 @@ impl<'src> TypeChecker<'src> {
                 generics,
             } = stmt
             {
-                let mut guard = TypeScopeGuard::new_type_params(self, &convert_generics(generics));
-                let field_types = guard.define_struct_fields(fields);
-                guard.sys.define_struct(name.lexeme, field_types);
+                // Only process structs that were successfully declared (no duplicates)
+                if self.sys.get_struct(name.lexeme).is_some() {
+                    let mut guard = TypeScopeGuard::new_type_params(self, generics);
+                    let field_types = guard.define_struct_fields(fields);
+                    guard.sys.define_struct(name.lexeme, field_types);
+                }
             }
         }
     }
@@ -343,9 +371,26 @@ impl<'src> TypeChecker<'src> {
                 generics,
             } = stmt
             {
-                let mut guard = TypeScopeGuard::new_type_params(self, &convert_generics(generics));
-                let mut typed_variants = HashMap::new();
-                for (idx, (v_name, fields)) in variants.iter().enumerate() {
+                // Only process enums that were successfully declared (no duplicates)
+                if self.sys.get_enum(name.lexeme).is_none() {
+                    continue;
+                }
+                let mut guard = TypeScopeGuard::new_type_params(self, generics);
+                let mut typed_variants: HashMap<Symbol, (usize, Type)> = HashMap::new();
+                let mut seen_variants: HashMap<Symbol, Span> = HashMap::new();
+                let mut valid_idx = 0usize;
+                for (v_name, fields) in variants.iter() {
+                    let sym: Symbol = v_name.lexeme.into();
+                    if let Some(&original) = seen_variants.get(&sym) {
+                        guard.errors.push(TypeCheckerError::DuplicateVariant {
+                            name: v_name.lexeme.to_string(),
+                            span: v_name.span,
+                            original,
+                        });
+                        continue;
+                    }
+                    seen_variants.insert(sym.clone(), v_name.span);
+
                     let ty = match fields {
                         VariantType::Tuple(tuple_def) => {
                             let res = guard.res().resolve_tuple(tuple_def);
@@ -365,7 +410,8 @@ impl<'src> TypeChecker<'src> {
                         VariantType::Unit => Type::Void,
                     };
 
-                    typed_variants.insert(v_name.lexeme.into(), (idx, ty));
+                    typed_variants.insert(sym, (valid_idx, ty));
+                    valid_idx += 1;
                 }
                 guard.sys.define_enum(name.lexeme, typed_variants);
             }
@@ -376,13 +422,26 @@ impl<'src> TypeChecker<'src> {
         &mut self,
         fields: &[(Token, TypeAst)],
     ) -> HashMap<Symbol, (usize, Type)> {
-        let mut field_types = HashMap::new();
-        for (i, (name, type_ast)) in fields.iter().enumerate() {
-            let field_type = self
-                .res()
-                .resolve(type_ast)
-                .recover(&mut self.errors, Type::Error);
-            field_types.insert(name.lexeme.into(), (i, field_type));
+        let mut field_types: HashMap<Symbol, (usize, Type)> = HashMap::new();
+        let mut seen: HashMap<Symbol, Span> = HashMap::new();
+        let mut valid_idx = 0usize;
+        for (name, type_ast) in fields.iter() {
+            let sym: Symbol = name.lexeme.into();
+            if let Some(&original) = seen.get(&sym) {
+                self.errors.push(TypeCheckerError::DuplicateField {
+                    name: name.lexeme.to_string(),
+                    span: name.span,
+                    original,
+                });
+            } else {
+                seen.insert(sym.clone(), name.span);
+                let field_type = self
+                    .res()
+                    .resolve(type_ast)
+                    .recover(&mut self.errors, Type::Error);
+                field_types.insert(sym, (valid_idx, field_type));
+                valid_idx += 1;
+            }
         }
         field_types
     }

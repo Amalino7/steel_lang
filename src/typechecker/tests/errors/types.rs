@@ -29,39 +29,21 @@ fn test_type_mismatch_string_to_number() {
 #[test]
 fn test_binary_op_type_mismatch_add() {
     Tester::new(r#"let x = 5 + "hello";"#)
-        .expect_error(|e| {
-            matches!(
-                e,
-                TypeCheckerError::TypeMismatch { .. }
-                    | TypeCheckerError::ComplexTypeMismatch { .. }
-            )
-        })
+        .expect_error(|e| matches!(e, TypeCheckerError::InvalidOperandTypes { .. }))
         .run();
 }
 
 #[test]
 fn test_binary_op_type_mismatch_subtract() {
     Tester::new(r#"let x = "hello" - 5;"#)
-        .expect_error(|e| {
-            matches!(
-                e,
-                TypeCheckerError::TypeMismatch { .. }
-                    | TypeCheckerError::ComplexTypeMismatch { .. }
-            )
-        })
+        .expect_error(|e| matches!(e, TypeCheckerError::InvalidOperandTypes { .. }))
         .run();
 }
 
 #[test]
 fn test_comparison_type_mismatch() {
     Tester::new(r#"let x = 5 > "hello";"#)
-        .expect_error(|e| {
-            matches!(
-                e,
-                TypeCheckerError::TypeMismatch { .. }
-                    | TypeCheckerError::ComplexTypeMismatch { .. }
-            )
-        })
+        .expect_error(|e| matches!(e, TypeCheckerError::InvalidOperandTypes { .. }))
         .run();
 }
 

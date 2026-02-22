@@ -88,21 +88,12 @@ impl<'src> TypeChecker<'src> {
         let left_type = left_typed.ty.clone();
         let right_type = right_typed.ty.clone();
 
-        if left_type != Type::Boolean {
-            return Err(TypeCheckerError::TypeMismatch {
-                expected: Type::Boolean,
-                found: left_type.clone(),
+        if left_type != Type::Boolean || right_type != Type::Boolean {
+            return Err(TypeCheckerError::InvalidOperandTypes {
+                operator: operator.lexeme.to_string(),
+                left: left_type,
+                right: right_type,
                 span: operator.span,
-                message: "Expected boolean but found something else.",
-            });
-        }
-
-        if right_type != Type::Boolean {
-            return Err(TypeCheckerError::TypeMismatch {
-                expected: Type::Boolean,
-                found: right_type.clone(),
-                span: operator.span,
-                message: "Expected boolean but found something else.",
             });
         }
 
@@ -158,16 +149,11 @@ impl<'src> TypeChecker<'src> {
                         span: total_span,
                     })
                 } else {
-                    let (error_span, found) = if left_type != Type::Number {
-                        (left_typed.span, left_type)
-                    } else {
-                        (right_typed.span, right_type)
-                    };
-                    Err(TypeCheckerError::TypeMismatch {
-                        expected: Type::Number,
-                        found,
-                        span: error_span,
-                        message: "Expected number type for arithmetic operation",
+                    Err(TypeCheckerError::InvalidOperandTypes {
+                        operator: operator.lexeme.to_string(),
+                        left: left_type,
+                        right: right_type,
+                        span: total_span,
                     })
                 }
             }
@@ -193,11 +179,11 @@ impl<'src> TypeChecker<'src> {
                         span: total_span,
                     })
                 } else {
-                    Err(TypeCheckerError::TypeMismatch {
-                        expected: left_type,
-                        found: right_type,
+                    Err(TypeCheckerError::InvalidOperandTypes {
+                        operator: operator.lexeme.to_string(),
+                        left: left_type,
+                        right: right_type,
                         span: total_span,
-                        message: "Operands to '+' must be both numbers or both strings.",
                     })
                 }
             }
@@ -230,27 +216,11 @@ impl<'src> TypeChecker<'src> {
                         span: total_span,
                     })
                 } else {
-                    if left_type == Type::Number {
-                        return Err(TypeCheckerError::TypeMismatch {
-                            expected: Type::Number,
-                            found: left_type,
-                            span: right_typed.span,
-                            message: "Expected number for comparison.",
-                        });
-                    }
-                    if left_type == Type::String {
-                        return Err(TypeCheckerError::TypeMismatch {
-                            expected: Type::String,
-                            found: left_type,
-                            span: right_typed.span,
-                            message: "Expected string for comparison.",
-                        });
-                    }
-                    Err(TypeCheckerError::TypeMismatch {
-                        expected: right_type,
-                        found: left_type,
-                        span: left_typed.span,
-                        message: "Cannot compare different types than numbers or strings.",
+                    Err(TypeCheckerError::InvalidOperandTypes {
+                        operator: operator.lexeme.to_string(),
+                        left: left_type,
+                        right: right_type,
+                        span: total_span,
                     })
                 }
             }
@@ -285,11 +255,11 @@ impl<'src> TypeChecker<'src> {
                         Ok(binary_expr)
                     }
                 } else {
-                    Err(TypeCheckerError::TypeMismatch {
-                        expected: left_type,
-                        found: right_type,
+                    Err(TypeCheckerError::InvalidOperandTypes {
+                        operator: operator.lexeme.to_string(),
+                        left: left_type,
+                        right: right_type,
                         span: total_span,
-                        message: "Expected the same type but found something else.",
                     })
                 }
             }

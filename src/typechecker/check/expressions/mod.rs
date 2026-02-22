@@ -12,7 +12,6 @@ use crate::typechecker::core::ast::{ExprKind, TypedExpr};
 use crate::typechecker::core::error::TypeCheckerError;
 use crate::typechecker::core::error::TypeCheckerError::AssignmentToCapturedVariable;
 use crate::typechecker::core::types::Type;
-use crate::typechecker::scope::variables::Mutability;
 use crate::typechecker::similarity::find_similar;
 use crate::typechecker::TypeChecker;
 
@@ -61,7 +60,7 @@ impl<'src> TypeChecker<'src> {
                         kind: ExprKind::GetVar(resolved, ctx.name.clone()),
                         span: name.span,
                     })
-                } else if let Some(type_name) = self.sys.get_owned_name(name.lexeme) {
+                } else if let Some(type_name) = self.res().get_owned_name(name.lexeme) {
                     Ok(TypedExpr {
                         ty: Type::Metatype(type_name.clone(), vec![].into()),
                         kind: ExprKind::GetVar(Global(0), type_name),
@@ -107,10 +106,11 @@ impl<'src> TypeChecker<'src> {
                         return Err(AssignmentToCapturedVariable {
                             name: ctx.name.to_string(),
                             span: identifier.span,
+                            capture_origin: ctx.span,
                         });
                     }
 
-                    if matches!(ctx.mutability, Mutability::Immutable | Mutability::Unique) {
+                    if !ctx.is_reassignable() {
                         return Err(TypeCheckerError::AssignmentToImmutableBinding {
                             kind: ctx.kind,
                             name: ctx.name.to_string(),

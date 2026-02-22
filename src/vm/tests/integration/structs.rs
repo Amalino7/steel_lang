@@ -315,6 +315,7 @@ fn test_inner_type_method_call() {
 fn test_complex_linked_list() {
     assert_runs(
         r#"
+
         struct Node {
             value: number,
             next: Node?,
@@ -329,16 +330,18 @@ fn test_complex_linked_list() {
             }
             func get(self, index: number): number? {
                 let head = self.head;
-                while head != nil and index > 0 {
-                    index -= 1;
+                let current_index = index;
+                while head != nil and current_index > 0 {
+                    current_index -= 1;
                     head = head.next;
                 }
                 return head?.value;
             }
             func set(self, index: number, value: number): void {
                 let head = self.head;
-                while head != nil and index > 0 {
-                    index -= 1;
+                let current_index = index;
+                while head != nil and current_index > 0 {
+                    current_index -= 1;
                     head = head.next;
                 }
                 head?.value = value;

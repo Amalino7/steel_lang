@@ -63,38 +63,45 @@ pub enum Type {
     Struct(Symbol, GenericArgs),
     Interface(Symbol),
     Enum(Symbol, GenericArgs),
-    List(GenericArgs),
-    Map(GenericArgs),
     Any,
 }
 
 impl Type {
     pub fn new_list(element: Type) -> Type {
-        Type::List(Rc::from(vec![element]))
+        Type::Struct("List".into(), Rc::from(vec![element]))
     }
 
     pub fn new_map(key: Type, value: Type) -> Type {
-        Type::Map(Rc::from(vec![key, value]))
+        Type::Struct("Map".into(), Rc::from(vec![key, value]))
     }
 
     pub fn list_element(&self) -> Option<&Type> {
-        if let Type::List(args) = self {
-            args.get(0)
+        let Type::Struct(name, args) = self else {
+            return None;
+        };
+        if name.as_ref() == "List" {
+            args.first()
         } else {
             None
         }
     }
 
     pub fn map_key(&self) -> Option<&Type> {
-        if let Type::Map(args) = self {
-            args.get(0)
+        let Type::Struct(name, args) = self else {
+            return None;
+        };
+        if name.as_ref() == "Map" {
+            args.first()
         } else {
             None
         }
     }
 
     pub fn map_value(&self) -> Option<&Type> {
-        if let Type::Map(args) = self {
+        let Type::Struct(name, args) = self else {
+            return None;
+        };
+        if name.as_ref() == "Map" {
             args.get(1)
         } else {
             None
@@ -103,9 +110,7 @@ impl Type {
 
     pub fn generic_args(&self) -> &[Type] {
         match self {
-            Type::Struct(_, args) | Type::Enum(_, args) | Type::List(args) | Type::Map(args) => {
-                args
-            }
+            Type::Struct(_, args) | Type::Enum(_, args) => args,
             _ => &[],
         }
     }
@@ -137,14 +142,6 @@ impl Type {
             | Type::Interface(_) => self.clone(),
 
             Type::Optional(inner) => Type::Optional(Box::new(inner.transform(f, u))),
-            Type::List(args) => {
-                let new_args: Vec<_> = args.iter().map(|t| t.clone().transform(f, u)).collect();
-                Type::List(Rc::from(new_args))
-            }
-            Type::Map(args) => {
-                let new_args: Vec<_> = args.iter().map(|t| t.clone().transform(f, u)).collect();
-                Type::Map(Rc::from(new_args))
-            }
             Type::Tuple(tt) => {
                 let types: Vec<_> = tt.types.iter().map(|t| t.clone().transform(f, u)).collect();
                 Type::Tuple(Rc::from(TupleType { types }))
@@ -176,7 +173,6 @@ impl Type {
         }
         match self {
             Type::Optional(inner) => inner.any(f),
-            Type::List(args) | Type::Map(args) => args.iter().any(|t| t.any(f)),
             Type::Tuple(tt) => tt.types.iter().any(|t| t.any(f)),
             Type::Function(ft) => ft.params.iter().any(|(_, t)| t.any(f)) || ft.return_type.any(f),
             Type::Struct(_, args) | Type::Enum(_, args) => args.iter().any(|t| t.any(f)),
@@ -190,7 +186,6 @@ impl Type {
         }
         match self {
             Type::Optional(inner) => inner.all(f),
-            Type::List(args) | Type::Map(args) => args.iter().all(|t| t.all(f)),
             Type::Tuple(tt) => tt.types.iter().all(|t| t.all(f)),
             Type::Function(ft) => ft.params.iter().all(|(_, t)| t.all(f)) && ft.return_type.all(f),
             Type::Struct(_, args) | Type::Enum(_, args) => args.iter().all(|t| t.all(f)),
@@ -252,8 +247,6 @@ impl Type {
             Type::Enum(name, _) => Some(name),
             Type::Tuple(_) => None,
             Type::Metatype(_, _) => None,
-            Type::List(_) => Some("List"),
-            Type::Map(_) => Some("Map"),
         }
     }
 
@@ -299,20 +292,16 @@ impl Type {
 
     // TODO change can compare logic
     pub fn can_compare(left: &Type, right: &Type) -> bool {
-        if let Type::Optional(inner) = left {
-            if *right == Type::Nil {
-                true
-            } else {
-                Self::can_compare(inner, right)
+        match (left, right) {
+            (Type::Optional(_), Type::Nil) | (Type::Nil, Type::Optional(_)) => true,
+            (Type::Optional(inner_l), Type::Optional(inner_r)) => {
+                Self::can_compare(inner_l, inner_r)
             }
-        } else if let Type::Optional(inner) = right {
-            if *left == Type::Nil {
-                true
-            } else {
-                Self::can_compare(left, inner)
+            (Type::Optional(inner), other) | (other, Type::Optional(inner)) => {
+                Self::can_compare(inner, other)
             }
-        } else {
-            left == right
+            (a, b) if a == b => true,
+            _ => false,
         }
     }
 

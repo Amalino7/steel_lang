@@ -1,8 +1,11 @@
-use crate::typechecker::core::error::TypeCheckerWarning;
+use crate::scanner::Token;
+use crate::typechecker::core::error::TypeCheckerError::DuplicateGenericParam;
+use crate::typechecker::core::error::{TypeCheckerError, TypeCheckerWarning};
 use crate::typechecker::core::types::Type;
+use crate::typechecker::resolver::convert_generics;
 use crate::typechecker::scope::manager::ScopeKind;
-use crate::typechecker::scope::types::TypeScopeKind;
-use crate::typechecker::{Symbol, TypeChecker};
+use crate::typechecker::scope::types::{TypeScopeError, TypeScopeKind};
+use crate::typechecker::TypeChecker;
 
 pub struct ScopeGuard<'a, 'src> {
     checker: &'a mut TypeChecker<'src>,
@@ -32,23 +35,45 @@ impl<'a, 'src> std::ops::DerefMut for TypeScopeGuard<'a, 'src> {
 }
 
 impl<'a, 'src> TypeScopeGuard<'a, 'src> {
-    pub fn new_type_params(checker: &'a mut TypeChecker<'src>, generics: &[Symbol]) -> Self {
-        checker
-            .type_scopes
-            .begin_type_scope(generics, None, TypeScopeKind::Type);
+    pub fn new_type_params(checker: &'a mut TypeChecker<'src>, generics: &[Token<'src>]) -> Self {
+        let res = checker.type_scopes.begin_type_scope(
+            convert_generics(generics),
+            None,
+            TypeScopeKind::Type,
+        );
+        check_duplicate_generics(&mut checker.errors, generics, res);
         Self { checker }
     }
-    pub fn new_function(checker: &'a mut TypeChecker<'src>, generics: &[Symbol]) -> Self {
-        checker
-            .type_scopes
-            .begin_type_scope(generics, None, TypeScopeKind::Function);
+    pub fn new_function(checker: &'a mut TypeChecker<'src>, generics: &[Token<'src>]) -> Self {
+        let res = checker.type_scopes.begin_type_scope(
+            convert_generics(generics),
+            None,
+            TypeScopeKind::Function,
+        );
+        check_duplicate_generics(&mut checker.errors, generics, res);
         TypeScopeGuard { checker }
     }
     pub fn new_impl(checker: &'a mut TypeChecker<'src>, self_ty: Type) -> Self {
-        checker
+        let _ = checker
             .type_scopes
-            .begin_type_scope(&[], Some(self_ty), TypeScopeKind::Impl);
+            .begin_type_scope(vec![], Some(self_ty), TypeScopeKind::Impl);
         TypeScopeGuard { checker }
+    }
+}
+fn check_duplicate_generics(
+    errors: &mut Vec<TypeCheckerError>,
+    generics: &[Token],
+    scope_errors: Result<(), Vec<TypeScopeError>>,
+) {
+    let Err(scope_errors) = scope_errors else {
+        return;
+    };
+    for err in scope_errors {
+        errors.push(DuplicateGenericParam {
+            name: err.0.to_string(),
+            span: generics[err.1].span,
+            original: Default::default(),
+        })
     }
 }
 

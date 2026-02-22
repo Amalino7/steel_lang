@@ -30,14 +30,6 @@ impl Display for Type {
             Type::String => write!(f, "string"),
             Type::Void => write!(f, "void"),
             Type::Never => write!(f, "never"),
-            Type::List(args) => {
-                write!(f, "List")?;
-                print_generics(args, f)
-            }
-            Type::Map(args) => {
-                write!(f, "Map")?;
-                print_generics(args, f)
-            }
             Type::Function(function_type) => {
                 write!(
                     f,

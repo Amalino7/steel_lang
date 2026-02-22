@@ -82,6 +82,7 @@ pub enum TypeCheckerError {
     AssignmentToCapturedVariable {
         name: String,
         span: Span,
+        capture_origin: Span,
     },
     AssignmentToImmutableBinding {
         kind: DeclarationKind,
@@ -190,6 +191,36 @@ pub enum TypeCheckerError {
         found: usize,
         expected: usize,
         type_name: String,
+    },
+    InvalidOperandTypes {
+        operator: String,
+        left: Type,
+        right: Type,
+        span: Span,
+    },
+    DuplicateField {
+        name: String,
+        span: Span,
+        original: Span,
+    },
+    DuplicateVariant {
+        name: String,
+        span: Span,
+        original: Span,
+    },
+    DuplicateTypeDeclaration {
+        name: String,
+        span: Span,
+        original: Span,
+    },
+    DuplicateGenericParam {
+        name: String,
+        span: Span,
+        original: Span,
+    },
+    PrimitiveTypeShadowing {
+        name: String,
+        span: Span,
     },
 }
 
@@ -626,6 +657,95 @@ impl TypeCheckerError {
                         "Add a type annotation or specify generics explicitly using .<Type> syntax",
                     );
             }
+            // TODO message wording
+            TypeCheckerError::AssignmentToCapturedVariable {
+                name,
+                span,
+                capture_origin,
+            } => {
+                report = report
+                    .with_message(format!("Cannot assign to captured variable '{}'", name))
+                    .with_label(
+                        Label::new((source_id, capture_origin.to_range()))
+                            .with_message("Captured happens here.".to_string())
+                            .with_color(Color::Blue),
+                    )
+                    .with_label(
+                        Label::new((source_id, span.to_range()))
+                            .with_message("Assignment happens here.".to_string())
+                            .with_color(Color::Red),
+                    );
+            }
+
+            TypeCheckerError::InvalidOperandTypes {
+                operator,
+                left,
+                right,
+                span,
+            } => {
+                report = report
+                    .with_message(format!("Invalid operand types for '{}'", operator))
+                    .with_label(
+                        Label::new((source_id, span.to_range()))
+                            .with_message(format!(
+                                "Operator '{}' cannot be applied to types '{}' and '{}'.",
+                                operator, left, right
+                            ))
+                            .with_color(Color::Red),
+                    );
+            }
+
+            TypeCheckerError::DuplicateField { name, span, original } => {
+                report = report
+                    .with_message(format!("Duplicate field '{}'", name))
+                    .with_labels(vec![
+                        Label::new((source_id, original.to_range()))
+                            .with_message(format!("'{}' first declared here", name))
+                            .with_color(Color::Blue),
+                        Label::new((source_id, span.to_range()))
+                            .with_message(format!("'{}' declared again here", name))
+                            .with_color(Color::Red),
+                    ]);
+            }
+
+            TypeCheckerError::DuplicateVariant { name, span, original } => {
+                report = report
+                    .with_message(format!("Duplicate variant '{}'", name))
+                    .with_labels(vec![
+                        Label::new((source_id, original.to_range()))
+                            .with_message(format!("'{}' first declared here", name))
+                            .with_color(Color::Blue),
+                        Label::new((source_id, span.to_range()))
+                            .with_message(format!("'{}' declared again here", name))
+                            .with_color(Color::Red),
+                    ]);
+            }
+
+            TypeCheckerError::DuplicateTypeDeclaration { name, span, original } => {
+                report = report
+                    .with_message(format!("Type '{}' is already defined", name))
+                    .with_labels(vec![
+                        Label::new((source_id, original.to_range()))
+                            .with_message(format!("'{}' first defined here", name))
+                            .with_color(Color::Blue),
+                        Label::new((source_id, span.to_range()))
+                            .with_message(format!("'{}' redefined here", name))
+                            .with_color(Color::Red),
+                    ]);
+            }
+
+            TypeCheckerError::DuplicateGenericParam { name, span, original } => {
+                report = report
+                    .with_message(format!("Duplicate generic parameter '{}'", name))
+                    .with_labels(vec![
+                        Label::new((source_id, original.to_range()))
+                            .with_message(format!("'{}' first declared here", name))
+                            .with_color(Color::Blue),
+                        Label::new((source_id, span.to_range()))
+                            .with_message(format!("'{}' used again here", name))
+                            .with_color(Color::Red),
+                    ]);
+            }
 
             err => {
                 report = report.with_message(err.short_message()).with_label(
@@ -674,6 +794,12 @@ impl TypeCheckerError {
             TypeCheckerError::CannotInferType { span, .. } => *span,
             TypeCheckerError::InvalidGenericSpecification { span, .. } => *span,
             TypeCheckerError::GenericCountMismatch { span, .. } => *span,
+            TypeCheckerError::InvalidOperandTypes { span, .. } => *span,
+            TypeCheckerError::DuplicateField { span, .. } => *span,
+            TypeCheckerError::DuplicateVariant { span, .. } => *span,
+            TypeCheckerError::DuplicateTypeDeclaration { span, .. } => *span,
+            TypeCheckerError::DuplicateGenericParam { span, .. } => *span,
+            TypeCheckerError::PrimitiveTypeShadowing { span, .. } => *span,
         }
     }
 
@@ -777,11 +903,7 @@ impl TypeCheckerError {
                 original_kind,
                 ..
             } => {
-                format!(
-                    "Redeclaration of {} '{}'.",
-                    original_kind.as_str(),
-                    name
-                )
+                format!("Redeclaration of {} '{}'.", original_kind.as_str(), name)
             }
             TypeCheckerError::AssignmentToImmutableBinding { kind, name, .. } => {
                 format!("Cannot assign to {} '{}'.", kind.as_str(), name)
@@ -870,6 +992,27 @@ impl TypeCheckerError {
                     found, expected, type_name
                 )
             }
+            TypeCheckerError::InvalidOperandTypes { operator, left, right, .. } => {
+                format!(
+                    "Operator '{}' cannot be applied to types '{}' and '{}'.",
+                    operator, left, right
+                )
+            }
+            TypeCheckerError::DuplicateField { name, .. } => {
+                format!("Duplicate field '{}' in struct definition.", name)
+            }
+            TypeCheckerError::DuplicateVariant { name, .. } => {
+                format!("Duplicate variant '{}' in enum definition.", name)
+            }
+            TypeCheckerError::DuplicateTypeDeclaration { name, .. } => {
+                format!("Type '{}' is already defined.", name)
+            }
+            TypeCheckerError::DuplicateGenericParam { name, .. } => {
+                format!("Duplicate generic type parameter '{}'.", name)
+            }
+            TypeCheckerError::PrimitiveTypeShadowing { name, .. } => {
+                format!("Cannot redeclare built-in type '{}'.", name)
+            }
         }
     }
 
@@ -908,6 +1051,12 @@ impl TypeCheckerError {
             TypeCheckerError::CannotInferType { .. } => "E025",
             TypeCheckerError::InvalidGenericSpecification { .. } => "E026",
             TypeCheckerError::GenericCountMismatch { .. } => "E027",
+            TypeCheckerError::InvalidOperandTypes { .. } => "E030",
+            TypeCheckerError::DuplicateField { .. } => "E031",
+            TypeCheckerError::DuplicateVariant { .. } => "E032",
+            TypeCheckerError::DuplicateTypeDeclaration { .. } => "E033",
+            TypeCheckerError::DuplicateGenericParam { .. } => "E034",
+            TypeCheckerError::PrimitiveTypeShadowing { .. } => "E035",
         }
     }
 
@@ -952,6 +1101,12 @@ impl TypeCheckerError {
             TypeCheckerError::CannotInferType { .. } => "Cannot infer type",
             TypeCheckerError::InvalidGenericSpecification { .. } => "Invalid generic specification",
             TypeCheckerError::GenericCountMismatch { .. } => "Generic count mismatch",
+            TypeCheckerError::InvalidOperandTypes { .. } => "Invalid operand types",
+            TypeCheckerError::DuplicateField { .. } => "Duplicate field",
+            TypeCheckerError::DuplicateVariant { .. } => "Duplicate variant",
+            TypeCheckerError::DuplicateTypeDeclaration { .. } => "Duplicate type declaration",
+            TypeCheckerError::DuplicateGenericParam { .. } => "Duplicate generic parameter",
+            TypeCheckerError::PrimitiveTypeShadowing { .. } => "Cannot shadow built-in type",
         }
     }
 }

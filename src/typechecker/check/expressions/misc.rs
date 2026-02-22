@@ -282,18 +282,14 @@ impl<'src> TypeChecker<'src> {
         expected: &Type,
     ) -> Result<TypedExpr, TypeCheckerError> {
         let expected_inner = match expected {
-            Type::List(args) => args.first().cloned(),
-            Type::Optional(inner) => match inner.as_ref() {
-                Type::List(args) => args.first().cloned(),
-                _ => None,
-            },
-            _ => None,
+            Type::Optional(inner) => inner.as_ref().list_element().cloned(),
+            other => other.list_element().cloned(),
         };
 
         if elements.is_empty() {
             let inner = expected_inner.ok_or(TypeCheckerError::CannotInferType {
                 span: bracket_token.span,
-                uninferred_generics: vec!["T".to_string()],
+                uninferred_generics: vec!["Val".to_string()],
             })?;
             return Ok(TypedExpr {
                 ty: Type::new_list(inner),

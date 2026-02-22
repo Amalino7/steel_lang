@@ -1,0 +1,15 @@
+impl number {
+    func square(self): number {
+        return self * self;
+    }
+}
+
+func normal(b: number) {}
+func other(a: number) {}
+1.square(12);
+number.square(12, 12);
+normal(12);
+
+normal = other;
+
+

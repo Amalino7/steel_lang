@@ -3,8 +3,6 @@ use crate::scanner::Span;
 use crate::typechecker::core::types::Type;
 use crate::typechecker::Symbol;
 
-// TODO take advantage of new features.
-
 #[derive(Clone)]
 pub struct VariableContext {
     pub(crate) type_info: Type,

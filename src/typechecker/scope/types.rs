@@ -18,22 +18,35 @@ pub struct TypeScopeManager {
     scopes: Vec<TypeScope>,
 }
 
+pub type TypeScopeError = (Symbol, usize);
 impl TypeScopeManager {
     pub fn new() -> Self {
         TypeScopeManager { scopes: vec![] }
     }
     pub fn begin_type_scope(
         &mut self,
-        generics: &[Symbol],
+        generics: Vec<Symbol>,
         self_type: Option<Type>,
         kind: TypeScopeKind,
-    ) {
+    ) -> Result<(), Vec<TypeScopeError>> {
+        let mut errors: Vec<TypeScopeError> = Vec::new();
+        for (idx, generic) in generics.iter().enumerate() {
+            if self.is_generic(generic.as_ref()).is_some() {
+                errors.push((generic.clone(), idx));
+            }
+        }
         self.scopes.push(TypeScope {
-            generics: generics.to_vec(),
+            generics,
             self_type,
             kind,
         });
+        if !errors.is_empty() {
+            Err(errors)
+        } else {
+            Ok(())
+        }
     }
+
     pub fn end_type_scope(&mut self) {
         self.scopes.pop().expect("No type scope to pop.");
     }

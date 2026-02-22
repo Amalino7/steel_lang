@@ -5,7 +5,7 @@ use crate::typechecker::core::error::TypeCheckerError;
 use crate::typechecker::core::types::Type::Metatype;
 use crate::typechecker::core::types::{GenericArgs, Type};
 use crate::typechecker::system::generics_to_map;
-use crate::typechecker::{Symbol, TypeChecker};
+use crate::typechecker::{similarity, Symbol, TypeChecker};
 
 impl<'src> TypeChecker<'src> {
     pub(crate) fn resolve_static_access(
@@ -64,11 +64,8 @@ impl<'src> TypeChecker<'src> {
         let methods = self.scopes.get_methods_for_type(type_name);
         let method = self.scopes.lookup(mangled_name.as_str());
         let method = method.ok_or_else(|| {
-            let suggestions = crate::typechecker::similarity::find_similar(
-                method_name.lexeme,
-                methods.iter().map(|s| s.as_str()),
-                3,
-            );
+            let suggestions =
+                similarity::find_similar(method_name.lexeme, methods.iter().map(|s| s.as_str()), 3);
             let type_origin = self.sys.get_origin(type_name);
             let found = Metatype(type_name.clone(), generics.clone());
             TypeCheckerError::UndefinedMethod {

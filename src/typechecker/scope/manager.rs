@@ -2,7 +2,9 @@ use crate::compiler::analysis::ResolvedVar;
 use crate::scanner::Span;
 use crate::typechecker::core::error::TypeCheckerError;
 use crate::typechecker::core::types::Type;
-use crate::typechecker::scope::variables::{Declaration, DeclarationKind, Mutability, VariableContext};
+use crate::typechecker::scope::variables::{
+    Declaration, DeclarationKind, Mutability, VariableContext,
+};
 use crate::typechecker::Symbol;
 use std::cmp::PartialEq;
 use std::collections::HashMap;
@@ -111,7 +113,11 @@ impl ScopeManager {
         self.lookup_impl(name, true)
     }
 
-    fn lookup_impl(&mut self, name: &str, is_write: bool) -> Option<(&VariableContext, ResolvedVar)> {
+    fn lookup_impl(
+        &mut self,
+        name: &str,
+        is_write: bool,
+    ) -> Option<(&VariableContext, ResolvedVar)> {
         let mut is_closure = false;
 
         for scope in self.scopes.iter_mut().rev() {
@@ -216,7 +222,7 @@ impl ScopeManager {
         std::mem::replace(&mut self.closures, returned)
     }
 
-    /// Get all visible variable names in current scope (for suggestions)
+    /// Get all visible variable names in the current scope (for suggestions)
     pub fn visible_variable_names(&self) -> Vec<&str> {
         let mut names = Vec::new();
         for scope in self.scopes.iter().rev() {
@@ -239,7 +245,10 @@ impl ScopeManager {
             .values()
             .filter(|ctx| {
                 !ctx.was_read
-                    && matches!(ctx.kind, DeclarationKind::Variable | DeclarationKind::Parameter)
+                    && matches!(
+                        ctx.kind,
+                        DeclarationKind::Variable | DeclarationKind::Parameter
+                    )
                     && !ctx.name.starts_with('_')
                     && ctx.name.as_ref() != "self"
                     && ctx.span != Span::default()

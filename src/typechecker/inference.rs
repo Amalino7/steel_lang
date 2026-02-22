@@ -85,11 +85,6 @@ impl InferenceContext {
                 }
             }
             Type::Optional(inner) => self.collect_uninferred(inner, names),
-            Type::List(args) | Type::Map(args) => {
-                for t in args.iter() {
-                    self.collect_uninferred(t, names);
-                }
-            }
             Type::Tuple(tt) => {
                 for t in tt.types.iter() {
                     self.collect_uninferred(t, names);
@@ -200,17 +195,6 @@ impl InferenceContext {
             }
             (expected, Type::Optional(provided_inner)) if variance == Variance::Contravariant => {
                 self.unify_with_variance(expected, provided_inner, variance)
-            }
-            (Type::List(expected_args), Type::List(provided_args)) => {
-                self.unify_with_variance(&expected_args[0], &provided_args[0], Variance::Invariant)
-            }
-            (Type::Map(expected_args), Type::Map(provided_args)) => {
-                self.unify_with_variance(
-                    &expected_args[0],
-                    &provided_args[0],
-                    Variance::Invariant,
-                )?;
-                self.unify_with_variance(&expected_args[1], &provided_args[1], Variance::Invariant)
             }
             (Type::Function(exp), Type::Function(prov)) => {
                 if !prov.type_params.is_empty() {
