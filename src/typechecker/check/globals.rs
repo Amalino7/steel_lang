@@ -5,9 +5,7 @@ use crate::typechecker::core::ast::{ExprKind, StmtKind, TypedExpr, TypedStmt};
 use crate::typechecker::core::error::{Recoverable, TypeCheckerError};
 use crate::typechecker::core::types::Type;
 use crate::typechecker::scope::guards::{ScopeGuard, TypeScopeGuard};
-use crate::typechecker::scope::manager::ScopeKind;
 use crate::typechecker::scope::variables::Declaration;
-use crate::typechecker::scope::FunctionContext;
 use crate::typechecker::{Symbol, TypeChecker};
 use std::collections::HashMap;
 use std::iter::repeat_n;
@@ -176,15 +174,13 @@ impl<'src> TypeChecker<'src> {
         body: &Stmt<'src>,
         generics: &[Token<'src>],
     ) -> Result<TypedExpr, TypeCheckerError> {
-        let enclosing_function_context = self.current_function.clone();
         let mut ty_guard = TypeScopeGuard::new_function(self, generics);
         let func = ty_guard
             .res()
             .resolve_func(sig, ty_guard.type_scopes.all_generics())?;
         let func_type = Type::Function(func.clone());
-        let mut guard = ScopeGuard::new(&mut ty_guard, ScopeKind::Function);
-
-        guard.current_function = FunctionContext::Function(func.return_type.clone(), name.span);
+        let mut guard =
+            ScopeGuard::new_function(&mut ty_guard, func.return_type.clone(), name.span);
 
         let prev_closures = guard.scopes.clear_closures();
 
@@ -203,7 +199,6 @@ impl<'src> TypeChecker<'src> {
         let reserved = guard.scopes.max_index();
         drop(guard);
         drop(ty_guard);
-        self.current_function = enclosing_function_context;
 
         let old_closures = self.scopes.return_closures(prev_closures);
 

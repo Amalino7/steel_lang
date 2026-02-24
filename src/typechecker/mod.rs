@@ -3,7 +3,6 @@ use crate::scanner::Span;
 use crate::stdlib::NativeDef;
 use crate::typechecker::scope::types::TypeScopeManager;
 use crate::typechecker::scope::variables::Declaration;
-use crate::typechecker::scope::FunctionContext;
 use core::ast::{StmtKind, TypedStmt};
 use core::error::{TypeCheckerError, TypeCheckerWarning};
 use core::types::Type;
@@ -28,7 +27,6 @@ mod tests;
 pub use core::types::Symbol;
 
 pub struct TypeChecker<'src> {
-    current_function: FunctionContext,
     sys: TypeSystem,
     scopes: ScopeManager,
     type_scopes: TypeScopeManager,
@@ -48,7 +46,6 @@ impl<'src> TypeChecker<'src> {
     pub fn new_with_natives(natives: &'src [NativeDef]) -> Self {
         TypeChecker {
             type_scopes: TypeScopeManager::new(),
-            current_function: FunctionContext::None,
             sys: TypeSystem::new(),
             scopes: ScopeManager::new(),
             natives,

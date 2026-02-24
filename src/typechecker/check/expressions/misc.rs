@@ -2,7 +2,6 @@ use crate::parser::ast::Expr;
 use crate::typechecker::core::ast::{ExprKind, LogicalOp, TypedExpr, UnaryOp};
 use crate::typechecker::core::error::{Recoverable, TypeCheckerError};
 use crate::typechecker::core::types::Type;
-use crate::typechecker::scope::FunctionContext;
 use crate::typechecker::system::generics_to_map;
 use crate::typechecker::TypeChecker;
 use std::rc::Rc;
@@ -156,7 +155,7 @@ impl<'src> TypeChecker<'src> {
                 .get_variant_from_instance("Err", instance)
                 .expect("Result type missing");
 
-            if let FunctionContext::Function(func_return_type, _) = self.current_function.clone() {
+            if let Some((func_return_type, _)) = self.scopes.return_type().cloned() {
                 let provided_err = Type::Enum(name.clone(), vec![Type::Never, err_type].into());
                 let ok = self.infer_ctx.unify_types(&func_return_type, &provided_err);
                 if ok.is_err() {

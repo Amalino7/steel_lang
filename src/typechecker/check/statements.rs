@@ -5,7 +5,6 @@ use crate::typechecker::core::types::Type;
 use crate::typechecker::scope::guards::ScopeGuard;
 use crate::typechecker::scope::manager::ScopeKind;
 use crate::typechecker::scope::variables::Declaration;
-use crate::typechecker::scope::FunctionContext;
 use crate::typechecker::TypeChecker;
 
 impl<'src> TypeChecker<'src> {
@@ -232,9 +231,7 @@ impl<'src> TypeChecker<'src> {
                 }
             }
             Stmt::Return { value, keyword } => {
-                if let FunctionContext::Function(func_return_type, func_span) =
-                    self.current_function.clone()
-                {
+                if let Some((func_return_type, func_span)) = self.scopes.return_type().cloned() {
                     let coerced_return = match self.coerce_expression(value, &func_return_type) {
                         Ok(v) => v,
                         Err(err) => {

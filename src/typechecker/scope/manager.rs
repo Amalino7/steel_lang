@@ -25,6 +25,7 @@ struct Scope {
 pub struct ScopeManager {
     scopes: Vec<Scope>,
     closures: Vec<Symbol>,
+    return_type: Vec<(Type, Span)>,
 }
 
 impl ScopeManager {
@@ -32,9 +33,14 @@ impl ScopeManager {
         Self {
             scopes: vec![],
             closures: vec![],
+            return_type: vec![],
         }
     }
 
+    pub fn begin_function(&mut self, return_type: Type, span: Span) {
+        self.return_type.push((return_type, span));
+        self.begin_scope(ScopeKind::Function);
+    }
     pub fn begin_scope(&mut self, scope_kind: ScopeKind) {
         let last_idx = match scope_kind {
             ScopeKind::Function => 0,
@@ -64,7 +70,15 @@ impl ScopeManager {
             parent.max_index = parent.max_index.max(max);
         }
 
+        if matches!(finished_scope.kind, ScopeKind::Function) {
+            self.return_type.pop();
+        }
+
         max
+    }
+
+    pub fn return_type(&self) -> Option<&(Type, Span)> {
+        self.return_type.last()
     }
 
     pub fn global_size(&self) -> u32 {

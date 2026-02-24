@@ -1,4 +1,4 @@
-use crate::scanner::Token;
+use crate::scanner::{Span, Token};
 use crate::typechecker::core::error::TypeCheckerError::DuplicateGenericParam;
 use crate::typechecker::core::error::{TypeCheckerError, TypeCheckerWarning};
 use crate::typechecker::core::types::Type;
@@ -80,6 +80,15 @@ fn check_duplicate_generics(
 impl<'a, 'src> ScopeGuard<'a, 'src> {
     pub fn new(checker: &'a mut TypeChecker<'src>, kind: ScopeKind) -> Self {
         checker.scopes.begin_scope(kind);
+        ScopeGuard { checker }
+    }
+
+    pub fn new_function(
+        checker: &'a mut TypeChecker<'src>,
+        return_type: Type,
+        origin: Span,
+    ) -> Self {
+        checker.scopes.begin_function(return_type, origin);
         ScopeGuard { checker }
     }
 }
