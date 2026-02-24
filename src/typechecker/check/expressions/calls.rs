@@ -7,6 +7,7 @@ use crate::typechecker::system::generics_to_map;
 use crate::typechecker::{Symbol, TypeChecker};
 use std::collections::HashMap;
 
+// TODO consider using the expected type to unify the return type before binding arguments.
 impl<'src> TypeChecker<'src> {
     pub(crate) fn check_call(
         &mut self,
@@ -14,6 +15,7 @@ impl<'src> TypeChecker<'src> {
         callee: &Expr<'src>,
         arguments: &Vec<CallArg<'src>>,
         safe: &bool,
+        expected: &Type,
     ) -> Result<TypedExpr, TypeCheckerError> {
         let mut callee_typed = self.check_expression(callee, &Type::Unknown)?;
 
@@ -45,6 +47,7 @@ impl<'src> TypeChecker<'src> {
                 arguments,
                 false,
             )?;
+
             let final_type = self.infer_ctx.substitute(&constructor.constructed_type);
 
             return Ok(TypedExpr {
@@ -117,6 +120,12 @@ impl<'src> TypeChecker<'src> {
                 None
             };
 
+            let ret_type = if safe {
+                func.return_type.clone().wrap_in_optional()
+            } else {
+                func.return_type.clone()
+            };
+
             let bound_args = self.bind_arguments(
                 callee.span(),
                 definition_span,
@@ -124,11 +133,7 @@ impl<'src> TypeChecker<'src> {
                 arguments,
                 func.is_vararg,
             )?;
-            let ret_type = if safe {
-                func.return_type.clone().wrap_in_optional()
-            } else {
-                func.return_type.clone()
-            };
+
             let ret_type = self.infer_ctx.substitute(&ret_type);
             return Ok(TypedExpr {
                 ty: ret_type,

@@ -44,13 +44,13 @@ impl<'src> TypeChecker<'src> {
             Expr::Unary {
                 operator,
                 expression,
-            } => self.check_unary_expression(operator, expression, expected),
+            } => self.check_unary_expression(operator, expression),
 
             Expr::Binary {
                 operator,
                 left,
                 right,
-            } => self.check_binary_expression(operator, left, right),
+            } => self.check_binary_expression(operator, left, right, expected),
 
             Expr::Variable { name } => {
                 let var = self.scopes.lookup(name.lexeme);
@@ -187,7 +187,7 @@ impl<'src> TypeChecker<'src> {
                 callee,
                 arguments,
                 safe,
-            } => self.check_call(expr, callee, arguments, safe),
+            } => self.check_call(expr, callee, arguments, safe, expected),
 
             Expr::Get {
                 object,

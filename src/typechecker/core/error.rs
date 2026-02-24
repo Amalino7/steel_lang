@@ -24,6 +24,10 @@ pub enum TypeCheckerWarning {
     UnreachableCode {
         span: Span,
     },
+    UnreachablePattern {
+        span: Span,
+        message: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -170,10 +174,6 @@ pub enum TypeCheckerError {
         index: String,
         span: Span,
     },
-    UnreachablePattern {
-        span: Span,
-        message: String,
-    },
     InvalidIsUsage {
         span: Span,
         message: &'static str,
@@ -197,6 +197,7 @@ pub enum TypeCheckerError {
         left: Type,
         right: Type,
         span: Span,
+        help: &'static str,
     },
     DuplicateField {
         name: String,
@@ -682,6 +683,7 @@ impl TypeCheckerError {
                 left,
                 right,
                 span,
+                help,
             } => {
                 report = report
                     .with_message(format!("Invalid operand types for '{}'", operator))
@@ -692,7 +694,8 @@ impl TypeCheckerError {
                                 operator, left, right
                             ))
                             .with_color(Color::Red),
-                    );
+                    )
+                    .with_help(*help);
             }
 
             TypeCheckerError::DuplicateField { name, span, original } => {
@@ -789,7 +792,6 @@ impl TypeCheckerError {
             TypeCheckerError::MissingArgument { span, .. } => *span,
             TypeCheckerError::PositionalArgumentAfterNamed { span, .. } => *span,
             TypeCheckerError::InvalidTupleIndex { span, .. } => *span,
-            TypeCheckerError::UnreachablePattern { span, .. } => *span,
             TypeCheckerError::InvalidIsUsage { span, .. } => *span,
             TypeCheckerError::CannotInferType { span, .. } => *span,
             TypeCheckerError::InvalidGenericSpecification { span, .. } => *span,
@@ -959,9 +961,6 @@ impl TypeCheckerError {
             } => {
                 format!("Invalid tuple index '{}' of {}.", index, tuple_type)
             }
-            TypeCheckerError::UnreachablePattern { message, .. } => {
-                format!("Unreachable Pattern. {}", message)
-            }
             TypeCheckerError::InvalidIsUsage { message, .. } => {
                 format!("Invalid usage of 'is' operator. {}", message)
             }
@@ -1046,7 +1045,6 @@ impl TypeCheckerError {
             TypeCheckerError::InterfaceMethodTypeMismatch { .. } => "E028",
             TypeCheckerError::UncoveredPattern { .. } => "E021",
             TypeCheckerError::InvalidTupleIndex { .. } => "E022",
-            TypeCheckerError::UnreachablePattern { .. } => "E023",
             TypeCheckerError::InvalidIsUsage { .. } => "E024",
             TypeCheckerError::CannotInferType { .. } => "E025",
             TypeCheckerError::InvalidGenericSpecification { .. } => "E026",
@@ -1096,7 +1094,6 @@ impl TypeCheckerError {
             TypeCheckerError::MissingArgument { .. } => "Missing argument",
             TypeCheckerError::PositionalArgumentAfterNamed { .. } => "Invalid argument order",
             TypeCheckerError::InvalidTupleIndex { .. } => "Invalid tuple index",
-            TypeCheckerError::UnreachablePattern { .. } => "Unreachable pattern",
             TypeCheckerError::InvalidIsUsage { .. } => "Invalid 'is' operator usage",
             TypeCheckerError::CannotInferType { .. } => "Cannot infer type",
             TypeCheckerError::InvalidGenericSpecification { .. } => "Invalid generic specification",
@@ -1173,6 +1170,15 @@ impl TypeCheckerWarning {
                     )
                     .with_help("Code after a return statement is unreachable");
             }
+            TypeCheckerWarning::UnreachablePattern { span, message } => {
+                report = report
+                    .with_message("Unreachable pattern")
+                    .with_label(
+                        Label::new((source_id, span.to_range()))
+                            .with_message(message.as_str())
+                            .with_color(Color::Yellow),
+                    );
+            }
         }
 
         report.finish()
@@ -1185,6 +1191,7 @@ impl TypeCheckerWarning {
             TypeCheckerWarning::RedundantForceUnwrap { span } => *span,
             TypeCheckerWarning::ShadowedVariable { span, .. } => *span,
             TypeCheckerWarning::UnreachableCode { span } => *span,
+            TypeCheckerWarning::UnreachablePattern { span, .. } => *span,
         }
     }
 
@@ -1203,6 +1210,7 @@ impl TypeCheckerWarning {
                 format!("Variable '{}' shadows existing binding", name)
             }
             TypeCheckerWarning::UnreachableCode { .. } => "Unreachable code detected".to_string(),
+            TypeCheckerWarning::UnreachablePattern { message, .. } => message.clone(),
         }
     }
 }

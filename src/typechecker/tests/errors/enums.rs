@@ -1,4 +1,4 @@
-use crate::typechecker::core::error::TypeCheckerError;
+use crate::typechecker::core::error::{TypeCheckerError, TypeCheckerWarning};
 use crate::typechecker::tests::helpers::*;
 
 #[test]
@@ -63,7 +63,7 @@ fn test_unreachable_pattern_duplicate() {
         }
         "#,
     )
-    .expect_error(|e| matches!(e, TypeCheckerError::UnreachablePattern { .. }))
+    .expect_warning(|w| matches!(w, TypeCheckerWarning::UnreachablePattern { .. }))
     .run();
 }
 
