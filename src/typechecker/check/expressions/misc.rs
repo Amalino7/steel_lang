@@ -155,7 +155,7 @@ impl<'src> TypeChecker<'src> {
                 .get_variant_from_instance("Err", instance)
                 .expect("Result type missing");
 
-            if let Some((func_return_type, _)) = self.scopes.return_type().cloned() {
+            if let Some((func_return_type, _)) = self.scopes.return_type() {
                 let provided_err = Type::Enum(name.clone(), vec![Type::Never, err_type].into());
                 let ok = self.infer_ctx.unify_types(&func_return_type, &provided_err);
                 if ok.is_err() {

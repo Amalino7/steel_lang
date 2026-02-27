@@ -182,8 +182,6 @@ impl<'src> TypeChecker<'src> {
         let mut guard =
             ScopeGuard::new_function(&mut ty_guard, func.return_type.clone(), name.span);
 
-        let prev_closures = guard.scopes.clear_closures();
-
         let decl = Declaration::function(name.lexeme.into(), func_type.clone(), name.span);
         guard.scopes.declare(decl)?;
 
@@ -197,10 +195,10 @@ impl<'src> TypeChecker<'src> {
         let func_body = guard.check_stmt(body);
 
         let reserved = guard.scopes.max_index();
+
+        let old_closures = guard.scopes.get_closures();
         drop(guard);
         drop(ty_guard);
-
-        let old_closures = self.scopes.return_closures(prev_closures);
 
         let mut captures = vec![];
         for clos_var in old_closures {

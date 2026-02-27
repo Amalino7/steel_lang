@@ -105,8 +105,9 @@ pub enum TypeCheckerError {
         struct_origin: Option<Span>,
         suggestions: Vec<String>,
     },
-    StructOutsideOfGlobalScope {
+    NonGlobalDeclaration {
         name: String,
+        kind: &'static str,
         span: Span,
     },
     UndefinedMethod {
@@ -698,7 +699,11 @@ impl TypeCheckerError {
                     .with_help(*help);
             }
 
-            TypeCheckerError::DuplicateField { name, span, original } => {
+            TypeCheckerError::DuplicateField {
+                name,
+                span,
+                original,
+            } => {
                 report = report
                     .with_message(format!("Duplicate field '{}'", name))
                     .with_labels(vec![
@@ -711,7 +716,11 @@ impl TypeCheckerError {
                     ]);
             }
 
-            TypeCheckerError::DuplicateVariant { name, span, original } => {
+            TypeCheckerError::DuplicateVariant {
+                name,
+                span,
+                original,
+            } => {
                 report = report
                     .with_message(format!("Duplicate variant '{}'", name))
                     .with_labels(vec![
@@ -724,7 +733,11 @@ impl TypeCheckerError {
                     ]);
             }
 
-            TypeCheckerError::DuplicateTypeDeclaration { name, span, original } => {
+            TypeCheckerError::DuplicateTypeDeclaration {
+                name,
+                span,
+                original,
+            } => {
                 report = report
                     .with_message(format!("Type '{}' is already defined", name))
                     .with_labels(vec![
@@ -737,7 +750,11 @@ impl TypeCheckerError {
                     ]);
             }
 
-            TypeCheckerError::DuplicateGenericParam { name, span, original } => {
+            TypeCheckerError::DuplicateGenericParam {
+                name,
+                span,
+                original,
+            } => {
                 report = report
                     .with_message(format!("Duplicate generic parameter '{}'", name))
                     .with_labels(vec![
@@ -778,7 +795,7 @@ impl TypeCheckerError {
             TypeCheckerError::AssignmentToCapturedVariable { span, .. } => *span,
             TypeCheckerError::TypeHasNoFields { span, .. } => *span,
             TypeCheckerError::UndefinedField { span, .. } => *span,
-            TypeCheckerError::StructOutsideOfGlobalScope { span, .. } => *span,
+            TypeCheckerError::NonGlobalDeclaration { span, .. } => *span,
             TypeCheckerError::UndefinedMethod { span, .. } => *span,
             TypeCheckerError::StaticMethodOnInstance { span, .. } => *span,
             TypeCheckerError::Redeclaration { span, .. } => *span,
@@ -886,8 +903,8 @@ impl TypeCheckerError {
             } => {
                 format!("Struct '{}' has no field '{}'.", struct_name, field_name)
             }
-            TypeCheckerError::StructOutsideOfGlobalScope { name, .. } => {
-                format!("Struct '{}' is defined outside of global scope.", name)
+            TypeCheckerError::NonGlobalDeclaration { name, kind, .. } => {
+                format!("{kind} '{}' is defined outside of global scope.", name)
             }
             TypeCheckerError::UndefinedMethod {
                 method_name, found, ..
@@ -991,7 +1008,12 @@ impl TypeCheckerError {
                     found, expected, type_name
                 )
             }
-            TypeCheckerError::InvalidOperandTypes { operator, left, right, .. } => {
+            TypeCheckerError::InvalidOperandTypes {
+                operator,
+                left,
+                right,
+                ..
+            } => {
                 format!(
                     "Operator '{}' cannot be applied to types '{}' and '{}'.",
                     operator, left, right
@@ -1037,7 +1059,7 @@ impl TypeCheckerError {
             TypeCheckerError::TypeHasNoFields { .. } => "E014",
             TypeCheckerError::SelfOutsideOfImpl { .. } => "E015",
             TypeCheckerError::AssignmentToCapturedVariable { .. } => "E016",
-            TypeCheckerError::StructOutsideOfGlobalScope { .. } => "E017",
+            TypeCheckerError::NonGlobalDeclaration { .. } => "E017",
             TypeCheckerError::StaticMethodOnInstance { .. } => "E018",
             TypeCheckerError::Redeclaration { .. } => "E019",
             TypeCheckerError::AssignmentToImmutableBinding { .. } => "E029",
@@ -1076,7 +1098,7 @@ impl TypeCheckerError {
             TypeCheckerError::UndefinedType { .. } => "Undefined type",
             TypeCheckerError::TypeHasNoFields { .. } => "Type has no fields",
             TypeCheckerError::UndefinedField { .. } => "Undefined field",
-            TypeCheckerError::StructOutsideOfGlobalScope { .. } => "Invalid struct definition",
+            TypeCheckerError::NonGlobalDeclaration { .. } => "Non-global declaration",
             TypeCheckerError::UndefinedMethod { .. } => "Undefined method",
             TypeCheckerError::StaticMethodOnInstance { .. } => {
                 "Cannot call static method on instance"
@@ -1171,13 +1193,11 @@ impl TypeCheckerWarning {
                     .with_help("Code after a return statement is unreachable");
             }
             TypeCheckerWarning::UnreachablePattern { span, message } => {
-                report = report
-                    .with_message("Unreachable pattern")
-                    .with_label(
-                        Label::new((source_id, span.to_range()))
-                            .with_message(message.as_str())
-                            .with_color(Color::Yellow),
-                    );
+                report = report.with_message("Unreachable pattern").with_label(
+                    Label::new((source_id, span.to_range()))
+                        .with_message(message.as_str())
+                        .with_color(Color::Yellow),
+                );
             }
         }
 

@@ -84,7 +84,7 @@ fn test_struct_outside_global_scope_in_function() {
         "#,
     )
     .expect_error(
-        |e| matches!(e, TypeCheckerError::StructOutsideOfGlobalScope { name, .. } if name == "Point"),
+        |e| matches!(e, TypeCheckerError::NonGlobalDeclaration { name, .. } if name == "Point"),
     )
     .run();
 }
@@ -98,7 +98,7 @@ fn test_struct_outside_global_scope_in_block() {
         }
         "#,
     )
-    .expect_error(|e| matches!(e, TypeCheckerError::StructOutsideOfGlobalScope { .. }))
+    .expect_error(|e| matches!(e, TypeCheckerError::NonGlobalDeclaration { .. }))
     .run();
 }
 

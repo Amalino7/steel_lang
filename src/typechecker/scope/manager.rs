@@ -22,23 +22,40 @@ struct Scope {
     max_index: usize,
 }
 
+struct FunctionContext {
+    return_type: Type,
+    origin: Span,
+    captures: Vec<Symbol>,
+}
+impl FunctionContext {
+    pub fn captures(&self) -> &[Symbol] {
+        &self.captures
+    }
+    pub fn return_type(&self) -> (Type, Span) {
+        (self.return_type.clone(), self.origin)
+    }
+}
+
 pub struct ScopeManager {
     scopes: Vec<Scope>,
-    closures: Vec<Symbol>,
-    return_type: Vec<(Type, Span)>,
+    functions: Vec<FunctionContext>,
 }
 
 impl ScopeManager {
     pub fn new() -> Self {
         Self {
             scopes: vec![],
-            closures: vec![],
-            return_type: vec![],
+            functions: vec![],
         }
     }
 
     pub fn begin_function(&mut self, return_type: Type, span: Span) {
-        self.return_type.push((return_type, span));
+        let func_ctx = FunctionContext {
+            return_type,
+            origin: span,
+            captures: vec![],
+        };
+        self.functions.push(func_ctx);
         self.begin_scope(ScopeKind::Function);
     }
     pub fn begin_scope(&mut self, scope_kind: ScopeKind) {
@@ -71,14 +88,14 @@ impl ScopeManager {
         }
 
         if matches!(finished_scope.kind, ScopeKind::Function) {
-            self.return_type.pop();
+            self.functions.pop();
         }
 
         max
     }
 
-    pub fn return_type(&self) -> Option<&(Type, Span)> {
-        self.return_type.last()
+    pub fn return_type(&self) -> Option<(Type, Span)> {
+        self.functions.last().map(FunctionContext::return_type)
     }
 
     pub fn global_size(&self) -> u32 {
@@ -144,7 +161,8 @@ impl ScopeManager {
                 let resolved = if scope.kind == ScopeKind::Global {
                     ResolvedVar::Global(ctx.index as u16)
                 } else if is_closure {
-                    Self::add_closure_capture(&mut self.closures, ctx.name.clone())
+                    let captures = &mut self.functions.last_mut().unwrap().captures;
+                    Self::add_closure_capture(captures, ctx.name.clone())
                 } else {
                     ResolvedVar::Local(ctx.index as u8)
                 };
@@ -228,12 +246,12 @@ impl ScopeManager {
         closures.push(name);
         ResolvedVar::Closure((closures.len() - 1) as u8)
     }
-
-    pub fn clear_closures(&mut self) -> Vec<Symbol> {
-        std::mem::take(&mut self.closures)
-    }
-    pub fn return_closures(&mut self, returned: Vec<Symbol>) -> Vec<Symbol> {
-        std::mem::replace(&mut self.closures, returned)
+    pub fn get_closures(&self) -> Vec<Symbol> {
+        self.functions
+            .last()
+            .map(FunctionContext::captures)
+            .map(|v| v.to_vec())
+            .unwrap_or(Vec::new())
     }
 
     /// Get all visible variable names in the current scope (for suggestions)

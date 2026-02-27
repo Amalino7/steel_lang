@@ -66,7 +66,18 @@ impl<'src> TypeChecker<'src> {
                 name,
                 methods,
                 generics,
-            } => self.define_impl(impl_block, interfaces, name, methods, generics),
+            } => {
+                if !self.scopes.is_global() {
+                    Err(TypeCheckerError::NonGlobalDeclaration {
+                        kind: "impl",
+                        name: name.0.lexeme.to_string(),
+                        span: name.0.span,
+                    })
+                    .recover(&mut self.errors, TypedStmt::new_blank(stmt.span()))
+                } else {
+                    self.define_impl(impl_block, interfaces, name, methods, generics)
+                }
+            }
             Stmt::Block { body, brace_token } => {
                 let mut scope = ScopeGuard::new(self, ScopeKind::Block);
                 let stmts = body
@@ -231,7 +242,7 @@ impl<'src> TypeChecker<'src> {
                 }
             }
             Stmt::Return { value, keyword } => {
-                if let Some((func_return_type, func_span)) = self.scopes.return_type().cloned() {
+                if let Some((func_return_type, func_span)) = self.scopes.return_type() {
                     let coerced_return = match self.coerce_expression(value, &func_return_type) {
                         Ok(v) => v,
                         Err(err) => {
@@ -253,10 +264,11 @@ impl<'src> TypeChecker<'src> {
                 }
             }
 
-            Stmt::Struct { name, .. } | Stmt::Interface { name, .. } => {
+            Stmt::Struct { name, .. } => {
                 // structs already defined
                 if !self.scopes.is_global() {
-                    Err(TypeCheckerError::StructOutsideOfGlobalScope {
+                    Err(TypeCheckerError::NonGlobalDeclaration {
+                        kind: "Struct",
                         name: name.lexeme.to_string(),
                         span: name.span,
                     })
@@ -269,9 +281,26 @@ impl<'src> TypeChecker<'src> {
                     }
                 }
             }
+            Stmt::Interface { name, .. } => {
+                if !self.scopes.is_global() {
+                    Err(TypeCheckerError::NonGlobalDeclaration {
+                        kind: "Interface",
+                        name: name.lexeme.to_string(),
+                        span: name.span,
+                    })
+                    .recover(&mut self.errors, TypedStmt::new_blank(stmt.span()))
+                } else {
+                    TypedStmt {
+                        kind: StmtKind::Blank {},
+                        span: stmt.span(),
+                        type_info: Type::Void,
+                    }
+                }
+            }
             Stmt::Enum { name, .. } => {
                 if !self.scopes.is_global() {
-                    Err(TypeCheckerError::StructOutsideOfGlobalScope {
+                    Err(TypeCheckerError::NonGlobalDeclaration {
+                        kind: "Enum",
                         name: name.lexeme.to_string(),
                         span: name.span,
                     })
