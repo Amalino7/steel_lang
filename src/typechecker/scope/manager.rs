@@ -110,7 +110,7 @@ impl ScopeManager {
         self.scopes.last().map(|s| s.max_index).unwrap_or(0)
     }
 
-    pub fn declare(&mut self, decl: Declaration) -> Result<(), TypeCheckerError> {
+    pub fn declare(&mut self, decl: Declaration) -> Result<ResolvedVar, TypeCheckerError> {
         let scope = self.scopes.last_mut().expect("No scope active");
 
         if let Some(prev) = scope.variables.get(&decl.name)
@@ -128,9 +128,16 @@ impl ScopeManager {
             decl.name.clone(),
             VariableContext::from_declaration(scope.last_index, decl),
         );
+
+        let resolved = match scope.kind {
+            ScopeKind::Global => ResolvedVar::Global(scope.last_index as u16),
+            _ => ResolvedVar::Local(scope.last_index as u8),
+        };
+
         scope.last_index += 1;
         scope.max_index = scope.max_index.max(scope.last_index);
-        Ok(())
+
+        Ok(resolved)
     }
 
     pub fn lookup(&mut self, name: &str) -> Option<(&VariableContext, ResolvedVar)> {
@@ -279,7 +286,9 @@ impl ScopeManager {
                 !ctx.was_read
                     && matches!(
                         ctx.kind,
-                        DeclarationKind::Variable | DeclarationKind::Parameter
+                        DeclarationKind::Variable
+                            | DeclarationKind::Parameter
+                            | DeclarationKind::Binding
                     )
                     && !ctx.name.starts_with('_')
                     && ctx.name.as_ref() != "self"

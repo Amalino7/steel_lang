@@ -52,6 +52,15 @@ pub fn get_prelude() -> &'static str {
                 }
             }
         }
+        impl<T> Result<T, T> {
+            func merge(self): T {
+                match self {
+                    .Ok(val) => {return val;}
+                    .Err(err) => {return err;}
+                }
+            }
+        }
+
         impl List<number> {
             func sum(self): number {
                 func add(a: number, b: number): number {return a + b;}

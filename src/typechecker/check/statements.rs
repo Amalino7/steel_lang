@@ -43,7 +43,7 @@ impl<'src> TypeChecker<'src> {
                 };
 
                 let typed_binding = self
-                    .check_binding(binding, &final_type)
+                    .check_binding(binding, &final_type, false)
                     .ok_log(&mut self.errors);
 
                 let kind = if let Some(tb) = typed_binding {

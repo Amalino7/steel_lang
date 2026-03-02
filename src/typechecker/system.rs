@@ -2,9 +2,16 @@ use crate::scanner::{Span, Token};
 use crate::typechecker::core::types::type_defs::{EnumType, InterfaceType, StructType};
 use crate::typechecker::core::types::Symbol;
 use crate::typechecker::core::types::Type;
-use crate::typechecker::inference::InferenceContext;
 use crate::typechecker::resolver::convert_generics;
 use std::collections::HashMap;
+
+/// Metadata about a method declared inside an impl block.
+pub struct ImplMethod {
+    /// How many of the last entries in the function's `type_params` come from
+    /// the impl-block generics (rather than from the method's own generics).
+    pub impl_generic_count: usize,
+    pub self_type: Type,
+}
 
 pub struct TypeSystem {
     structs: HashMap<Symbol, StructType>,
@@ -12,6 +19,7 @@ pub struct TypeSystem {
     impls: HashMap<(Symbol, Symbol), u32>,
     enums: HashMap<Symbol, EnumType>,
     primitives: HashMap<Symbol, Type>,
+    methods: HashMap<Symbol, ImplMethod>,
 }
 
 pub enum TypeBlueprint {
@@ -29,6 +37,7 @@ impl TypeSystem {
             impls: HashMap::new(),
             enums: HashMap::new(),
             primitives: Self::primitives(),
+            methods: HashMap::new(),
         }
     }
     fn built_in_structs() -> HashMap<Symbol, StructType> {
@@ -76,7 +85,7 @@ impl TypeSystem {
     /// Builds a substitution map from a named type and its concrete type arguments.
     pub fn make_generics_map(&self, name: &str, args: &[Type]) -> HashMap<Symbol, Type> {
         let params = self.get_generic_param_names(name);
-        generics_to_map(&params, args, None)
+        make_substitution_map(&params, args)
     }
 
     /// Builds a substitution map from a concrete [`Type`].
@@ -214,6 +223,14 @@ impl TypeSystem {
     pub fn get_generic_count_by_name(&self, name: &str) -> usize {
         self.get_generic_param_names(name).len()
     }
+    pub fn register_method(&mut self, mangled_name: Symbol, info: ImplMethod) {
+        self.methods.insert(mangled_name, info);
+    }
+
+    pub fn get_method_info(&self, mangled_name: &str) -> Option<&ImplMethod> {
+        self.methods.get(mangled_name)
+    }
+
     pub fn get_origin(&self, name: &str) -> Option<Span> {
         if let Some(s) = self.structs.get(name) {
             if s.origin == Span::default() {
@@ -228,24 +245,13 @@ impl TypeSystem {
         }
     }
 }
-// TODO consider moving
-pub fn generics_to_map(
-    generics: &[Symbol],
-    generics_provided: &[Type],
-    mut auto_fil: Option<&mut InferenceContext>,
-) -> HashMap<Symbol, Type> {
-    generics
+/// Converts the given generic type parameters and concrete type arguments into a substitution map.
+/// Used when there is a known concrete instance
+pub fn make_substitution_map(params: &[Symbol], args: &[Type]) -> HashMap<Symbol, Type> {
+    debug_assert_eq!(params.len(), args.len());
+    params
         .iter()
         .enumerate()
-        .map(|(idx, s)| {
-            let type_var = generics_provided.get(idx).cloned().unwrap_or_else(|| {
-                if let Some(ctx) = auto_fil.as_mut() {
-                    ctx.new_named_type_var(s.clone())
-                } else {
-                    Type::Unknown
-                }
-            });
-            (s.clone(), type_var)
-        })
+        .map(|(idx, s)| (s.clone(), args[idx].clone()))
         .collect()
 }

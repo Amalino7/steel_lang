@@ -7,7 +7,6 @@ use crate::typechecker::core::types::{GenericArgs, TupleType, Type};
 use crate::typechecker::scope::guards::ScopeGuard;
 use crate::typechecker::scope::manager::ScopeKind;
 use crate::typechecker::scope::variables::Declaration;
-use crate::typechecker::system::generics_to_map;
 use crate::typechecker::{similarity, TypeChecker};
 use std::collections::HashSet;
 use std::rc::Rc;
@@ -139,7 +138,7 @@ impl<'src> TypeChecker<'src> {
                     let mut guard = ScopeGuard::new(self, ScopeKind::Block);
                     let typed_binding = match bind {
                         Some(binding) => {
-                            let result = guard.check_binding(binding, &payload_type);
+                            let result = guard.check_binding(binding, &payload_type, false);
                             result.recover(&mut guard.errors, TypedBinding::Ignored)
                         }
                         None => {
@@ -167,8 +166,11 @@ impl<'src> TypeChecker<'src> {
             Pattern::Variable(name) => {
                 let (typed_binding, typed_body) = {
                     let mut guard = ScopeGuard::new(self, ScopeKind::Block);
-                    let result =
-                        guard.check_binding(&Binding::Variable(name.clone()), &value_typed.ty);
+                    let result = guard.check_binding(
+                        &Binding::Variable(name.clone()),
+                        &value_typed.ty,
+                        false,
+                    );
                     let typed_binding = result.recover(&mut guard.errors, TypedBinding::Ignored);
                     let typed_body = guard.check_stmt(&arm.body);
                     (typed_binding, typed_body)
@@ -187,6 +189,7 @@ impl<'src> TypeChecker<'src> {
         &mut self,
         binding: &Binding,
         type_to_match: &Type,
+        nested: bool,
     ) -> Result<TypedBinding, TypeCheckerError> {
         match binding {
             Binding::Struct { name, fields } => {
@@ -223,39 +226,30 @@ impl<'src> TypeChecker<'src> {
                     }
                 })?;
 
-                let map = generics_to_map(
-                    struct_def.generic_params(),
-                    generics,
-                    Some(&mut self.infer_ctx),
-                );
-
                 let mut resolved: Vec<(usize, Type, &Binding)> = Vec::with_capacity(fields.len());
                 for (field_name, field_binding) in fields {
-                    let &field_idx = struct_def.fields.get(field_name.lexeme).ok_or_else(|| {
-                        let field_names: Vec<&str> =
-                            struct_def.fields.keys().map(|s| s.as_ref()).collect();
-                        let suggestions =
-                            similarity::find_similar(field_name.lexeme, field_names, 3);
-                        TypeCheckerError::UndefinedField {
-                            struct_name: struct_def.name.to_string(),
-                            field_name: field_name.lexeme.to_string(),
-                            span: field_name.span,
-                            struct_origin: Some(struct_def.origin),
-                            suggestions,
-                        }
-                    })?;
-                    let (_, field_type) = struct_def.ordered_fields[field_idx].clone();
-                    resolved.push((
-                        field_idx,
-                        field_type.generic_to_concrete(&map),
-                        field_binding,
-                    ));
+                    let (field_idx, field_type) = struct_def
+                        .get_field(field_name.lexeme, generics)
+                        .ok_or_else(|| {
+                            let field_names: Vec<&str> =
+                                struct_def.fields.keys().map(|s| s.as_ref()).collect();
+                            let suggestions =
+                                similarity::find_similar(field_name.lexeme, field_names, 3);
+                            TypeCheckerError::UndefinedField {
+                                struct_name: struct_def.name.to_string(),
+                                field_name: field_name.lexeme.to_string(),
+                                span: field_name.span,
+                                struct_origin: Some(struct_def.origin),
+                                suggestions,
+                            }
+                        })?;
+                    resolved.push((field_idx, field_type, field_binding));
                 }
 
                 let typed_fields = resolved
                     .into_iter()
                     .map(|(idx, ty, field_binding)| {
-                        Ok((idx as u8, self.check_binding(field_binding, &ty)?))
+                        Ok((idx as u8, self.check_binding(field_binding, &ty, true)?))
                     })
                     .collect::<Result<Vec<_>, TypeCheckerError>>()?;
 
@@ -286,7 +280,7 @@ impl<'src> TypeChecker<'src> {
                 let typed_fields = fields
                     .iter()
                     .zip(tuple.types.iter())
-                    .map(|(field, ty)| self.check_binding(field, ty))
+                    .map(|(field, ty)| self.check_binding(field, ty, true))
                     .collect::<Result<Vec<_>, _>>()?;
 
                 Ok(TypedBinding::Tuple(typed_fields))
@@ -296,9 +290,13 @@ impl<'src> TypeChecker<'src> {
                 if token.lexeme == "_" {
                     return Ok(TypedBinding::Ignored);
                 }
-                let decl =
-                    Declaration::mutable(token.lexeme.into(), type_to_match.clone(), token.span);
+                let decl = if nested {
+                    Declaration::binding(token.lexeme.into(), type_to_match.clone(), token.span)
+                } else {
+                    Declaration::mutable(token.lexeme.into(), type_to_match.clone(), token.span)
+                };
                 self.scopes.declare(decl)?;
+                // TODO: migrate to a non-write lookup once one exists that still
                 let (_, resolved) = self.scopes.lookup_for_write(token.lexeme).unwrap();
                 Ok(TypedBinding::Variable(resolved))
             }

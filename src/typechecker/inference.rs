@@ -1,5 +1,5 @@
-use crate::typechecker::core::types::{FunctionType, TupleType, Type};
-use crate::typechecker::system::generics_to_map;
+use crate::typechecker::core::types::{FunctionType, GenericArgs, TupleType, Type};
+use crate::typechecker::system::make_substitution_map;
 use crate::typechecker::Symbol;
 use std::collections::HashMap;
 use std::fmt;
@@ -105,6 +105,25 @@ impl InferenceContext {
         }
     }
 
+    /// Should be used when new type arguments can be partially provided and the rest has to use new infer holes.
+    pub fn fresh_args(&mut self, params: &[Symbol], provided: &[Type]) -> GenericArgs {
+        let is_correct = params.len() == provided.len() || provided.is_empty();
+        debug_assert!(
+            is_correct,
+            "Should be used when new type arguments can be partially provided and the rest has to use new infer holes."
+        );
+        params
+            .iter()
+            .enumerate()
+            .map(|(i, name)| {
+                provided
+                    .get(i)
+                    .cloned()
+                    .unwrap_or_else(|| self.new_named_type_var(name.clone()))
+            })
+            .collect()
+    }
+
     pub fn is_resolved(&self, id: u32) -> bool {
         self.substitutions.contains_key(&id)
     }
@@ -175,18 +194,12 @@ impl InferenceContext {
             expected: expected.clone(),
             found: provided.clone(),
         };
-
-        if variance == Variance::Contravariant && self.is_trivially_unifiable(provided, expected) {
-            return Ok(());
-        }
-
-        if self.is_trivially_unifiable(expected, provided) {
-            return Ok(());
-        }
-
         match (expected, provided) {
             (_, Type::Infer(id)) => self.unify_infer_right(expected, *id, variance),
             (Type::Infer(id), _) => self.unify_infer_left(*id, provided, variance),
+
+            _ if Self::is_trivially_unifiable(expected, provided, variance) => Ok(()),
+
             (Type::Optional(expected_inner), Type::Optional(provided_inner)) => {
                 self.unify_with_variance(expected_inner, provided_inner, variance)
             }
@@ -198,8 +211,8 @@ impl InferenceContext {
             }
             (Type::Function(exp), Type::Function(prov)) => {
                 if !prov.type_params.is_empty() {
-                    // TODO is this the appropriate place
-                    let map = generics_to_map(&prov.type_params, &[], Some(self));
+                    let new_generics = self.fresh_args(&prov.type_params, &[]);
+                    let map = make_substitution_map(&prov.type_params, &new_generics);
                     let new_prov = Type::Function(prov.clone()).generic_to_concrete(&map);
                     let Type::Function(prov) = new_prov else {
                         return Err(mismatch(UnificationErrorKind::GenericFunctionNotAllowed));
@@ -267,10 +280,21 @@ impl InferenceContext {
         Ok(())
     }
 
-    fn is_trivially_unifiable(&self, expected: &Type, provided: &Type) -> bool {
-        matches!(provided, Type::Never)
-            || matches!(expected, Type::Error | Type::Unknown | Type::Any)
-            || (matches!(expected, Type::Optional(_)) && matches!(provided, Type::Nil))
+    fn is_trivially_unifiable(expected: &Type, provided: &Type, variance: Variance) -> bool {
+        match variance {
+            Variance::Covariant => {
+                matches!(provided, Type::Never)
+                    || matches!(expected, Type::Error | Type::Unknown | Type::Any)
+                    || (matches!(expected, Type::Optional(_)) && matches!(provided, Type::Nil))
+            }
+            Variance::Contravariant => {
+                Self::is_trivially_unifiable(provided, expected, Variance::Covariant)
+            }
+            Variance::Invariant => {
+                matches!(expected, Type::Error | Type::Unknown)
+                    || matches!(provided, Type::Error | Type::Unknown)
+            }
+        }
     }
 
     fn unify_infer_left(
@@ -316,10 +340,10 @@ impl InferenceContext {
         //     return Err(mismatch(UnificationErrorKind::GenericFunctionNotAllowed));
         // }
 
-        if exp_inner.params.len() != prov_inner.params.len() {
+        if exp_inner.arity() != prov_inner.arity() {
             return Err(mismatch(UnificationErrorKind::ArityMismatch {
-                expected_len: exp_inner.params.len(),
-                found_len: prov_inner.params.len(),
+                expected_len: exp_inner.arity(),
+                found_len: prov_inner.arity(),
             }));
         }
         let param_variance = variance.compose(Variance::Contravariant);

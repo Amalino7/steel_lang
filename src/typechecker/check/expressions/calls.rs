@@ -2,8 +2,8 @@ use crate::parser::ast::{CallArg, Expr};
 use crate::scanner::Span;
 use crate::typechecker::core::ast::{ExprKind, TypedExpr};
 use crate::typechecker::core::error::TypeCheckerError;
-use crate::typechecker::core::types::Type;
-use crate::typechecker::system::generics_to_map;
+use crate::typechecker::core::types::{GenericArgs, Type};
+use crate::typechecker::system::make_substitution_map;
 use crate::typechecker::{Symbol, TypeChecker};
 use std::collections::HashMap;
 
@@ -15,9 +15,9 @@ impl<'src> TypeChecker<'src> {
         callee: &Expr<'src>,
         arguments: &Vec<CallArg<'src>>,
         safe: &bool,
-        expected: &Type,
+        _expected: &Type,
     ) -> Result<TypedExpr, TypeCheckerError> {
-        let mut callee_typed = self.check_expression(callee, &Type::Unknown)?;
+        let callee_typed = self.check_expression(callee, &Type::Unknown)?;
 
         let safe = if let ExprKind::MethodGet { safe, .. } = callee_typed.kind {
             safe
@@ -34,78 +34,29 @@ impl<'src> TypeChecker<'src> {
 
         // Handle Struct constructor
         if let Type::Metatype(name, generics) = &lookup_type
-            && let Some(struct_def) = self.sys.get_struct(name)
+            && self.sys.get_struct(name).is_some()
         {
-            let constructor = struct_def.get_constructor(generics, &mut self.infer_ctx);
-
-            let owned_name = struct_def.name.clone();
-            let definition_span = struct_def.origin;
-            let bound_args = self.bind_arguments(
-                callee.span(),
-                Some(definition_span),
-                &constructor.resolved_args,
-                arguments,
-                false,
-            )?;
-
-            let final_type = self.infer_ctx.substitute(&constructor.constructed_type);
-
-            return Ok(TypedExpr {
-                ty: final_type,
-                kind: ExprKind::StructInit {
-                    name: Box::from(owned_name.to_string()),
-                    args: bound_args,
-                },
-                span: expr.span(),
-            });
+            return self.struct_constructor(name, generics, arguments, callee.span(), expr.span());
         }
 
         if let Type::Metatype(name, generics) = &lookup_type
-            && let Some(enum_def) = self.sys.get_enum(name)
-            && let ExprKind::EnumInit { value, .. } = &mut callee_typed.kind
+            && self.sys.get_enum(name).is_some()
         {
-            let constructor = enum_def
-                .get_constructor(generics.clone(), value.ty.clone(), &self.sys)
-                .unwrap();
-
-            let definition_span = enum_def.origin;
-            let span = callee.span();
-            let mut bound_args = self.bind_arguments(
-                span,
-                Some(definition_span),
-                &constructor.resolved_args,
+            return self.enum_constructor(
+                name,
+                generics,
                 arguments,
-                false,
-            )?;
-            let final_type = self.infer_ctx.substitute(&constructor.constructed_type);
-            let init_expr = match &value.ty {
-                Type::Tuple(_) => TypedExpr {
-                    ty: value.ty.clone(),
-                    kind: ExprKind::Tuple {
-                        elements: bound_args,
-                    },
-                    span,
-                },
-                Type::Struct(struct_name, ..) => TypedExpr {
-                    kind: ExprKind::StructInit {
-                        name: struct_name.to_string().into(),
-                        args: bound_args,
-                    },
-                    ty: value.ty.clone(),
-                    span,
-                },
-                _ => bound_args.pop().unwrap(),
-            };
-            callee_typed.ty = final_type;
-            callee_typed.span = expr.span();
-            *value = Box::from(init_expr);
-            return Ok(callee_typed);
+                callee_typed,
+                callee.span(),
+                expr.span(),
+            );
         }
 
         // Check for Normal Function Call
         if let Type::Function(func) = &lookup_type {
+            let fresh_generics = self.infer_ctx.fresh_args(&func.type_params, &[]);
             let map: HashMap<Symbol, Type> =
-                generics_to_map(&func.type_params, &[], Some(&mut self.infer_ctx));
+                make_substitution_map(&func.type_params, &fresh_generics);
 
             let Type::Function(func) = Type::Function(func.clone()).generic_to_concrete(&map)
             else {
@@ -152,15 +103,116 @@ impl<'src> TypeChecker<'src> {
         })
     }
 
+    fn struct_constructor(
+        &mut self,
+        name: &Symbol,
+        generics: &[Type],
+        arguments: &Vec<CallArg<'src>>,
+        callee_span: Span,
+        expr_span: Span,
+    ) -> Result<TypedExpr, TypeCheckerError> {
+        let struct_def = self
+            .sys
+            .get_struct(name)
+            .expect("Struct should have been checked earlier.");
+        let constructor = struct_def.get_constructor(generics, &mut self.infer_ctx);
+
+        let owned_name = struct_def.name.clone();
+        let definition_span = struct_def.origin;
+        let bound_args = self.bind_arguments(
+            callee_span,
+            Some(definition_span),
+            &constructor.resolved_args,
+            arguments,
+            false,
+        )?;
+
+        let final_type = self.infer_ctx.substitute(&constructor.constructed_type);
+
+        Ok(TypedExpr {
+            ty: final_type,
+            kind: ExprKind::StructInit {
+                name: Box::from(owned_name.to_string()),
+                args: bound_args,
+            },
+            span: expr_span,
+        })
+    }
+
+    fn enum_constructor(
+        &mut self,
+        name: &Symbol,
+        generics: &GenericArgs,
+        arguments: &Vec<CallArg<'src>>,
+        callee_typed: TypedExpr,
+        callee_span: Span,
+        expr_span: Span,
+    ) -> Result<TypedExpr, TypeCheckerError> {
+        let enum_def = self
+            .sys
+            .get_enum(name)
+            .expect("Enum should have been checked earlier.");
+        let ExprKind::EnumInit {
+            enum_name,
+            variant_idx,
+            value: old_value,
+        } = callee_typed.kind
+        else {
+            unreachable!("Enum constructor should have been checked earlier.");
+        };
+
+        let constructor = enum_def
+            .get_constructor(generics.clone(), old_value.ty.clone(), &self.sys)
+            .unwrap();
+
+        let definition_span = enum_def.origin;
+        let span = callee_span;
+        let mut bound_args = self.bind_arguments(
+            span,
+            Some(definition_span),
+            &constructor.resolved_args,
+            arguments,
+            false,
+        )?;
+        let final_type = self.infer_ctx.substitute(&constructor.constructed_type);
+        let init_expr = match &old_value.ty {
+            Type::Tuple(_) => TypedExpr {
+                ty: old_value.ty.clone(),
+                kind: ExprKind::Tuple {
+                    elements: bound_args,
+                },
+                span,
+            },
+            Type::Struct(struct_name, ..) => TypedExpr {
+                kind: ExprKind::StructInit {
+                    name: struct_name.to_string().into(),
+                    args: bound_args,
+                },
+                ty: old_value.ty.clone(),
+                span,
+            },
+            _ => bound_args.pop().unwrap(),
+        };
+
+        Ok(TypedExpr {
+            ty: final_type,
+            kind: ExprKind::EnumInit {
+                enum_name,
+                variant_idx,
+                value: init_expr.into(),
+            },
+            span: expr_span,
+        })
+    }
+
     fn bind_arguments(
         &mut self,
-        call_site: Span,
+        callee: Span,
         definition_span: Option<Span>,
         params: &[(Symbol, Type)],
         args: &[CallArg<'src>],
         is_vararg: bool,
     ) -> Result<Vec<TypedExpr>, TypeCheckerError> {
-        let callee = call_site;
         let fixed_len = params.len();
         let mut fixed: Vec<Option<TypedExpr>> = (0..fixed_len).map(|_| None).collect();
         let mut used = vec![false; fixed_len];

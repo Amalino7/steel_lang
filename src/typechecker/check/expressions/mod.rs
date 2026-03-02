@@ -67,11 +67,12 @@ impl<'src> TypeChecker<'src> {
                         span: name.span,
                     })
                 } else {
-                    let visible_vars = self.scopes.visible_variable_names();
-                    let suggestions = find_similar(name.lexeme, visible_vars, 3);
                     if name.lexeme == "self" {
                         return Err(TypeCheckerError::SelfOutsideOfImpl { span: name.span });
                     }
+
+                    let visible_vars = self.scopes.visible_variable_names();
+                    let suggestions = find_similar(name.lexeme, visible_vars, 3);
 
                     Err(TypeCheckerError::UndefinedVariable {
                         name: name.lexeme.to_string(),

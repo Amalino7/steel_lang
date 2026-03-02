@@ -6,6 +6,7 @@ use crate::typechecker::core::error::{Recoverable, TypeCheckerError};
 use crate::typechecker::core::types::Type;
 use crate::typechecker::scope::guards::{ScopeGuard, TypeScopeGuard};
 use crate::typechecker::scope::variables::Declaration;
+use crate::typechecker::system::ImplMethod;
 use crate::typechecker::{Symbol, TypeChecker};
 use std::collections::HashMap;
 use std::iter::repeat_n;
@@ -23,7 +24,7 @@ impl<'src> TypeChecker<'src> {
                     let mut guard = TypeScopeGuard::new_function(self, generics);
                     let func_ty = guard
                         .res()
-                        .resolve_func(signature, guard.type_scopes.all_generics())
+                        .resolve_generic_func(signature)
                         .map(Type::Function);
                     guard.declare_function(name.lexeme.into(), name.span, func_ty, false);
                 }
@@ -33,6 +34,7 @@ impl<'src> TypeChecker<'src> {
                     methods,
                     generics,
                 } => {
+                    let impl_gen_count = generics.len();
                     let mut partial_guard = TypeScopeGuard::new_type_params(self, generics);
                     let self_ty = partial_guard
                         .res()
@@ -65,12 +67,31 @@ impl<'src> TypeChecker<'src> {
                         let mut inner_guard = TypeScopeGuard::new_type_params(&mut guard, generics);
                         let func_ty = inner_guard
                             .res()
-                            .resolve_func(signature, inner_guard.type_scopes.all_generics())
+                            .resolve_generic_func(signature)
                             .map(Type::Function);
                         let mangled_name: Symbol =
                             format!("{}.{}", name.0.lexeme, func_name.lexeme).into();
 
-                        inner_guard.declare_function(mangled_name, func_name.span, func_ty, true);
+                        inner_guard.declare_function(
+                            mangled_name.clone(),
+                            func_name.span,
+                            func_ty,
+                            true,
+                        );
+
+                        // Register impl metadata so method-access can freshen and unify correctly.
+                        let self_type = inner_guard
+                            .type_scopes
+                            .get_self_type()
+                            .cloned()
+                            .unwrap_or(Type::Error);
+                        inner_guard.sys.register_method(
+                            mangled_name,
+                            ImplMethod {
+                                impl_generic_count: impl_gen_count,
+                                self_type,
+                            },
+                        );
                     }
                 }
                 Stmt::Interface {
@@ -84,7 +105,7 @@ impl<'src> TypeChecker<'src> {
                     for (i, sig) in methods.iter().enumerate() {
                         let ty = guard
                             .res()
-                            .resolve_func(&sig.signature, guard.type_scopes.all_generics())
+                            .resolve_generic_func(&sig.signature)
                             .map(Type::Function);
                         let ty = ty.recover(&mut guard.errors, Type::Error);
                         method_map.insert(sig.name.lexeme.to_string(), (i, ty));
@@ -175,9 +196,7 @@ impl<'src> TypeChecker<'src> {
         generics: &[Token<'src>],
     ) -> Result<TypedExpr, TypeCheckerError> {
         let mut ty_guard = TypeScopeGuard::new_function(self, generics);
-        let func = ty_guard
-            .res()
-            .resolve_func(sig, ty_guard.type_scopes.all_generics())?;
+        let func = ty_guard.res().resolve_generic_func(sig)?;
         let func_type = Type::Function(func.clone());
         let mut guard =
             ScopeGuard::new_function(&mut ty_guard, func.return_type.clone(), name.span);

@@ -61,10 +61,12 @@ impl TypeScopeManager {
         }
         None
     }
-    pub fn all_generics(&self) -> Vec<Symbol> {
+    pub fn active_generics(&self) -> Vec<Symbol> {
         let mut generics = vec![];
         for scope in self.scopes.iter().rev() {
-            generics.extend(scope.generics.clone());
+            let mut new_generics = scope.generics.clone();
+            new_generics.extend(generics);
+            generics = new_generics;
             if scope.kind == TypeScopeKind::Function {
                 break;
             }

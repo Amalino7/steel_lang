@@ -3,7 +3,7 @@ use crate::scanner::Token;
 use crate::typechecker::core::ast::{ExprKind, TypedExpr};
 use crate::typechecker::core::error::{TypeCheckerError, TypeCheckerWarning};
 use crate::typechecker::core::types::Type;
-use crate::typechecker::system::TypeSystem;
+use crate::typechecker::system::{make_substitution_map, TypeSystem};
 use crate::typechecker::{similarity, Symbol, TypeChecker};
 use std::rc::Rc;
 
@@ -246,9 +246,8 @@ impl<'src> TypeChecker<'src> {
             });
         };
         let definition_span = ctx.span;
-
-        let generics_map = self.sys.get_generics_map(&obj_type);
-        let Type::Function(func) = &ctx.type_info else {
+        let method_type = ctx.type_info.clone();
+        let Type::Function(func) = &method_type else {
             unreachable!("Method should be of type function")
         };
 
@@ -259,21 +258,43 @@ impl<'src> TypeChecker<'src> {
             });
         }
 
-        let expected_self = func.params[0].1.generic_to_concrete(&generics_map);
-        self.infer_ctx
-            .unify_types(&obj_type, &expected_self)
-            .map_err(|msg| TypeCheckerError::ComplexTypeMismatch {
-                expected: expected_self,
-                found: obj_type.clone(),
-                span: method_token.span,
-                message: msg.into(),
-            })?;
+        let impl_count: Option<usize> = self
+            .sys
+            .get_method_info(&mangled_name)
+            .map(|info| info.impl_generic_count);
 
-        let mut method_ty = ctx.type_info.generic_to_concrete(&generics_map);
-        let mut method_ty = if let Type::Function(ref mut func) = method_ty {
-            let func = Rc::make_mut(func);
-            func.params.remove(0);
-            method_ty
+        let result_type = if let Some(impl_count) = impl_count {
+            let impl_params = &func.type_params[0..impl_count];
+            let fresh_generics = self.infer_ctx.fresh_args(impl_params, &[]);
+            let impl_map = make_substitution_map(impl_params, &fresh_generics);
+
+            let method_with_fresh = method_type.generic_to_concrete(&impl_map);
+
+            let Type::Function(fresh_func) = &method_with_fresh else {
+                unreachable!()
+            };
+            let self_param_ty = fresh_func.params[0].1.clone();
+            self.infer_ctx
+                .unify_types(&self_param_ty, &obj_type)
+                .map_err(|msg| TypeCheckerError::ComplexTypeMismatch {
+                    expected: self_param_ty,
+                    found: obj_type.clone(),
+                    span: method_token.span,
+                    message: msg.into(),
+                })?;
+
+            self.infer_ctx.substitute(&method_with_fresh)
+        } else {
+            // Fallback: direct generic-name substitution (non-impl methods).
+            let generics_map = self.sys.get_generics_map(&obj_type);
+            method_type.generic_to_concrete(&generics_map)
+        };
+
+        // Remove the self parameter from the resolved method type.
+        let mut method_ty = if let Type::Function(mut func) = result_type {
+            let func_inner = Rc::make_mut(&mut func);
+            func_inner.params.remove(0);
+            Type::Function(func)
         } else {
             unreachable!("Method should be of type function")
         };

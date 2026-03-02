@@ -23,12 +23,19 @@ impl FunctionType {
             .map(|param| param.0.as_ref() != "self")
             .unwrap_or(true)
     }
+
+    pub fn arity(&self) -> usize {
+        self.params.len()
+    }
+    pub fn is_generic(&self) -> bool {
+        !self.type_params.is_empty()
+    }
 }
 
 impl PartialEq for FunctionType {
     fn eq(&self, other: &Self) -> bool {
         self.return_type == other.return_type
-            && self.params.len() == other.params.len()
+            && self.arity() == other.arity()
             && self.is_vararg == other.is_vararg
             && self
                 .params

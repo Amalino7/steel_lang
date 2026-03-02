@@ -30,6 +30,9 @@ pub enum DeclarationKind {
     Function,
     Method,
     Parameter,
+    /// A variable introduced by a destructuring pattern, e.g. `let (a, b) = …`.
+    /// Immutable: reassignment is not allowed.
+    Binding,
 }
 
 impl DeclarationKind {
@@ -39,6 +42,7 @@ impl DeclarationKind {
             DeclarationKind::Function => "function",
             DeclarationKind::Method => "method",
             DeclarationKind::Parameter => "parameter",
+            DeclarationKind::Binding => "destructured binding",
         }
     }
 }
@@ -107,6 +111,17 @@ impl Declaration {
             span,
             mutability: Mutability::Mutable,
             kind: DeclarationKind::Variable,
+        }
+    }
+
+    /// Creates an immutable binding introduced by a destructuring pattern.
+    pub fn binding(name: Symbol, type_info: Type, span: Span) -> Self {
+        Declaration {
+            name,
+            type_info,
+            span,
+            mutability: Mutability::Immutable,
+            kind: DeclarationKind::Binding,
         }
     }
 

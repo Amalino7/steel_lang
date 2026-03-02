@@ -58,7 +58,7 @@ impl<'a> TypeResolver<'a> {
         self.instantiate(name, resolved_generics, span)
     }
 
-    fn instantiate(
+    pub fn instantiate(
         &self,
         name: &str,
         generics: Vec<Type>,
@@ -117,7 +117,14 @@ impl<'a> TypeResolver<'a> {
     pub fn resolve_many(&self, types: &[TypeAst<'_>]) -> Result<Vec<Type>, TypeCheckerError> {
         types.iter().map(|ty| self.resolve(ty)).collect()
     }
-    pub fn resolve_func(
+    pub fn resolve_generic_func(
+        &self,
+        signature: &FunctionSig<'_>,
+    ) -> Result<Rc<FunctionType>, TypeCheckerError> {
+        self.resolve_func(signature, self.scope_manager.active_generics())
+    }
+
+    fn resolve_func(
         &self,
         signature: &FunctionSig<'_>,
         active_generics: Vec<Symbol>,

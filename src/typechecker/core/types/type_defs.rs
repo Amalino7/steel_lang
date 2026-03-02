@@ -1,17 +1,16 @@
 use crate::scanner::Span;
 use crate::typechecker::core::types::{GenericArgs, Type};
 use crate::typechecker::inference::InferenceContext;
-use crate::typechecker::system::{generics_to_map, TypeSystem};
+use crate::typechecker::system::{make_substitution_map, TypeSystem};
 use crate::typechecker::Symbol;
 use std::collections::HashMap;
-use std::rc::Rc;
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct StructType {
     pub name: Symbol,
     pub origin: Span,
     pub fields: HashMap<Symbol, usize>,
-    pub(crate) ordered_fields: Vec<(Symbol, Type)>,
+    ordered_fields: Vec<(Symbol, Type)>,
     generic_params: Vec<Symbol>,
 }
 
@@ -65,21 +64,16 @@ impl EnumType {
         self.ordered_variants = ordered_variants;
     }
 
-    pub fn get_variant(
+    pub fn get_static_variant(
         &self,
         variant: &str,
         instance: &GenericArgs,
         ctx: &mut InferenceContext,
     ) -> Option<(u16, Type, GenericArgs)> {
         let idx = self.variants.get(variant)?;
-        let map = generics_to_map(&self.generic_params, instance, Some(ctx));
-        let fresh_generics: GenericArgs = self
-            .generic_params
-            .iter()
-            .map(|s| map[s].clone())
-            .collect::<Vec<_>>()
-            .into();
-        let raw_ty = self.ordered_variants[*idx].1.clone();
+        let fresh_generics = ctx.fresh_args(&self.generic_params, instance);
+        let map = make_substitution_map(&self.generic_params, &fresh_generics);
+        let raw_ty = &self.ordered_variants[*idx].1;
         let final_ty = raw_ty.generic_to_concrete(&map);
         Some((*idx as u16, final_ty, fresh_generics))
     }
@@ -90,7 +84,7 @@ impl EnumType {
         name: &str,
         generic_args: &GenericArgs,
     ) -> Option<(u16, Type)> {
-        let map = generics_to_map(&self.generic_params, generic_args, None);
+        let map = make_substitution_map(&self.generic_params, generic_args);
         self.variants.get(name).map(|idx| {
             let raw_ty = self.ordered_variants[*idx].1.clone();
             (*idx as u16, raw_ty.generic_to_concrete(&map))
@@ -99,7 +93,7 @@ impl EnumType {
 
     pub fn get_variant_by_index(&self, index: usize, generic_args: &GenericArgs) -> Option<Type> {
         self.ordered_variants.get(index).map(|(_, ty)| {
-            let map = generics_to_map(&self.generic_params, generic_args, None);
+            let map = make_substitution_map(&self.generic_params, generic_args);
             ty.clone().generic_to_concrete(&map)
         })
     }
@@ -109,7 +103,7 @@ impl EnumType {
         variant_ty: Type,
         sys: &TypeSystem,
     ) -> Option<TypeConstructor> {
-        let map = generics_to_map(&self.generic_params, &instance, None);
+        let map = make_substitution_map(&self.generic_params, &instance);
         let params = match &variant_ty {
             Type::Tuple(tuple) => tuple
                 .types
@@ -169,14 +163,14 @@ impl StructType {
 
     pub fn get_field_by_index(&self, index: usize, generic_args: &GenericArgs) -> Option<Type> {
         self.ordered_fields.get(index).map(|(_, ty)| {
-            let map = generics_to_map(&self.generic_params, generic_args, None);
+            let map = make_substitution_map(&self.generic_params, generic_args);
             ty.clone().generic_to_concrete(&map)
         })
     }
 
     pub fn get_field(&self, field: &str, generic_args: &GenericArgs) -> Option<(usize, Type)> {
         self.fields.get(field).map(|idx| {
-            let map = generics_to_map(&self.generic_params, generic_args, None);
+            let map = make_substitution_map(&self.generic_params, generic_args);
             let raw_type = self.ordered_fields[*idx].1.clone();
             (*idx, raw_type.generic_to_concrete(&map))
         })
@@ -187,7 +181,8 @@ impl StructType {
         instance: &[Type],
         ctx: &mut InferenceContext,
     ) -> TypeConstructor {
-        let map = generics_to_map(&self.generic_params, instance, Some(ctx));
+        let type_args = ctx.fresh_args(&self.generic_params, instance);
+        let map = make_substitution_map(&self.generic_params, &type_args);
         let args = self
             .ordered_fields
             .iter()
@@ -197,15 +192,7 @@ impl StructType {
             })
             .collect();
 
-        let self_type = Type::Struct(
-            self.name.clone(),
-            Rc::from(
-                self.generic_params
-                    .iter()
-                    .map(|s| map[s].clone())
-                    .collect::<Vec<_>>(),
-            ),
-        );
+        let self_type = Type::Struct(self.name.clone(), type_args);
 
         TypeConstructor {
             constructed_type: self_type,

@@ -90,7 +90,7 @@ fn test_generic_struct_with_map() {
         box = map(box, square);
         assert(box.top, 361);
 
-        let new_box: Box<number?> = Box(nil);
+        let new_box = Box.<number?>(nil);
         new_box.top = 10;
         let good = map(new_box, unwrap);
         assert(good.top, 10);
