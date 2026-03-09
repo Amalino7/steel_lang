@@ -6,17 +6,17 @@ func print_one(a: number) {
 func square(a:number): number {
     return a * a;
 }
-square(1,2);
-list.map(square).each(print_one);
+square(1);
+
+list
+.map(square)
+.each(println);
 println("");
 
-let my_tuple: (number, number) = (1,blah);
-
-println(my_tuple.0 + "10");
 let sum = list
     .map(square)
     .sum();
 println(sum);
 println(list.len());
 
-println(list.contains(2)," ", list.contains(-60));
+// println(list.contains(2)," ", list.contains(-60));

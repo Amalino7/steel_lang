@@ -1,0 +1,2 @@
+let name: string = nil;
+println(name.length());

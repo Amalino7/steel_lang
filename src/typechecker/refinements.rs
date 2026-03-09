@@ -1,6 +1,5 @@
-use crate::typechecker::type_ast::{BinaryOp, ExprKind, LogicalOp, TypedExpr, UnaryOp};
-use crate::typechecker::type_system::TypeSystem;
-use crate::typechecker::types::Type;
+use crate::typechecker::core::ast::{BinaryOp, ExprKind, LogicalOp, TypedExpr, UnaryOp};
+use crate::typechecker::core::types::Type;
 use crate::typechecker::{Symbol, TypeChecker};
 
 type Refinement = (Symbol, Type);
@@ -15,6 +14,35 @@ impl<'src> TypeChecker<'src> {
     pub(crate) fn analyze_condition(&mut self, expr: &TypedExpr) -> BranchRefinements {
         match &expr.kind {
             // x == nil
+            ExprKind::Is {
+                target,
+                variant_idx,
+            } => {
+                if let ExprKind::GetVar(_, name) = &target.kind
+                    && let Type::Enum(enum_name, generics) = &target.ty
+                {
+                    let enum_def = self.sys.get_enum(enum_name).unwrap();
+                    let false_path = if enum_def.variants.len() == 2 {
+                        let other_ty = enum_def
+                            .get_variant_by_index((1 - *variant_idx) as usize, generics)
+                            .unwrap();
+                        vec![(name.clone(), other_ty)]
+                    } else {
+                        vec![]
+                    };
+                    let narrowed_type = enum_def
+                        .get_variant_by_index(*variant_idx as usize, generics)
+                        .unwrap();
+                    return BranchRefinements {
+                        true_path: vec![(name.clone(), narrowed_type)],
+                        false_path,
+                    };
+                }
+                BranchRefinements {
+                    true_path: vec![],
+                    false_path: vec![],
+                }
+            }
             ExprKind::Binary {
                 left,
                 operator,
@@ -37,39 +65,6 @@ impl<'src> TypeChecker<'src> {
                     return BranchRefinements {
                         true_path: vec![],
                         false_path: vec![(name.clone(), *inner.clone())],
-                    };
-                }
-                BranchRefinements {
-                    true_path: vec![],
-                    false_path: vec![],
-                }
-            }
-            ExprKind::Is {
-                target,
-                variant_idx,
-            } => {
-                if let ExprKind::GetVar(_, name) = &target.kind
-                    && let Type::Enum(enum_name, _) = &target.ty
-                {
-                    let enum_def = self.sys.get_enum(enum_name).unwrap();
-                    let generics_map = self.sys.get_generics_map(&target.ty);
-                    let false_path = if enum_def.variants.len() == 2 {
-                        let (_, other_ty) = enum_def
-                            .ordered_variants
-                            .get((1 - *variant_idx) as usize)
-                            .unwrap();
-                        let final_type =
-                            TypeSystem::generic_to_concrete(other_ty.clone(), &generics_map);
-                        vec![(name.clone(), final_type)]
-                    } else {
-                        vec![]
-                    };
-                    let (_, narrowed_type) = &enum_def.ordered_variants[*variant_idx as usize];
-                    let final_type =
-                        TypeSystem::generic_to_concrete(narrowed_type.clone(), &generics_map);
-                    return BranchRefinements {
-                        true_path: vec![(name.clone(), final_type.clone())],
-                        false_path,
                     };
                 }
                 BranchRefinements {

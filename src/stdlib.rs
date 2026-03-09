@@ -1,4 +1,4 @@
-use crate::typechecker::types::{FunctionType, Type};
+use crate::typechecker::core::types::{FunctionType, Type};
 use crate::typechecker::Symbol;
 use crate::vm::value::{NativeFn, Value};
 use std::rc::Rc;
@@ -10,21 +10,19 @@ pub struct NativeDef {
 }
 
 fn instance_method(
-    params: Vec<(String, Type)>,
+    params: Vec<(Symbol, Type)>,
     return_type: Type,
     type_params: Vec<Symbol>,
 ) -> Type {
     Type::Function(Rc::new(FunctionType {
-        is_static: false,
         is_vararg: false,
         params,
         return_type,
         type_params,
     }))
 }
-
+/// Contains standard logic written using the language.
 pub fn get_prelude() -> &'static str {
-    // standard logic lives here
     r#"
         impl number {
             func abs(self): number {
@@ -54,14 +52,23 @@ pub fn get_prelude() -> &'static str {
                 }
             }
         }
+        impl<T> Result<T, T> {
+            func merge(self): T {
+                match self {
+                    .Ok(val) => {return val;}
+                    .Err(err) => {return err;}
+                }
+            }
+        }
+
         impl List<number> {
             func sum(self): number {
                 func add(a: number, b: number): number {return a + b;}
                 return self.fold(0, add);
             }
         }
-        impl<T> List<T> {
-            func contains(self, value: T): boolean {
+        impl<Val> List<Val> {
+            func contains(self, value: Val): boolean {
                 let i = 0;
                 let contains = false;
                 while i < self.len() {
@@ -70,7 +77,7 @@ pub fn get_prelude() -> &'static str {
                 }
                 return contains;
             }
-            func fold<U>(self, initial: U, f: func(U, T): U): U {
+            func fold<U>(self, initial: U, f: func(U, Val): U): U {
                 let result = initial;
                 let i = 0;
                 while i < self.len() {
@@ -79,24 +86,25 @@ pub fn get_prelude() -> &'static str {
                 }
                 return result;
             }
-            func each(self, f: func(T)): void {
+            func each(self, f: func(Val)): void {
                 let i = 0;
                 while i < self.len() {
                     f(self[i]);
                     i += 1;
                 }
             }
-            func map<U>(self, f: func(T): U): List<U> {
-                let out: List<U> = [];
+            func map<M>(self, f: func(Val): M): List<M> {
+                let out: List<M> = [];
                 let i = 0;
                 while i < self.len() {
-                    out.push(f(self[i]));
+                    let new: M = f(self[i]);
+                    out.push(new);
                     i += 1;
                 }
                 return out;
             }
-            func filter(self, f: func(T): boolean): List<T> {
-                let out: List<T> = [];
+            func filter(self, f: func(Val): boolean): List<Val> {
+                let out: List<Val> = [];
                 let i = 0;
                 while i < self.len() {
                     if f(self[i]) {
@@ -186,10 +194,10 @@ pub fn get_natives() -> Vec<NativeDef> {
             type_: instance_method(
                 vec![(
                     "self".into(),
-                    Type::List(Box::new(Type::GenericParam("T".into()))),
+                    Type::new_list(Type::GenericParam("Val".into())),
                 )],
                 Type::Number,
-                vec!["T".into()],
+                vec!["Val".into()],
             ),
             func: |args, _| match args[0] {
                 Value::List(list) => Ok(Value::Number(list.vec.len() as f64)),
@@ -201,10 +209,10 @@ pub fn get_natives() -> Vec<NativeDef> {
             type_: instance_method(
                 vec![(
                     "self".into(),
-                    Type::List(Box::new(Type::GenericParam("T".into()))),
+                    Type::new_list(Type::GenericParam("Val".into())),
                 )],
                 Type::Boolean,
-                vec!["T".into()],
+                vec!["Val".into()],
             ),
             func: |args, _| match args[0] {
                 Value::List(list) => Ok(Value::Boolean(list.vec.is_empty())),
@@ -217,12 +225,12 @@ pub fn get_natives() -> Vec<NativeDef> {
                 vec![
                     (
                         "self".into(),
-                        Type::List(Box::new(Type::GenericParam("T".into()))),
+                        Type::new_list(Type::GenericParam("Val".into())),
                     ),
-                    ("value".into(), Type::GenericParam("T".into())),
+                    ("value".into(), Type::GenericParam("Val".into())),
                 ],
                 Type::Void,
-                vec!["T".into()],
+                vec!["Val".into()],
             ),
             func: |args, _| match args[0] {
                 Value::List(mut list) => unsafe {
@@ -237,15 +245,23 @@ pub fn get_natives() -> Vec<NativeDef> {
             type_: instance_method(
                 vec![(
                     "self".into(),
-                    Type::List(Box::new(Type::GenericParam("T".into()))),
+                    Type::new_list(Type::GenericParam("Val".into())),
                 )],
-                Type::Optional(Box::new(Type::GenericParam("T".into()))),
-                vec!["T".into()],
+                Type::Optional(Box::new(Type::GenericParam("Val".into()))),
+                vec!["Val".into()],
             ),
             func: |args, _| match args[0] {
                 Value::List(mut list) => unsafe {
                     Ok(list.deref_mut().vec.pop().unwrap_or(Value::Nil))
                 },
+                _ => unreachable!(),
+            },
+        },
+        NativeDef {
+            name: "string.length",
+            type_: instance_method(vec![("self".into(), Type::String)], Type::Number, vec![]),
+            func: |args, _| match args[0] {
+                Value::String(str) => Ok(Value::Number(str.len() as f64)),
                 _ => unreachable!(),
             },
         },

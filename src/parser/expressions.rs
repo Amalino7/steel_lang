@@ -315,7 +315,7 @@ impl<'src> Parser<'src> {
             if check_token_type!(self, TokT::RightParen) {
                 self.errors.push(ParserError::UnexpectedToken {
                     found: self.previous_token.clone(),
-                    message: "Trailing comma is not allowed here.",
+                    message: "Trailing comma is not allowed here".to_string(),
                 });
                 break;
             }
@@ -435,7 +435,10 @@ impl<'src> Parser<'src> {
                     expression: Box::new(expr),
                 })
             }
-            _ => Err(self.error_previous("Expect expression.")),
+            _ => Err(self.error_previous(format!(
+                "Expected expression, but found '{}'.",
+                self.previous_token.lexeme
+            ))),
         }
     }
     fn literal(&mut self, literal: Literal) -> Result<Expr<'src>, ParserError<'src>> {

@@ -1,0 +1,32 @@
+struct Box<T> {
+    top: T,
+}
+
+impl<T> Box<T> {
+    func new(top: T): Self {
+        return Box(top);
+    }
+    func map<U>(self, f: func(T): U): Box<U> {
+        return self.map2(f);
+    }
+    func unwrap(self): T {
+        return self.top;
+    }
+}
+impl<Trash> Box<Trash> {
+    func map2<U>(self, f: func(Trash): U): Box<U> {
+            return Box(f(self.top));
+    }
+}
+
+impl Box<number> {
+    func square_box(self): Box<number> {
+        return self.map(square);
+    }
+}
+func square(x: number): number {
+    return x * x;
+}
+let four = Box.new(2).map(square).unwrap();
+println(four);
+println(Box.new(4).square_box().unwrap());

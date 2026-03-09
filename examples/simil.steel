@@ -1,0 +1,19 @@
+func my_func() {}
+
+my_fnc();
+
+impl number {
+    func random(self): number {
+        return 2;
+    }
+}
+
+struct Person {
+    name: string
+}
+
+let name = 10;
+println(naem);
+10.rand0m();
+let person = Person(name: "John");
+println(person.naem);

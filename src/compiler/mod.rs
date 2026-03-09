@@ -2,7 +2,7 @@ pub mod analysis;
 
 use crate::compiler::analysis::ResolvedVar;
 use crate::parser::ast::Literal;
-use crate::typechecker::type_ast::{
+use crate::typechecker::core::ast::{
     BinaryOp, ExprKind, LogicalOp, MatchCase, StmtKind, TypedBinding, TypedExpr, TypedStmt, UnaryOp,
 };
 use crate::vm::bytecode::{Chunk, Opcode};
@@ -132,7 +132,11 @@ impl<'a> Compiler<'a> {
                     self.patch_jump(jump);
                 }
             }
-            StmtKind::While { condition, body } => {
+            StmtKind::While {
+                condition,
+                body,
+                true_path,
+            } => {
                 let line = stmt.span.line;
 
                 let loop_start = self.chunk().instructions.len();
@@ -141,6 +145,7 @@ impl<'a> Compiler<'a> {
                 let exit_jump = self.emit_jump(Opcode::JumpIfFalse, line);
                 self.emit_op(Opcode::Pop, line);
 
+                self.emit_refinement(true_path, line);
                 self.compile_stmt(body);
                 self.emit_jump_back(loop_start, body.span.line);
 
@@ -162,15 +167,22 @@ impl<'a> Compiler<'a> {
                 }
             }
             StmtKind::Function {
-                reserved,
                 target,
                 name,
-                body,
-                captures,
-                ..
+                function_decl,
             } => {
                 let line = stmt.span.line;
                 let func_compiler = Compiler::new(name.to_string(), self.gc);
+
+                let ExprKind::Function {
+                    reserved,
+                    body,
+                    captures,
+                    ..
+                } = &function_decl.kind
+                else {
+                    return;
+                };
 
                 let compiled_fn = func_compiler.compile(*reserved, body);
                 let constant = Value::Function(self.gc.alloc(compiled_fn));
@@ -337,6 +349,9 @@ impl<'a> Compiler<'a> {
     fn compile_expr(&mut self, expr: &TypedExpr) {
         let line = expr.span.line;
         match &expr.kind {
+            ExprKind::Function { .. } => {
+                todo!("When lambdas get added")
+            }
             ExprKind::NoOp => {}
             ExprKind::Binary {
                 left,
@@ -487,6 +502,7 @@ impl<'a> Compiler<'a> {
                     object,
                     method,
                     safe,
+                    ..
                 } = &callee.kind
                 {
                     self.emit_var_access(method, line);
@@ -616,6 +632,7 @@ impl<'a> Compiler<'a> {
                 object,
                 method,
                 safe,
+                ..
             } => {
                 self.compile_expr(object);
                 if *safe {

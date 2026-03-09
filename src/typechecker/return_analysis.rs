@@ -1,7 +1,7 @@
 use crate::scanner::Span;
-use crate::typechecker::error::TypeCheckerError;
-use crate::typechecker::type_ast::{MatchCase, StmtKind, TypedStmt};
-use crate::typechecker::types::Type;
+use crate::typechecker::core::ast::{ExprKind, MatchCase, StmtKind, TypedStmt};
+use crate::typechecker::core::error::{TypeCheckerError, TypeCheckerWarning};
+use crate::typechecker::core::types::Type;
 use crate::typechecker::TypeChecker;
 
 impl<'src> TypeChecker<'src> {
@@ -9,7 +9,7 @@ impl<'src> TypeChecker<'src> {
         for stmt in stmt {
             let res = self.check_stmt_returns(stmt);
             if let Err(e) = res {
-                self.errors.push(e);
+                self.report(e);
             }
         }
     }
@@ -43,11 +43,17 @@ impl<'src> TypeChecker<'src> {
             StmtKind::While { body, .. } => self.check_stmt_returns(body),
             StmtKind::Function {
                 name,
-                body,
-                signature,
+                function_decl,
                 ..
             } => {
-                let return_type = if let Type::Function(func) = &stmt.type_info {
+                let ExprKind::Function {
+                    signature, body, ..
+                } = &function_decl.kind
+                else {
+                    return Ok(());
+                };
+
+                let return_type = if let Type::Function(func) = &function_decl.ty {
                     func.return_type.clone()
                 } else {
                     unreachable!()
@@ -90,7 +96,8 @@ impl<'src> TypeChecker<'src> {
                 let mut does_return = false;
                 for stmt in body {
                     if does_return {
-                        return Err(TypeCheckerError::UnreachableCode { span: stmt.span });
+                        self.warnings
+                            .push(TypeCheckerWarning::UnreachableCode { span: stmt.span });
                     }
                     does_return |= self.stmt_returns(stmt)?;
                 }
