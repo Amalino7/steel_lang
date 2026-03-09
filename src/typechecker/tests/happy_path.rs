@@ -149,7 +149,7 @@ fn test_multiple_errors_collected() {
     .expect_error(|e| {
         matches!(
             e,
-            TypeCheckerError::TypeMismatch { .. } | TypeCheckerError::ComplexTypeMismatch { .. }
+            TypeCheckerError::TypeMismatch { .. }
         )
     })
     .expect_error(|e| matches!(e, TypeCheckerError::UndefinedVariable { .. }))

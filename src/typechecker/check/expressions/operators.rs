@@ -1,7 +1,7 @@
 use crate::parser::ast::Expr;
-use crate::scanner::{Token, TokenType};
+use crate::scanner::{Span, Token, TokenType};
 use crate::typechecker::core::ast::{BinaryOp, ExprKind, LogicalOp, TypedExpr, UnaryOp};
-use crate::typechecker::core::error::TypeCheckerError;
+use crate::typechecker::core::error::{Operand, TypeCheckerError, TypeRequirement};
 use crate::typechecker::core::types::Type;
 use crate::typechecker::scope::guards::ScopeGuard;
 use crate::typechecker::scope::manager::ScopeKind;
@@ -12,51 +12,36 @@ impl<'src> TypeChecker<'src> {
         &mut self,
         operator: &Token,
         expr: &Expr<'src>,
-    ) -> Result<TypedExpr, TypeCheckerError> {
-        if operator.token_type == TokenType::Bang {
-            let typed_operand = self.check_expression(expr, &Type::Boolean)?;
-            let operand_type = typed_operand.ty.clone();
-            let total_span = typed_operand.span.merge(operator.span);
-            if operand_type == Type::Boolean {
-                Ok(TypedExpr {
-                    ty: operand_type,
-                    kind: ExprKind::Unary {
-                        operator: UnaryOp::Not,
-                        operand: Box::new(typed_operand),
-                    },
-                    span: total_span,
-                })
-            } else {
-                Err(TypeCheckerError::TypeMismatch {
-                    expected: Type::Boolean,
-                    found: operand_type,
-                    span: typed_operand.span,
-                    message: "The '!' operator requires a boolean operand.",
-                })
-            }
+    ) -> TypedExpr {
+        let (hint_ty, unary_op, op_str) = if operator.token_type == TokenType::Bang {
+            (Type::Boolean, UnaryOp::Not, "!")
         } else if operator.token_type == TokenType::Minus {
-            let typed_operand = self.check_expression(expr, &Type::Number)?;
-            let operand_type = typed_operand.ty.clone();
-            let total_span = typed_operand.span.merge(operator.span);
-            if operand_type == Type::Number {
-                Ok(TypedExpr {
-                    ty: operand_type,
-                    kind: ExprKind::Unary {
-                        operator: UnaryOp::Negate,
-                        operand: Box::new(typed_operand),
-                    },
-                    span: total_span,
-                })
-            } else {
-                Err(TypeCheckerError::TypeMismatch {
-                    expected: Type::Number,
-                    found: operand_type,
-                    span: typed_operand.span,
-                    message: "The unary '-' operator requires a number operand.",
-                })
-            }
+            (Type::Number, UnaryOp::Negate, "-")
         } else {
             unreachable!("Ast should have checked for invalid operators before this point.")
+        };
+
+        let typed_operand = self.check_expression(expr, &hint_ty);
+        let total_span = typed_operand.span.merge(operator.span);
+
+        let is_success = self.check_operand(
+            hint_ty.clone(),
+            &typed_operand.ty,
+            Operand::Unary,
+            op_str,
+            typed_operand.span,
+        );
+        if !is_success {
+            return TypedExpr::new_blank(total_span);
+        }
+
+        TypedExpr {
+            ty: hint_ty,
+            kind: ExprKind::Unary {
+                operator: unary_op,
+                operand: Box::new(typed_operand),
+            },
+            span: total_span,
         }
     }
 
@@ -65,10 +50,24 @@ impl<'src> TypeChecker<'src> {
         operator: &Token,
         left: &Expr<'src>,
         right: &Expr<'src>,
-    ) -> Result<TypedExpr, TypeCheckerError> {
-        let left_typed = self.coerce_expression(left, &Type::Boolean)?;
-        let refinements = self.analyze_condition(&left_typed);
+    ) -> TypedExpr {
+        let op_str = if TokenType::And == operator.token_type {
+            "and"
+        } else {
+            "or"
+        };
 
+        let left_typed = self.check_expression(left, &Type::Boolean);
+
+        self.check_operand(
+            Type::Boolean,
+            &left_typed.ty,
+            Operand::Lhs,
+            op_str,
+            left_typed.span,
+        );
+
+        let refinements = self.analyze_condition(&left_typed);
         let refinement_path = if TokenType::And == operator.token_type {
             refinements.true_path
         } else if TokenType::Or == operator.token_type {
@@ -85,9 +84,17 @@ impl<'src> TypeChecker<'src> {
                     typed_refinements.push(case);
                 }
             }
-            let right_typed = guard.coerce_expression(right, &Type::Boolean)?;
+            let right_typed = guard.check_expression(right, &Type::Boolean);
             (right_typed, typed_refinements)
         };
+
+        self.check_operand(
+            Type::Boolean,
+            &right_typed.ty,
+            Operand::Rhs,
+            op_str,
+            right_typed.span,
+        );
 
         let op = match operator.token_type {
             TokenType::And => LogicalOp::And,
@@ -95,7 +102,7 @@ impl<'src> TypeChecker<'src> {
             _ => unreachable!("Invalid logical operator"),
         };
 
-        Ok(TypedExpr {
+        TypedExpr {
             ty: Type::Boolean,
             kind: ExprKind::Logical {
                 left: Box::new(left_typed),
@@ -104,7 +111,7 @@ impl<'src> TypeChecker<'src> {
                 typed_refinements,
             },
             span: operator.span,
-        })
+        }
     }
 
     pub(crate) fn check_binary_expression(
@@ -116,12 +123,16 @@ impl<'src> TypeChecker<'src> {
     ) -> Result<TypedExpr, TypeCheckerError> {
         match operator.token_type {
             TokenType::Minus | TokenType::Slash | TokenType::Star => {
-                let left_typed = self.check_expression(left, &Type::Number)?;
-                let right_typed = self.check_expression(right, &Type::Number)?;
+                let left_typed = self.check_expression(left, &Type::Number);
+                let right_typed = self.check_expression(right, &Type::Number);
 
                 let left_type = left_typed.ty.clone();
                 let right_type = right_typed.ty.clone();
                 let total_span = left_typed.span.merge(right_typed.span);
+
+                if left_type == Type::Error || right_type == Type::Error {
+                    return Ok(TypedExpr::black_with_type(Type::Number, total_span));
+                }
 
                 if left_type != Type::Number || right_type != Type::Number {
                     return Err(TypeCheckerError::InvalidOperandTypes {
@@ -155,16 +166,19 @@ impl<'src> TypeChecker<'src> {
                     Type::Number | Type::String => expected.clone(),
                     _ => Type::Unknown,
                 };
-                let left_typed = self.check_expression(left, &left_hint)?;
+                let left_typed = self.check_expression(left, &left_hint);
                 let right_hint = match &left_typed.ty {
                     Type::Number | Type::String => left_typed.ty.clone(),
                     _ => Type::Unknown,
                 };
-                let right_typed = self.check_expression(right, &right_hint)?;
+                let right_typed = self.check_expression(right, &right_hint);
 
                 let left_type = left_typed.ty.clone();
                 let right_type = right_typed.ty.clone();
                 let total_span = left_typed.span.merge(right_typed.span);
+                if left_type == Type::Error || right_type == Type::Error {
+                    return Ok(TypedExpr::new_blank(total_span));
+                }
                 if left_type == Type::Number && right_type == Type::Number {
                     Ok(TypedExpr {
                         ty: Type::Number,
@@ -200,12 +214,16 @@ impl<'src> TypeChecker<'src> {
             | TokenType::GreaterEqual
             | TokenType::Less
             | TokenType::LessEqual => {
-                let left_typed = self.check_expression(left, &Type::Unknown)?;
-                let right_typed = self.check_expression(right, &left_typed.ty)?;
+                let left_typed = self.check_expression(left, &Type::Unknown);
+                let right_typed = self.check_expression(right, &left_typed.ty);
 
                 let left_type = left_typed.ty.clone();
                 let right_type = right_typed.ty.clone();
                 let total_span = left_typed.span.merge(right_typed.span);
+
+                if left_type == Type::Error || right_type == Type::Error {
+                    return Ok(TypedExpr::black_with_type(Type::Boolean, total_span));
+                }
 
                 let cmp_compatible = (left_type == Type::Number || left_type == Type::String)
                     && left_type == right_type;
@@ -243,9 +261,8 @@ impl<'src> TypeChecker<'src> {
             }
 
             TokenType::EqualEqual | TokenType::BangEqual => {
-                let left_typed = self.check_expression(left, &Type::Unknown)?;
-                // TODO may potentially break nil == ...
-                let right_typed = self.check_expression(right, &left_typed.ty)?;
+                let left_typed = self.check_expression(left, &Type::Unknown);
+                let right_typed = self.check_expression(right, &left_typed.ty);
 
                 let left_type = left_typed.ty.clone();
                 let right_type = right_typed.ty.clone();
@@ -293,5 +310,26 @@ impl<'src> TypeChecker<'src> {
                 unreachable!("Ast should be checked for invalid operators before this point.")
             }
         }
+    }
+
+    pub(crate) fn check_operand(
+        &mut self,
+        expected: Type,
+        found: &Type,
+        operand: Operand,
+        operator: &'static str,
+        span: Span,
+    ) -> bool {
+        if self.infer_ctx.unify_types(&expected, found).is_err() {
+            self.report(TypeCheckerError::OperatorConstraint {
+                operator,
+                operand,
+                found: found.clone(),
+                requirement: TypeRequirement::Exact(expected),
+                span,
+            });
+            return false;
+        }
+        true
     }
 }

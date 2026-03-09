@@ -1,7 +1,9 @@
 use crate::parser::ast::Expr;
 use crate::scanner::Token;
 use crate::typechecker::core::ast::{ExprKind, TypedExpr};
-use crate::typechecker::core::error::{TypeCheckerError, TypeCheckerWarning};
+use crate::typechecker::core::error::{
+    Mismatch, MismatchContext, Operand, TypeCheckerError, TypeCheckerWarning, TypeRequirement,
+};
 use crate::typechecker::core::types::Type;
 use crate::typechecker::system::{make_substitution_map, TypeSystem};
 use crate::typechecker::{similarity, Symbol, TypeChecker};
@@ -15,7 +17,10 @@ impl<'src> TypeChecker<'src> {
         field: &Token<'src>,
         safe: &bool,
     ) -> Result<TypedExpr, TypeCheckerError> {
-        let object_typed = self.check_expression(object, &Type::Unknown)?;
+        let object_typed = self.check_expression(object, &Type::Unknown);
+        if object_typed.ty == Type::Error {
+            return Ok(TypedExpr::new_blank(object_typed.span));
+        }
         if let Type::Metatype(name, generics) = &object_typed.ty {
             if *safe {
                 self.warnings
@@ -39,7 +44,14 @@ impl<'src> TypeChecker<'src> {
             field,
             *safe,
             |this, typed_obj, index, field_type, safe| {
-                let typed_value = this.coerce_expression(value, &field_type)?;
+                let typed_value = this.coerce_expression(
+                    value,
+                    &field_type,
+                    MismatchContext::Field {
+                        name: field.lexeme.to_string(),
+                    },
+                    None,
+                );
                 Ok(TypedExpr {
                     ty: field_type,
                     span: typed_value.span.merge(typed_obj.span),
@@ -61,24 +73,31 @@ impl<'src> TypeChecker<'src> {
         object: &Expr<'src>,
         index: &Expr<'src>,
     ) -> Result<TypedExpr, TypeCheckerError> {
-        let object_typed = self.check_expression(object, &Type::Unknown)?;
+        let object_typed = self.check_expression(object, &Type::Unknown);
         let (parent_type, safe) =
             object_typed
                 .ty
                 .unwrap_optional_safe(*safe, object_typed.span, &mut self.warnings);
 
-        let inner =
-            parent_type
-                .list_element()
-                .cloned()
-                .ok_or_else(|| TypeCheckerError::TypeMismatch {
-                    expected: Type::new_list(Type::Any),
-                    found: parent_type,
-                    span: object_typed.span,
-                    message: "Indexing is only supported on lists.",
-                })?;
+        let inner = parent_type.list_element().cloned().ok_or_else(|| {
+            TypeCheckerError::OperatorConstraint {
+                operator: "[]",
+                operand: Operand::Lhs,
+                found: parent_type.clone(),
+                requirement: TypeRequirement::Structural("List"),
+                span: object_typed.span,
+            }
+        })?;
 
-        let index_typed = self.coerce_expression(index, &Type::Number)?;
+        let index_typed = self.check_expression(index, &Type::Number);
+        self.check_operand(
+            Type::Number,
+            &index_typed.ty,
+            Operand::Rhs,
+            "[]",
+            index_typed.span,
+        );
+
         let mut ty = inner;
         if safe {
             ty = ty.wrap_in_optional();
@@ -103,25 +122,32 @@ impl<'src> TypeChecker<'src> {
         index: &Expr<'src>,
         value: &Expr<'src>,
     ) -> Result<TypedExpr, TypeCheckerError> {
-        let object_typed = self.check_expression(object, &Type::Unknown)?;
+        let object_typed = self.check_expression(object, &Type::Unknown);
         let (parent_type, safe) =
             object_typed
                 .ty
                 .unwrap_optional_safe(*safe, object_typed.span, &mut self.warnings);
 
-        let inner =
-            parent_type
-                .list_element()
-                .cloned()
-                .ok_or_else(|| TypeCheckerError::TypeMismatch {
-                    expected: Type::new_list(Type::Any),
-                    found: parent_type,
-                    span: object_typed.span,
-                    message: "Indexing is only supported on lists.",
-                })?;
+        let inner = parent_type.list_element().cloned().ok_or_else(|| {
+            TypeCheckerError::OperatorConstraint {
+                operator: "[]",
+                operand: Operand::Lhs,
+                found: parent_type.clone(),
+                requirement: TypeRequirement::Structural("List"),
+                span: object_typed.span,
+            }
+        })?;
 
-        let index_typed = self.coerce_expression(index, &Type::Number)?;
-        let value_typed = self.coerce_expression(value, &inner)?;
+        let index_typed = self.check_expression(index, &Type::Number);
+
+        self.check_operand(
+            Type::Number,
+            &index_typed.ty,
+            Operand::Rhs,
+            "[]",
+            index_typed.span,
+        );
+        let value_typed = self.coerce_expression(value, &inner, MismatchContext::IndexValue, None);
 
         Ok(TypedExpr {
             ty: inner,
@@ -134,6 +160,7 @@ impl<'src> TypeChecker<'src> {
             },
         })
     }
+
     pub(crate) fn resolve_instance_access(
         &mut self,
         object_typed: TypedExpr,
@@ -276,11 +303,11 @@ impl<'src> TypeChecker<'src> {
             let self_param_ty = fresh_func.params[0].1.clone();
             self.infer_ctx
                 .unify_types(&self_param_ty, &obj_type)
-                .map_err(|msg| TypeCheckerError::ComplexTypeMismatch {
-                    expected: self_param_ty,
-                    found: obj_type.clone(),
-                    span: method_token.span,
-                    message: msg.into(),
+                .map_err(|unif_err| TypeCheckerError::TypeMismatch {
+                    mismatch: Mismatch::from(unif_err),
+                    context: MismatchContext::Generic,
+                    primary_span: method_token.span,
+                    defined_at: None,
                 })?;
 
             self.infer_ctx.substitute(&method_with_fresh)
@@ -324,7 +351,7 @@ impl<'src> TypeChecker<'src> {
     where
         F: FnOnce(&mut Self, TypedExpr, u8, Type, bool) -> Result<TypedExpr, TypeCheckerError>,
     {
-        let object_typed = self.check_expression(object_expr, &Type::Unknown)?;
+        let object_typed = self.check_expression(object_expr, &Type::Unknown);
         let (parent_type, safe) =
             object_typed
                 .ty

@@ -9,7 +9,7 @@ impl<'src> TypeChecker<'src> {
         for stmt in stmt {
             let res = self.check_stmt_returns(stmt);
             if let Err(e) = res {
-                self.errors.push(e);
+                self.report(e);
             }
         }
     }

@@ -1,6 +1,6 @@
 use crate::parser::ast::{FunctionSig, TypeAst};
 use crate::scanner::{Span, Token};
-use crate::typechecker::core::error::TypeCheckerError;
+use crate::typechecker::core::error::{GenericError, TypeCheckerError};
 use crate::typechecker::core::types::{FunctionType, TupleType, Type};
 use crate::typechecker::scope::types::TypeScopeManager;
 use crate::typechecker::system::{TypeBlueprint, TypeSystem};
@@ -152,12 +152,12 @@ fn check_generic_arity(
     span: Span,
 ) -> Result<(), TypeCheckerError> {
     if generics_provided != generics_expected {
-        Err(TypeCheckerError::GenericCountMismatch {
+        Err(TypeCheckerError::Generic(GenericError::CountMismatch {
             span,
             found: generics_provided,
             expected: generics_expected,
             type_name: type_name.to_string(),
-        })
+        }))
     } else {
         Ok(())
     }

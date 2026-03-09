@@ -160,6 +160,13 @@ impl TypedExpr {
             ty: Type::Error,
         }
     }
+    pub(crate) fn black_with_type(ty: Type, span: Span) -> Self {
+        Self {
+            kind: ExprKind::NoOp,
+            span,
+            ty,
+        }
+    }
 }
 
 #[derive(Debug)]

@@ -1,6 +1,6 @@
 use crate::compiler::analysis::ResolvedVar;
 use crate::scanner::Span;
-use crate::typechecker::core::error::TypeCheckerError;
+use crate::typechecker::core::error::{BindingError, TypeCheckerError};
 use crate::typechecker::core::types::Type;
 use crate::typechecker::scope::variables::{
     Declaration, DeclarationKind, Mutability, VariableContext,
@@ -116,12 +116,12 @@ impl ScopeManager {
         if let Some(prev) = scope.variables.get(&decl.name)
             && prev.mutability == Mutability::Unique
         {
-            return Err(TypeCheckerError::Redeclaration {
+            return Err(TypeCheckerError::Binding(BindingError::Redeclaration {
                 name: decl.name.to_string(),
                 span: decl.span,
                 original: prev.span,
                 original_kind: prev.kind,
-            });
+            }));
         }
 
         scope.variables.insert(
@@ -220,10 +220,10 @@ impl ScopeManager {
 
             self.declare(new_decl).expect("Declaration Shouldn't fail");
 
-            if let Some(scope) = self.scopes.last_mut() {
-                if let Some(var_ctx) = scope.variables.get_mut(&name) {
-                    var_ctx.original_type = Some((original_resolved, original_type));
-                }
+            if let Some(scope) = self.scopes.last_mut()
+                && let Some(var_ctx) = scope.variables.get_mut(&name)
+            {
+                var_ctx.original_type = Some((original_resolved, original_type));
             }
 
             let (_, new_resolved) = self.lookup(name.as_ref()).unwrap();

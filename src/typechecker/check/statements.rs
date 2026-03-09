@@ -1,6 +1,7 @@
-use crate::parser::ast::Stmt;
+use crate::parser::ast::{Stmt, TypeAst};
+use crate::scanner::Token;
 use crate::typechecker::core::ast::{StmtKind, TypedExpr, TypedRefinements, TypedStmt};
-use crate::typechecker::core::error::{Recoverable, TypeCheckerError};
+use crate::typechecker::core::error::{MismatchContext, Recoverable, TypeCheckerError};
 use crate::typechecker::core::types::Type;
 use crate::typechecker::scope::guards::ScopeGuard;
 use crate::typechecker::scope::manager::ScopeKind;
@@ -11,9 +12,7 @@ impl<'src> TypeChecker<'src> {
     pub(crate) fn check_stmt(&mut self, stmt: &Stmt<'src>) -> TypedStmt {
         match stmt {
             Stmt::Expression(expr) => {
-                let typed_expr = self
-                    .check_expression(expr, &Type::Unknown)
-                    .recover(&mut self.errors, TypedExpr::new_blank(expr.span()));
+                let typed_expr = self.check_expression(expr, &Type::Unknown);
 
                 TypedStmt {
                     kind: StmtKind::Expression(typed_expr),
@@ -29,12 +28,18 @@ impl<'src> TypeChecker<'src> {
                 let declared_type = self
                     .res()
                     .resolve(type_info)
-                    .ok_log(&mut self.errors)
-                    .unwrap_or(Type::Error);
+                    .recover(&mut self.errors, Type::Error);
 
-                let coerced_value = self
-                    .coerce_expression(value, &declared_type)
-                    .recover(&mut self.errors, TypedExpr::new_blank(value.span()));
+                let type_annotation_span = match type_info {
+                    TypeAst::Infer => None,
+                    other => Some(other.span()),
+                };
+                let coerced_value = self.coerce_expression(
+                    value,
+                    &declared_type,
+                    MismatchContext::Let,
+                    type_annotation_span,
+                );
 
                 let final_type = if declared_type == Type::Error || declared_type == Type::Unknown {
                     coerced_value.ty.clone()
@@ -44,7 +49,7 @@ impl<'src> TypeChecker<'src> {
 
                 let typed_binding = self
                     .check_binding(binding, &final_type, false)
-                    .ok_log(&mut self.errors);
+                    .ok_or_report(&mut self.errors);
 
                 let kind = if let Some(tb) = typed_binding {
                     StmtKind::Let {
@@ -67,16 +72,10 @@ impl<'src> TypeChecker<'src> {
                 methods,
                 generics,
             } => {
-                if !self.scopes.is_global() {
-                    Err(TypeCheckerError::NonGlobalDeclaration {
-                        kind: "impl",
-                        name: name.0.lexeme.to_string(),
-                        span: name.0.span,
-                    })
-                    .recover(&mut self.errors, TypedStmt::new_blank(stmt.span()))
-                } else {
-                    self.define_impl(impl_block, interfaces, name, methods, generics)
+                if self.non_global("impl", &name.0) {
+                    return TypedStmt::new_blank(stmt.span());
                 }
+                self.define_impl(impl_block, interfaces, name, methods, generics)
             }
             Stmt::Block { body, brace_token } => {
                 let mut scope = ScopeGuard::new(self, ScopeKind::Block);
@@ -98,24 +97,9 @@ impl<'src> TypeChecker<'src> {
                 then_branch,
                 else_branch,
             } => {
-                let cond_typed = self
-                    .check_expression(condition, &Type::Boolean)
-                    .unwrap_or_else(|e| {
-                        self.errors.push(e);
-                        TypedExpr::new_blank(condition.span())
-                    });
-
-                if cond_typed.ty != Type::Boolean
-                    && cond_typed.ty != Type::Unknown
-                    && cond_typed.ty != Type::Error
-                {
-                    self.errors.push(TypeCheckerError::TypeMismatch {
-                        expected: Type::Boolean,
-                        found: cond_typed.ty.clone(),
-                        span: condition.span(),
-                        message: "If value must be a boolean.",
-                    });
-                }
+                let cond_typed = self.check_expression(condition, &Type::Boolean);
+                let cond_typed =
+                    self.coerce_typed(cond_typed, &Type::Boolean, MismatchContext::Condition, None);
 
                 let refinements = self.analyze_condition(&cond_typed);
                 let mut typed_refinements = TypedRefinements {
@@ -175,23 +159,9 @@ impl<'src> TypeChecker<'src> {
                 }
             }
             Stmt::While { condition, body } => {
-                let cond_typed = self
-                    .check_expression(condition, &Type::Boolean)
-                    .unwrap_or_else(|err| {
-                        self.errors.push(err);
-                        TypedExpr::new_blank(condition.span())
-                    });
-                if cond_typed.ty != Type::Boolean
-                    && cond_typed.ty != Type::Unknown
-                    && cond_typed.ty != Type::Error
-                {
-                    self.errors.push(TypeCheckerError::TypeMismatch {
-                        expected: Type::Boolean,
-                        found: cond_typed.ty.clone(),
-                        span: condition.span(),
-                        message: "While value must be a boolean.",
-                    });
-                }
+                let cond_typed = self.check_expression(condition, &Type::Boolean);
+                let cond_typed =
+                    self.coerce_typed(cond_typed, &Type::Boolean, MismatchContext::Condition, None);
 
                 let refinements = self.analyze_condition(&cond_typed);
                 let mut scope = ScopeGuard::new(self, ScopeKind::Block);
@@ -225,7 +195,7 @@ impl<'src> TypeChecker<'src> {
                     .recover(&mut self.errors, TypedExpr::new_blank(stmt.span()));
                 if !self.scopes.is_global() {
                     let decl = Declaration::function(name.lexeme.into(), res.ty.clone(), name.span);
-                    self.scopes.declare(decl).ok_log(&mut self.errors);
+                    self.scopes.declare(decl).ok_or_report(&mut self.errors);
                 }
                 let func = self
                     .scopes
@@ -243,14 +213,12 @@ impl<'src> TypeChecker<'src> {
             }
             Stmt::Return { value, keyword } => {
                 if let Some((func_return_type, func_span)) = self.scopes.return_type() {
-                    let coerced_return = match self.coerce_expression(value, &func_return_type) {
-                        Ok(v) => v,
-                        Err(err) => {
-                            let wrapped = err.with_origin(func_span);
-                            self.errors.push(wrapped);
-                            TypedExpr::new_blank(value.span())
-                        }
-                    };
+                    let coerced_return = self.coerce_expression(
+                        value,
+                        &func_return_type,
+                        MismatchContext::Return,
+                        Some(func_span),
+                    );
 
                     TypedStmt {
                         span: coerced_return.span.merge(keyword.span),
@@ -259,54 +227,32 @@ impl<'src> TypeChecker<'src> {
                     }
                 } else {
                     let span = stmt.span();
-                    Err(TypeCheckerError::InvalidReturnOutsideFunction { span })
-                        .recover(&mut self.errors, TypedStmt::new_blank(span))
+                    self.report(TypeCheckerError::InvalidReturnOutsideFunction { span });
+
+                    TypedStmt::new_blank(span)
                 }
             }
 
             Stmt::Struct { name, .. } => {
                 // structs already defined
-                if !self.scopes.is_global() {
-                    Err(TypeCheckerError::NonGlobalDeclaration {
-                        kind: "Struct",
-                        name: name.lexeme.to_string(),
-                        span: name.span,
-                    })
-                    .recover(&mut self.errors, TypedStmt::new_blank(stmt.span()))
-                } else {
-                    TypedStmt {
-                        kind: StmtKind::StructDecl {},
-                        span: stmt.span(),
-                        type_info: Type::Void,
-                    }
+                self.non_global("Struct", name);
+
+                TypedStmt {
+                    kind: StmtKind::StructDecl {},
+                    span: stmt.span(),
+                    type_info: Type::Void,
                 }
             }
             Stmt::Interface { name, .. } => {
-                if !self.scopes.is_global() {
-                    Err(TypeCheckerError::NonGlobalDeclaration {
-                        kind: "Interface",
-                        name: name.lexeme.to_string(),
-                        span: name.span,
-                    })
-                    .recover(&mut self.errors, TypedStmt::new_blank(stmt.span()))
-                } else {
-                    TypedStmt {
-                        kind: StmtKind::Blank {},
-                        span: stmt.span(),
-                        type_info: Type::Void,
-                    }
+                self.non_global("Interface", name);
+                TypedStmt {
+                    kind: StmtKind::Blank {},
+                    span: stmt.span(),
+                    type_info: Type::Void,
                 }
             }
             Stmt::Enum { name, .. } => {
-                if !self.scopes.is_global() {
-                    Err(TypeCheckerError::NonGlobalDeclaration {
-                        kind: "Enum",
-                        name: name.lexeme.to_string(),
-                        span: name.span,
-                    })
-                    .recover(&mut self.errors, TypedStmt::new_blank(stmt.span()));
-                }
-
+                self.non_global("Enum", name);
                 TypedStmt {
                     kind: StmtKind::EnumDecl {},
                     span: stmt.span(),
@@ -316,6 +262,18 @@ impl<'src> TypeChecker<'src> {
             Stmt::Match { value, arms } => self
                 .check_match_stmt(value, arms)
                 .recover(&mut self.errors, TypedStmt::new_blank(stmt.span())),
+        }
+    }
+    fn non_global(&mut self, kind: &'static str, name: &Token<'src>) -> bool {
+        if !self.scopes.is_global() {
+            self.report(TypeCheckerError::NonGlobalDeclaration {
+                kind,
+                name: name.lexeme.to_string(),
+                span: name.span,
+            });
+            true
+        } else {
+            false
         }
     }
 }

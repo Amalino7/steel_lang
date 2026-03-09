@@ -1,4 +1,4 @@
-use crate::typechecker::core::error::TypeCheckerError;
+use crate::typechecker::core::error::{GenericError, TypeCheckerError};
 use crate::typechecker::tests::helpers::*;
 
 #[test]
@@ -30,7 +30,12 @@ fn test_cannot_infer_fn_type() {
         let x = fake_identity(1);
         "#,
     )
-    .expect_error(|e| matches!(e, TypeCheckerError::CannotInferType { .. }))
+    .expect_error(|e| {
+        matches!(
+            e,
+            TypeCheckerError::Generic(GenericError::CannotInfer { .. })
+        )
+    })
     .run();
 }
 #[test]
@@ -46,7 +51,12 @@ fn test_cannot_infer_method() {
         let b = Box.new(1);
         "#,
     )
-    .expect_error(|e| matches!(e, TypeCheckerError::CannotInferType { .. }))
+    .expect_error(|e| {
+        matches!(
+            e,
+            TypeCheckerError::Generic(GenericError::CannotInfer { .. })
+        )
+    })
     .run();
 }
 #[test]
@@ -57,7 +67,12 @@ fn test_cannot_infer() {
         let b = Box(value: 5);
         "#,
     )
-    .expect_error(|e| matches!(e, TypeCheckerError::CannotInferType { .. }))
+    .expect_error(|e| {
+        matches!(
+            e,
+            TypeCheckerError::Generic(GenericError::CannotInfer { .. })
+        )
+    })
     .run();
 }
 
@@ -77,7 +92,12 @@ fn test_wrong_specialization() {
         let box3 = Box.new.<number>(top: 10); // This should fail, generic is on number
         "#,
     )
-    .expect_error(|e| matches!(e, TypeCheckerError::InvalidGenericSpecification { .. }))
+    .expect_error(|e| {
+        matches!(
+            e,
+            TypeCheckerError::Generic(GenericError::InvalidSpecification { .. })
+        )
+    })
     .run();
 }
 
@@ -92,11 +112,11 @@ fn test_generic_count_mismatch_too_many() {
     .expect_error(|e| {
         matches!(
             e,
-            TypeCheckerError::GenericCountMismatch {
+            TypeCheckerError::Generic(GenericError::CountMismatch {
                 found: 2,
                 expected: 1,
                 ..
-            }
+            })
         )
     })
     .run();
@@ -113,11 +133,11 @@ fn test_generic_count_mismatch_too_few() {
     .expect_error(|e| {
         matches!(
             e,
-            TypeCheckerError::GenericCountMismatch {
+            TypeCheckerError::Generic(GenericError::CountMismatch {
                 found: 1,
                 expected: 2,
                 ..
-            }
+            })
         )
     })
     .run();
@@ -134,11 +154,11 @@ fn test_generic_count_mismatch_zero_given() {
     .expect_error(|e| {
         matches!(
             e,
-            TypeCheckerError::GenericCountMismatch {
+            TypeCheckerError::Generic(GenericError::CountMismatch {
                 found: 0,
                 expected: 1,
                 ..
-            }
+            })
         )
     })
     .run();
@@ -152,7 +172,7 @@ fn test_generic_mismatch() {
         let b: Box<string> = Box(value: 5);
         "#,
     )
-    .expect_error(|e| matches!(e, TypeCheckerError::ComplexTypeMismatch { .. }))
+    .expect_error(|e| matches!(e, TypeCheckerError::TypeMismatch { .. }))
     .run();
 }
 
@@ -164,7 +184,7 @@ fn test_generic_mismatch2() {
         let b = Box.<string>(value: 5);
         "#,
     )
-    .expect_error(|e| matches!(e, TypeCheckerError::ComplexTypeMismatch { .. }))
+    .expect_error(|e| matches!(e, TypeCheckerError::TypeMismatch { .. }))
     .run();
 }
 
@@ -198,7 +218,12 @@ fn test_invalid_generic_specification() {
         let b = Box.<number, string>(value: 5);
         "#,
     )
-    .expect_error(|e| matches!(e, TypeCheckerError::InvalidGenericSpecification { .. }))
+    .expect_error(|e| {
+        matches!(
+            e,
+            TypeCheckerError::Generic(GenericError::InvalidSpecification { .. })
+        )
+    })
     .run();
 }
 
@@ -210,6 +235,11 @@ fn test_invalid_generic_specialization() {
         let b = Vec3.<number>(1,2,3);
         "#,
     )
-    .expect_error(|e| matches!(e, TypeCheckerError::InvalidGenericSpecification { .. }))
+    .expect_error(|e| {
+        matches!(
+            e,
+            TypeCheckerError::Generic(GenericError::InvalidSpecification { .. })
+        )
+    })
     .run();
 }

@@ -7,20 +7,21 @@ pub(crate) mod static_access;
 use crate::compiler::analysis::ResolvedVar;
 use crate::compiler::analysis::ResolvedVar::Global;
 use crate::parser::ast::{Expr, Literal};
+use crate::scanner::Span;
 use crate::scanner::TokenType;
 use crate::typechecker::core::ast::{ExprKind, TypedExpr};
-use crate::typechecker::core::error::TypeCheckerError;
-use crate::typechecker::core::error::TypeCheckerError::AssignmentToCapturedVariable;
+use crate::typechecker::core::error::{
+    BindingError, GenericError, Mismatch, MismatchContext, Recoverable, TypeCheckerError,
+};
 use crate::typechecker::core::types::Type;
+use crate::typechecker::inference::{UnificationError, UnificationErrorKind};
 use crate::typechecker::similarity::find_similar;
 use crate::typechecker::TypeChecker;
 
 impl<'src> TypeChecker<'src> {
-    pub(crate) fn check_expression(
-        &mut self,
-        expr: &Expr<'src>,
-        expected: &Type,
-    ) -> Result<TypedExpr, TypeCheckerError> {
+    pub(crate) fn check_expression(&mut self, expr: &Expr<'src>, expected: &Type) -> TypedExpr {
+        let span = expr.span();
+        let fallback = || TypedExpr::new_blank(span);
         match expr {
             Expr::TypeSpecialization {
                 callee,
@@ -50,35 +51,38 @@ impl<'src> TypeChecker<'src> {
                 operator,
                 left,
                 right,
-            } => self.check_binary_expression(operator, left, right, expected),
+            } => self
+                .check_binary_expression(operator, left, right, expected)
+                .recover(&mut self.errors, fallback()),
 
             Expr::Variable { name } => {
                 let var = self.scopes.lookup(name.lexeme);
                 if let Some((ctx, resolved)) = var {
-                    Ok(TypedExpr {
+                    TypedExpr {
                         ty: ctx.type_info.clone(),
                         kind: ExprKind::GetVar(resolved, ctx.name.clone()),
                         span: name.span,
-                    })
+                    }
                 } else if let Some(type_name) = self.res().get_owned_name(name.lexeme) {
-                    Ok(TypedExpr {
+                    TypedExpr {
                         ty: Type::Metatype(type_name.clone(), vec![].into()),
                         kind: ExprKind::GetVar(Global(0), type_name),
                         span: name.span,
-                    })
+                    }
                 } else {
                     if name.lexeme == "self" {
-                        return Err(TypeCheckerError::SelfOutsideOfImpl { span: name.span });
+                        self.report(TypeCheckerError::SelfOutsideOfImpl { span: name.span });
+                        return fallback();
                     }
 
                     let visible_vars = self.scopes.visible_variable_names();
                     let suggestions = find_similar(name.lexeme, visible_vars, 3);
-
-                    Err(TypeCheckerError::UndefinedVariable {
+                    self.report(TypeCheckerError::UndefinedVariable {
                         name: name.lexeme.to_string(),
                         span: name.span,
                         suggestions,
-                    })
+                    });
+                    fallback()
                 }
             }
 
@@ -93,80 +97,96 @@ impl<'src> TypeChecker<'src> {
                     Literal::Nil => Type::Nil,
                 };
 
-                Ok(TypedExpr {
+                TypedExpr {
                     ty,
                     kind: ExprKind::Literal(literal.clone()),
                     span: *span,
-                })
+                }
             }
 
             Expr::Assignment { identifier, value } => {
                 let var_lookup = self.scopes.lookup_for_write(identifier.lexeme);
                 if let Some((ctx, resolved)) = var_lookup {
-                    if let ResolvedVar::Closure(_) = &resolved {
-                        return Err(AssignmentToCapturedVariable {
-                            name: ctx.name.to_string(),
+                    let is_closure = matches!(&resolved, ResolvedVar::Closure(_));
+                    let is_reassignable = ctx.is_reassignable();
+                    let ctx_name = ctx.name.to_string();
+                    let ctx_span = ctx.span;
+                    let ctx_kind = ctx.kind;
+                    let original_type = ctx.original_type.clone();
+                    let type_info = ctx.type_info.clone();
+
+                    if is_closure {
+                        self.report(TypeCheckerError::Binding(BindingError::Captured {
+                            name: ctx_name.clone(),
                             span: identifier.span,
-                            capture_origin: ctx.span,
-                        });
+                            capture_origin: ctx_span,
+                        }));
                     }
 
-                    if !ctx.is_reassignable() {
-                        return Err(TypeCheckerError::AssignmentToImmutableBinding {
-                            kind: ctx.kind,
-                            name: ctx.name.to_string(),
+                    if !is_reassignable {
+                        self.report(TypeCheckerError::Binding(BindingError::Immutable {
+                            kind: ctx_kind,
+                            name: ctx_name,
                             span: identifier.span,
-                            definition_span: ctx.span,
-                        });
+                            definition_span: ctx_span,
+                        }));
                     }
 
-                    let (resolved, coerced_value) =
-                        if let Some((old_resolved, old_ty)) = ctx.original_type.clone() {
-                            let coerced_value = self.coerce_expression(value, &old_ty)?;
-                            if let Type::Optional(inner) = &old_ty
-                                && inner.as_ref() == &coerced_value.ty
-                            {
-                                self.scopes.widen_type(
-                                    identifier.lexeme,
-                                    coerced_value.ty.clone(),
-                                    old_resolved.clone(),
-                                )
-                            } else {
-                                self.scopes.widen_type(
-                                    identifier.lexeme,
-                                    old_ty.clone(),
-                                    old_resolved.clone(),
-                                );
-                            }
-                            (old_resolved, coerced_value)
+                    let (resolved, coerced_value) = if let Some((old_resolved, old_ty)) =
+                        original_type
+                    {
+                        let coerced_value =
+                            self.coerce_expression(value, &old_ty, MismatchContext::Generic, None);
+                        if let Type::Optional(inner) = &old_ty
+                            && inner.as_ref() == &coerced_value.ty
+                        {
+                            self.scopes.widen_type(
+                                identifier.lexeme,
+                                coerced_value.ty.clone(),
+                                old_resolved.clone(),
+                            )
                         } else {
-                            // This bug here took way too long.
-                            let expected = ctx.type_info.clone();
-                            let coerced_value = self.coerce_expression(value, &expected)?;
-                            (resolved, coerced_value)
-                        };
+                            self.scopes.widen_type(
+                                identifier.lexeme,
+                                old_ty.clone(),
+                                old_resolved.clone(),
+                            );
+                        }
+                        (old_resolved, coerced_value)
+                    } else {
+                        // This bug here took way too long.
+                        let coerced_value = self.coerce_expression(
+                            value,
+                            &type_info,
+                            MismatchContext::Generic,
+                            None,
+                        );
+                        (resolved, coerced_value)
+                    };
 
-                    Ok(TypedExpr {
+                    TypedExpr {
                         ty: coerced_value.ty.clone(),
                         kind: ExprKind::Assign {
                             target: resolved,
                             value: Box::new(coerced_value),
                         },
                         span: expr.span(),
-                    })
+                    }
                 } else {
                     if identifier.lexeme == "self" {
-                        return Err(TypeCheckerError::SelfOutsideOfImpl {
+                        self.report(TypeCheckerError::SelfOutsideOfImpl {
                             span: identifier.span,
                         });
+                        return fallback();
                     }
                     let visible_vars = self.scopes.visible_variable_names();
                     let suggestions = find_similar(identifier.lexeme, visible_vars, 3);
-                    Err(TypeCheckerError::UndefinedVariable {
+                    self.report(TypeCheckerError::UndefinedVariable {
                         name: identifier.lexeme.to_string(),
                         span: identifier.span,
                         suggestions,
-                    })
+                    });
+                    fallback()
                 }
             }
 
@@ -188,31 +208,35 @@ impl<'src> TypeChecker<'src> {
                 callee,
                 arguments,
                 safe,
-            } => self.check_call(expr, callee, arguments, safe, expected),
+            } => self
+                .check_call(expr, callee, arguments, safe, expected)
+                .recover(&mut self.errors, fallback()),
 
             Expr::Get {
                 object,
                 field,
                 safe,
-            } => self.check_get(expr, object, field, safe),
+            } => self
+                .check_get(expr, object, field, safe)
+                .recover(&mut self.errors, fallback()),
 
             Expr::Set {
                 object,
                 field,
                 value,
                 safe,
-            } => self.check_set(object, field, value, safe),
+            } => self
+                .check_set(object, field, value, safe)
+                .recover(&mut self.errors, fallback()),
 
             Expr::ForceUnwrap {
                 expression,
                 operator,
             } => self.check_force_unwrap(expr, expression, operator, expected),
-
             Expr::List {
                 elements,
                 bracket_token,
             } => self.check_list(expr, elements, bracket_token, expected),
-
             Expr::Map { .. } => {
                 todo!()
             }
@@ -221,41 +245,35 @@ impl<'src> TypeChecker<'src> {
                 safe,
                 object,
                 index,
-            } => self.check_get_index(expr, safe, object, index),
+            } => self
+                .check_get_index(expr, safe, object, index)
+                .recover(&mut self.errors, fallback()),
 
             Expr::SetIndex {
                 safe,
                 object,
                 index,
                 value,
-            } => self.check_set_index(expr, safe, object, index, value),
+            } => self
+                .check_set_index(expr, safe, object, index, value)
+                .recover(&mut self.errors, fallback()),
 
             Expr::Error => {
                 // Already reported by parser
-                Ok(TypedExpr::new_blank(expr.span()))
+                TypedExpr::new_blank(expr.span())
             }
         }
     }
 
-    pub(crate) fn coerce_expression(
+    fn coerce(
         &mut self,
-        expr: &Expr<'src>,
+        mut provided: TypedExpr,
         expected: &Type,
-    ) -> Result<TypedExpr, TypeCheckerError> {
-        let mut expr = self.check_expression(expr, expected)?;
-        let res = self.infer_ctx.unify_types(expected, &expr.ty);
+    ) -> Result<TypedExpr, UnificationError> {
+        let res = self.infer_ctx.unify_types(expected, &provided.ty);
         if res.is_ok() {
-            let expr_ty = self.infer_ctx.substitute(&expr.ty);
-            return if expr_ty.is_concrete() {
-                expr.ty = expr_ty;
-                Ok(expr)
-            } else {
-                let uninferred_generics = self.infer_ctx.uninferred_names(&expr_ty);
-                Err(TypeCheckerError::CannotInferType {
-                    span: expr.span,
-                    uninferred_generics,
-                })
-            };
+            provided.ty = self.infer_ctx.substitute(&provided.ty);
+            return Ok(provided);
         }
 
         let (expected_type, was_optional) = if let Type::Optional(inner) = expected {
@@ -264,30 +282,81 @@ impl<'src> TypeChecker<'src> {
             (expected, false)
         };
 
-        if let (Type::Interface(iface_name), Some(name)) = (expected_type, expr.ty.get_name())
-            && let Some(idx) = self.sys.get_vtable_idx(name, iface_name.clone())
-        {
-            let result_ty = if was_optional {
-                Type::Optional(Box::new(Type::Interface(iface_name.clone())))
+        if let (Type::Interface(iface_name), Some(name)) = (expected_type, provided.ty.get_name()) {
+            return if let Some(idx) = self.sys.get_vtable_idx(name, iface_name.clone()) {
+                let result_ty = if was_optional {
+                    Type::Optional(Box::new(Type::Interface(iface_name.clone())))
+                } else {
+                    Type::Interface(iface_name.clone())
+                };
+                Ok(TypedExpr {
+                    ty: result_ty,
+                    span: provided.span,
+                    kind: ExprKind::InterfaceUpcast {
+                        expr: Box::new(provided),
+                        vtable_idx: idx,
+                    },
+                })
             } else {
-                Type::Interface(iface_name.clone())
+                Err(UnificationError {
+                    kind: UnificationErrorKind::InterfaceNotImplemented {
+                        interface: iface_name.clone(),
+                    },
+                    expected: expected_type.clone(),
+                    found: provided.ty,
+                })
             };
-            return Ok(TypedExpr {
-                ty: result_ty,
-                span: expr.span,
-                kind: ExprKind::InterfaceUpcast {
-                    expr: Box::new(expr),
-                    vtable_idx: idx,
-                },
-            });
         }
 
-        res.map_err(|msg| TypeCheckerError::ComplexTypeMismatch {
-            expected: self.infer_ctx.substitute(expected),
-            span: expr.span,
-            message: msg.into(),
-            found: expr.ty.clone(),
-        })
-        .map(|_| expr)
+        res.map(|_| unreachable!())
+    }
+    pub fn coerce_typed(
+        &mut self,
+        typed: TypedExpr,
+        expected: &Type,
+        context: MismatchContext,
+        defined_at: Option<Span>,
+    ) -> TypedExpr {
+        let span = typed.span;
+        let provided_ty = typed.ty.clone();
+        match self.coerce(typed, expected) {
+            Ok(coerced) => {
+                if !coerced.ty.is_concrete() {
+                    let uninferred = self.infer_ctx.uninferred_names(&coerced.ty);
+                    self.report(TypeCheckerError::Generic(GenericError::CannotInfer {
+                        span,
+                        uninferred_generics: uninferred,
+                    }));
+                    TypedExpr::new_blank(span)
+                } else {
+                    coerced
+                }
+            }
+            Err(unif_err) => {
+                self.report(TypeCheckerError::TypeMismatch {
+                    mismatch: Mismatch::enriched(
+                        expected,
+                        &provided_ty,
+                        unif_err,
+                        &self.infer_ctx,
+                    ),
+                    context,
+                    primary_span: span,
+                    defined_at,
+                });
+                TypedExpr::new_blank(span)
+            }
+        }
+    }
+
+    pub(crate) fn coerce_expression(
+        &mut self,
+        expr: &Expr<'src>,
+        expected: &Type,
+        context: MismatchContext,
+        defined_at: Option<Span>,
+    ) -> TypedExpr {
+        let typed = self.check_expression(expr, expected);
+        self.coerce_typed(typed, expected, context, defined_at)
     }
 }

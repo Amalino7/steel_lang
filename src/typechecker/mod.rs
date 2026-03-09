@@ -108,7 +108,15 @@ impl<'src> TypeChecker<'src> {
         }
     }
 
-    fn res(&self) -> TypeResolver {
+    fn res(&self) -> TypeResolver<'_> {
         TypeResolver::new(&self.sys, &self.type_scopes)
+    }
+
+    pub(crate) fn report(&mut self, err: TypeCheckerError) {
+        self.errors.push(err);
+    }
+
+    pub(crate) fn warn(&mut self, warning: TypeCheckerWarning) {
+        self.warnings.push(warning);
     }
 }

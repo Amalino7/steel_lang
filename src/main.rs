@@ -8,7 +8,7 @@ use crate::typechecker::TypeChecker;
 use crate::vm::disassembler::disassemble_chunk;
 use crate::vm::gc::GarbageCollector;
 use crate::vm::VM;
-use ariadne::{Color, Label, Report, ReportKind, Source};
+use ariadne::{Color, Config, IndexType, Label, Report, ReportKind, Source};
 use std::env::args;
 use std::fs;
 use typechecker::core::ast::StmtKind;
@@ -31,6 +31,7 @@ pub fn run_file(file_name: &str, source: &str, debug: bool, mode: &str, force: b
             let span_range = span.start..span.end;
 
             Report::build(ReportKind::Error, file_name, span.start)
+                .with_config(Config::default().with_index_type(IndexType::Byte))
                 .with_message("Syntax Error")
                 .with_label(
                     Label::new((file_name, span_range))

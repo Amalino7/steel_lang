@@ -404,6 +404,9 @@ pub enum UnificationErrorKind {
     GenericFunctionNotAllowed,
     MetatypeNotUnifiable,
     OccursCheck,
+    InterfaceNotImplemented {
+        interface: Symbol,
+    },
 }
 
 impl fmt::Display for UnificationError {
@@ -450,6 +453,13 @@ impl fmt::Display for UnificationError {
                     f,
                     "Infinite type detected: type variable occurs in its own definition\n  Type: {}",
                     self.expected
+                )
+            }
+            UnificationErrorKind::InterfaceNotImplemented { interface } => {
+                write!(
+                    f,
+                    "Type does not implement interface `{}`\n  Expected: {}\n  Found: {}",
+                    interface, self.expected, self.found
                 )
             }
         }

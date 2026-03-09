@@ -10,9 +10,7 @@ fn test_unused_local_variable() {
         }
         "#,
     )
-    .expect_warning(
-        |w| matches!(w, TypeCheckerWarning::UnusedBinding { name, .. } if name == "x"),
-    )
+    .expect_warning(|w| matches!(w, TypeCheckerWarning::UnusedBinding { name, .. } if name == "x"))
     .run();
 }
 
@@ -25,9 +23,7 @@ fn test_unused_function_parameter() {
         }
         "#,
     )
-    .expect_warning(
-        |w| matches!(w, TypeCheckerWarning::UnusedBinding { name, .. } if name == "y"),
-    )
+    .expect_warning(|w| matches!(w, TypeCheckerWarning::UnusedBinding { name, .. } if name == "y"))
     .run();
 }
 

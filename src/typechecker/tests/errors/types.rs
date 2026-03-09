@@ -7,7 +7,7 @@ fn test_type_mismatch_in_let() {
         .expect_error(|e| {
             matches!(
                 e,
-                TypeCheckerError::TypeMismatch { .. } | TypeCheckerError::ComplexTypeMismatch { .. }
+                TypeCheckerError::TypeMismatch { .. } | TypeCheckerError::TypeMismatch { .. }
             )
         })
         .run();
@@ -19,8 +19,7 @@ fn test_type_mismatch_string_to_number() {
         .expect_error(|e| {
             matches!(
                 e,
-                TypeCheckerError::TypeMismatch { .. }
-                    | TypeCheckerError::ComplexTypeMismatch { .. }
+                TypeCheckerError::TypeMismatch { .. } | TypeCheckerError::TypeMismatch { .. }
             )
         })
         .run();
@@ -53,8 +52,7 @@ fn test_if_condition_not_boolean() {
         .expect_error(|e| {
             matches!(
                 e,
-                TypeCheckerError::TypeMismatch { .. }
-                    | TypeCheckerError::ComplexTypeMismatch { .. }
+                TypeCheckerError::TypeMismatch { .. } | TypeCheckerError::TypeMismatch { .. }
             )
         })
         .run();
@@ -66,8 +64,7 @@ fn test_if_condition_string() {
         .expect_error(|e| {
             matches!(
                 e,
-                TypeCheckerError::TypeMismatch { .. }
-                    | TypeCheckerError::ComplexTypeMismatch { .. }
+                TypeCheckerError::TypeMismatch { .. } | TypeCheckerError::TypeMismatch { .. }
             )
         })
         .run();
@@ -79,8 +76,7 @@ fn test_while_condition_not_boolean() {
         .expect_error(|e| {
             matches!(
                 e,
-                TypeCheckerError::TypeMismatch { .. }
-                    | TypeCheckerError::ComplexTypeMismatch { .. }
+                TypeCheckerError::TypeMismatch { .. } | TypeCheckerError::TypeMismatch { .. }
             )
         })
         .run();
@@ -97,8 +93,7 @@ fn test_assignment_type_mismatch() {
     .expect_error(|e| {
         matches!(
             e,
-            TypeCheckerError::TypeMismatch { .. }
-                | TypeCheckerError::ComplexTypeMismatch { .. }
+            TypeCheckerError::TypeMismatch { .. } | TypeCheckerError::TypeMismatch { .. }
         )
     })
     .run();

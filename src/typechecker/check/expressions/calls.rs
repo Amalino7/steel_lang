@@ -1,13 +1,14 @@
 use crate::parser::ast::{CallArg, Expr};
 use crate::scanner::Span;
 use crate::typechecker::core::ast::{ExprKind, TypedExpr};
-use crate::typechecker::core::error::TypeCheckerError;
+use crate::typechecker::core::error::{
+    CallError, CallParamError, CallParamKind, GenericError, MismatchContext, TypeCheckerError,
+};
 use crate::typechecker::core::types::{GenericArgs, Type};
 use crate::typechecker::system::make_substitution_map;
 use crate::typechecker::{Symbol, TypeChecker};
 use std::collections::HashMap;
 
-// TODO consider using the expected type to unify the return type before binding arguments.
 impl<'src> TypeChecker<'src> {
     pub(crate) fn check_call(
         &mut self,
@@ -15,9 +16,9 @@ impl<'src> TypeChecker<'src> {
         callee: &Expr<'src>,
         arguments: &Vec<CallArg<'src>>,
         safe: &bool,
-        _expected: &Type,
+        expected: &Type,
     ) -> Result<TypedExpr, TypeCheckerError> {
-        let callee_typed = self.check_expression(callee, &Type::Unknown)?;
+        let callee_typed = self.check_expression(callee, &Type::Unknown);
 
         let safe = if let ExprKind::MethodGet { safe, .. } = callee_typed.kind {
             safe
@@ -86,6 +87,19 @@ impl<'src> TypeChecker<'src> {
             )?;
 
             let ret_type = self.infer_ctx.substitute(&ret_type);
+
+            let _ = self.infer_ctx.unify_types(expected, &ret_type); // Caller should report the error
+            for fresh in fresh_generics.iter() {
+                let resolved = self.infer_ctx.substitute(fresh);
+                if !resolved.is_concrete() {
+                    let uninferred_generics = self.infer_ctx.uninferred_names(&resolved);
+                    return Err(TypeCheckerError::Generic(GenericError::CannotInfer {
+                        span: expr.span(),
+                        uninferred_generics,
+                    }));
+                }
+            }
+
             return Ok(TypedExpr {
                 ty: ret_type,
                 span: expr.span(),
@@ -97,6 +111,14 @@ impl<'src> TypeChecker<'src> {
             });
         };
 
+        // Cascade prevention
+        if callee_typed.ty == Type::Error {
+            return Ok(TypedExpr {
+                ty: Type::Error,
+                kind: ExprKind::NoOp,
+                span: expr.span(),
+            });
+        }
         Err(TypeCheckerError::CalleeIsNotCallable {
             found: callee_typed.ty,
             span: callee_typed.span,
@@ -229,24 +251,30 @@ impl<'src> TypeChecker<'src> {
                     let idx = resolve_named_arg(params, name.lexeme, name.span, definition_span)?;
 
                     if used[idx] {
-                        return Err(TypeCheckerError::DuplicateArgument {
+                        return Err(TypeCheckerError::Call(CallError::DuplicateArgument {
                             name: params[idx].0.to_string(),
                             span: name.span.merge(span),
-                        });
+                        }));
                     }
 
                     let expected = &params[idx].1;
-                    let coerced = self.coerce_expression(expr, expected)?;
+                    let param_name = params[idx].0.to_string();
+                    let coerced = self.coerce_expression(
+                        expr,
+                        expected,
+                        MismatchContext::Argument { param_name },
+                        definition_span,
+                    );
                     fixed[idx] = Some(coerced);
                     used[idx] = true;
                 }
 
                 None => {
                     if seen_named {
-                        return Err(TypeCheckerError::PositionalArgumentAfterNamed {
+                        return Err(TypeCheckerError::Call(CallError::PositionalAfterNamed {
                             message: "positional arguments cannot appear after named arguments",
                             span,
-                        });
+                        }));
                     }
 
                     while pos_cursor < fixed_len && used[pos_cursor] {
@@ -255,20 +283,32 @@ impl<'src> TypeChecker<'src> {
 
                     if pos_cursor < fixed_len {
                         let expected = &params[pos_cursor].1;
-                        let coerced = self.coerce_expression(expr, expected)?;
+                        let param_name = params[pos_cursor].0.to_string();
+                        let coerced = self.coerce_expression(
+                            expr,
+                            expected,
+                            MismatchContext::Argument { param_name },
+                            definition_span,
+                        );
                         fixed[pos_cursor] = Some(coerced);
                         used[pos_cursor] = true;
                         pos_cursor += 1;
                     } else if is_vararg {
-                        extras.push(self.coerce_expression(expr, &params[pos_cursor - 1].1)?);
+                        let param_name = params[pos_cursor - 1].0.to_string();
+                        extras.push(self.coerce_expression(
+                            expr,
+                            &params[pos_cursor - 1].1,
+                            MismatchContext::Argument { param_name },
+                            definition_span,
+                        ));
                     } else {
-                        return Err(TypeCheckerError::TooManyArguments {
+                        return Err(TypeCheckerError::Call(CallError::TooMany {
                             expected: fixed_len,
                             found: fixed_len + extras.len() + 1,
                             callee_origin: definition_span,
                             span,
                             callee,
-                        });
+                        }));
                     }
                 }
             }
@@ -278,14 +318,15 @@ impl<'src> TypeChecker<'src> {
 
         for (i, opt) in fixed.into_iter().enumerate() {
             result.push(opt.ok_or_else(|| {
-                TypeCheckerError::MissingArgument {
+                TypeCheckerError::CallParam(CallParamError {
+                    kind: CallParamKind::Missing,
                     param_name: params[i].0.to_string(),
                     span: args
                         .last()
                         .map(|arg| arg.expr.span().merge(callee))
                         .unwrap_or_else(|| callee),
                     callee_origin: definition_span,
-                }
+                })
             })?);
         }
 
@@ -302,9 +343,12 @@ fn resolve_named_arg(
     params
         .iter()
         .position(|(pname, _)| pname.as_ref() == name)
-        .ok_or_else(|| TypeCheckerError::UndefinedParameter {
-            param_name: name.to_string(),
-            span,
-            callee_origin: definition_span,
+        .ok_or_else(|| {
+            TypeCheckerError::CallParam(CallParamError {
+                kind: CallParamKind::Undefined,
+                param_name: name.to_string(),
+                span,
+                callee_origin: definition_span,
+            })
         })
 }

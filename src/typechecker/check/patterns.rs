@@ -1,7 +1,10 @@
 use crate::parser::ast::{Binding, Expr, MatchArm, Pattern};
 use crate::scanner::Span;
 use crate::typechecker::core::ast::{MatchCase, StmtKind, TypedBinding, TypedExpr, TypedStmt};
-use crate::typechecker::core::error::{Recoverable, TypeCheckerError, TypeCheckerWarning};
+use crate::typechecker::core::error::TypeRequirement::Structural;
+use crate::typechecker::core::error::{
+    Mismatch, MismatchContext, Operand, Recoverable, TypeCheckerError, TypeCheckerWarning,
+};
 use crate::typechecker::core::types::type_defs::EnumType;
 use crate::typechecker::core::types::{GenericArgs, TupleType, Type};
 use crate::typechecker::scope::guards::ScopeGuard;
@@ -41,13 +44,14 @@ impl<'src> TypeChecker<'src> {
         value: &Expr<'src>,
         arms: &[MatchArm<'src>],
     ) -> Result<TypedStmt, TypeCheckerError> {
-        let value_typed = self.check_expression(value, &Type::Unknown)?;
+        let value_typed = self.check_expression(value, &Type::Unknown);
         let Type::Enum(enum_name, generics) = &value_typed.ty else {
-            return Err(TypeCheckerError::TypeMismatch {
-                expected: Type::Enum("Any".into(), vec![].into()),
+            return Err(TypeCheckerError::OperatorConstraint {
+                operator: "match",
+                operand: Operand::Unary,
                 found: value_typed.ty,
+                requirement: Structural("Enum"),
                 span: value_typed.span,
-                message: "Match value must be an enum type.",
             });
         };
 
@@ -61,7 +65,7 @@ impl<'src> TypeChecker<'src> {
 
         for arm in arms {
             if let Err(err) = self.handle_match_arm(&mut ctx, &value_typed, arm) {
-                self.errors.push(err);
+                self.report(err);
             }
         }
 
@@ -84,7 +88,7 @@ impl<'src> TypeChecker<'src> {
         arm: &MatchArm<'src>,
     ) -> Result<(), TypeCheckerError> {
         if ctx.has_fallthrough {
-            self.warnings.push(TypeCheckerWarning::UnreachablePattern {
+            self.warn(TypeCheckerWarning::UnreachablePattern {
                 span: arm.body.span(),
                 message: "Default case must be the last arm.".to_string(),
             });
@@ -101,10 +105,13 @@ impl<'src> TypeChecker<'src> {
                     && explicit_name.lexeme != ctx.enum_def.name.as_ref()
                 {
                     return Err(TypeCheckerError::TypeMismatch {
-                        expected: Type::Enum(ctx.enum_def.name.clone(), vec![].into()),
-                        found: value_typed.ty.clone(),
-                        span: value_typed.span,
-                        message: "Match value must be an enum of the same type as the enum being matched against.",
+                        mismatch: Mismatch::simple(
+                            Type::Enum(ctx.enum_def.name.clone(), vec![].into()),
+                            value_typed.ty.clone(),
+                        ),
+                        context: MismatchContext::Generic,
+                        primary_span: value_typed.span,
+                        defined_at: None,
                     });
                 }
 
@@ -126,7 +133,7 @@ impl<'src> TypeChecker<'src> {
                     })?;
 
                 if ctx.matched_variants.contains(variant_name.lexeme) {
-                    self.warnings.push(TypeCheckerWarning::UnreachablePattern {
+                    self.warn(TypeCheckerWarning::UnreachablePattern {
                         span: arm.body.span(),
                         message: format!("Repeated pattern {}", variant_name.lexeme),
                     });
@@ -143,7 +150,7 @@ impl<'src> TypeChecker<'src> {
                         }
                         None => {
                             if !matches!(payload_type, Type::Void) {
-                                guard.warnings.push(TypeCheckerWarning::UnusedBinding {
+                                guard.warn(TypeCheckerWarning::UnusedBinding {
                                     name: format!("{} payload", variant_name.lexeme),
                                     span: variant_name.span,
                                 });
@@ -195,10 +202,13 @@ impl<'src> TypeChecker<'src> {
             Binding::Struct { name, fields } => {
                 let Type::Struct(struct_name, generics) = type_to_match else {
                     return Err(TypeCheckerError::TypeMismatch {
-                        expected: Type::Struct("Any".into(), vec![].into()),
-                        found: type_to_match.clone(),
-                        span: binding.span(),
-                        message: "Can only use structure destructure syntax on structs.",
+                        mismatch: Mismatch::simple(
+                            Type::Struct("Any".into(), vec![].into()),
+                            type_to_match.clone(),
+                        ),
+                        context: MismatchContext::Generic,
+                        primary_span: binding.span(),
+                        defined_at: None,
                     });
                 };
 
@@ -211,10 +221,13 @@ impl<'src> TypeChecker<'src> {
 
                 if !name_matches {
                     return Err(TypeCheckerError::TypeMismatch {
-                        expected: Type::Struct(name.lexeme.into(), vec![].into()),
-                        found: type_to_match.clone(),
-                        span: binding.span(),
-                        message: "Struct name in pattern does not match the expected struct type.",
+                        mismatch: Mismatch::simple(
+                            Type::Struct(name.lexeme.into(), vec![].into()),
+                            type_to_match.clone(),
+                        ),
+                        context: MismatchContext::Generic,
+                        primary_span: binding.span(),
+                        defined_at: None,
                     });
                 }
 
@@ -259,21 +272,27 @@ impl<'src> TypeChecker<'src> {
             Binding::Tuple { fields } => {
                 let Type::Tuple(tuple) = type_to_match else {
                     return Err(TypeCheckerError::TypeMismatch {
-                        expected: Type::new_tuple(vec![Type::Any; fields.len()]),
-                        found: type_to_match.clone(),
-                        span: binding.span(),
-                        message: "Can only use tuple destructure on tuples.",
+                        mismatch: Mismatch::simple(
+                            Type::new_tuple(vec![Type::Any; fields.len()]),
+                            type_to_match.clone(),
+                        ),
+                        context: MismatchContext::Generic,
+                        primary_span: binding.span(),
+                        defined_at: None,
                     });
                 };
 
                 if tuple.types.len() != fields.len() {
                     return Err(TypeCheckerError::TypeMismatch {
-                        expected: Type::Tuple(Rc::new(TupleType {
-                            types: vec![Type::Any; fields.len()],
-                        })),
-                        found: type_to_match.clone(),
-                        span: binding.span(),
-                        message: "Wrong number of elements in tuple destructure.",
+                        mismatch: Mismatch::simple(
+                            Type::Tuple(Rc::new(TupleType {
+                                types: vec![Type::Any; fields.len()],
+                            })),
+                            type_to_match.clone(),
+                        ),
+                        context: MismatchContext::Generic,
+                        primary_span: binding.span(),
+                        defined_at: None,
                     });
                 }
 

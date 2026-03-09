@@ -1,6 +1,7 @@
 use crate::scanner::{Span, Token};
-use crate::typechecker::core::error::TypeCheckerError::DuplicateGenericParam;
-use crate::typechecker::core::error::{TypeCheckerError, TypeCheckerWarning};
+use crate::typechecker::core::error::{
+    DuplicateDefinition, DuplicateKind, TypeCheckerError, TypeCheckerWarning,
+};
 use crate::typechecker::core::types::Type;
 use crate::typechecker::resolver::convert_generics;
 use crate::typechecker::scope::manager::ScopeKind;
@@ -69,11 +70,12 @@ fn check_duplicate_generics(
         return;
     };
     for err in scope_errors {
-        errors.push(DuplicateGenericParam {
+        errors.push(TypeCheckerError::Duplicate(DuplicateDefinition {
+            kind: DuplicateKind::GenericParam,
             name: err.0.to_string(),
             span: generics[err.1].span,
             original: Default::default(),
-        })
+        }))
     }
 }
 

@@ -43,8 +43,6 @@ fn test_missing_all_interface_methods() {
 
 #[test]
 fn test_interface_method_return_type_mismatch() {
-    // When a method has the wrong return type, the typechecker reports it as
-    // DoesNotImplementInterface with "print (type mismatch)" in missing_methods
     Tester::new(
         r#"
         interface Printable {

@@ -2,7 +2,9 @@ use crate::compiler::analysis::ResolvedVar;
 use crate::parser::ast::{FunctionSig, Stmt, TypeAst, VariantType};
 use crate::scanner::{Span, Token};
 use crate::typechecker::core::ast::{ExprKind, StmtKind, TypedExpr, TypedStmt};
-use crate::typechecker::core::error::{Recoverable, TypeCheckerError};
+use crate::typechecker::core::error::{
+    DuplicateDefinition, DuplicateKind, Mismatch, Recoverable, TypeCheckerError,
+};
 use crate::typechecker::core::types::Type;
 use crate::typechecker::scope::guards::{ScopeGuard, TypeScopeGuard};
 use crate::typechecker::scope::variables::Declaration;
@@ -147,7 +149,7 @@ impl<'src> TypeChecker<'src> {
 
             if let Some(expr) = guard
                 .check_function(func_name, signature, body, generics)
-                .ok_log(&mut guard.errors)
+                .ok_or_report(&mut guard.errors)
             {
                 let (_, location) = guard
                     .scopes
@@ -204,11 +206,14 @@ impl<'src> TypeChecker<'src> {
         let decl = Declaration::function(name.lexeme.into(), func_type.clone(), name.span);
         guard.scopes.declare(decl)?;
 
-        // Declare parameters. Use ok_log so duplicate-param errors don't prevent body checking.
+        // Declare parameters. Use ok_or_report so duplicate-param errors don't prevent body checking.
         for (i, (param, _)) in sig.params.iter().enumerate() {
             let param_decl =
                 Declaration::parameter(param.lexeme.into(), func.params[i].1.clone(), param.span);
-            guard.scopes.declare(param_decl).ok_log(&mut guard.errors);
+            guard
+                .scopes
+                .declare(param_decl)
+                .ok_or_report(&mut guard.errors);
         }
 
         let func_body = guard.check_stmt(body);
@@ -256,7 +261,7 @@ impl<'src> TypeChecker<'src> {
             true => Declaration::method(name, func_type, span),
             false => Declaration::global_function(name, func_type, span),
         };
-        self.scopes.declare(decl).ok_log(&mut self.errors);
+        self.scopes.declare(decl).ok_or_report(&mut self.errors);
     }
 
     fn check_interface_vtable(
@@ -275,23 +280,25 @@ impl<'src> TypeChecker<'src> {
             let impl_method_name = format!("{}.{}", type_name, method_name);
 
             if let Some((resolved_type, method_location)) = self.scopes.lookup(&impl_method_name) {
-                if self
+                if let Err(err) = self
                     .infer_ctx
                     .unify_types(method_type, &resolved_type.type_info)
-                    .is_ok()
                 {
-                    vtable[*location] = method_location;
+                    let full_err = TypeCheckerError::InterfaceMethodTypeMismatch {
+                        method_name: method_name.clone(),
+                        interface: interface.lexeme.to_string(),
+                        type_mismatch: Mismatch::enriched(
+                            method_type,
+                            &resolved_type.type_info,
+                            err,
+                            &self.infer_ctx,
+                        ),
+                        span: resolved_type.span,
+                        interface_origin: interface_type.origin,
+                    };
+                    self.report(full_err);
                 } else {
-                    // TODO convert from unification error to type checker error
-                    self.errors
-                        .push(TypeCheckerError::InterfaceMethodTypeMismatch {
-                            method_name: method_name.clone(),
-                            interface: interface.lexeme.to_string(),
-                            expected: method_type.clone(),
-                            found: resolved_type.type_info.clone(),
-                            span: resolved_type.span,
-                            interface_origin: interface_type.origin,
-                        });
+                    vtable[*location] = method_location;
                 }
             } else {
                 missing_methods.push(method_name.clone());
@@ -299,7 +306,7 @@ impl<'src> TypeChecker<'src> {
         }
 
         if !missing_methods.is_empty() {
-            self.errors.push(TypeCheckerError::MissingInterfaceMethods {
+            self.report(TypeCheckerError::MissingInterfaceMethods {
                 missing_methods,
                 interface: interface.lexeme.to_string(),
                 span: impl_span,
@@ -314,20 +321,25 @@ impl<'src> TypeChecker<'src> {
     pub(crate) fn declare_global_types(&mut self, ast: &[Stmt<'src>]) {
         // declare global types by name
         for stmt in ast.iter() {
-            if let Stmt::Struct { name, generics, .. } = stmt {
-                if self.redeclaration_check(name).is_ok() {
-                    self.sys
-                        .declare_struct(stmt.span(), name.lexeme.into(), generics);
+            match stmt {
+                Stmt::Struct { name, generics, .. } => {
+                    if self.redeclaration_check(name).is_ok() {
+                        self.sys
+                            .declare_struct(stmt.span(), name.lexeme.into(), generics);
+                    }
                 }
-            } else if let Stmt::Interface { name, .. } = stmt {
-                if self.redeclaration_check(name).is_ok() {
-                    self.sys.declare_interface(name.lexeme.into(), stmt.span())
+                Stmt::Interface { name, .. } => {
+                    if self.redeclaration_check(name).is_ok() {
+                        self.sys.declare_interface(name.lexeme.into(), stmt.span())
+                    }
                 }
-            } else if let Stmt::Enum { name, generics, .. } = stmt {
-                if self.redeclaration_check(name).is_ok() {
-                    self.sys
-                        .declare_enum(stmt.span(), name.lexeme.into(), generics);
+                Stmt::Enum { name, generics, .. } => {
+                    if self.redeclaration_check(name).is_ok() {
+                        self.sys
+                            .declare_enum(stmt.span(), name.lexeme.into(), generics);
+                    }
                 }
+                _ => {}
             }
         }
     }
@@ -338,18 +350,18 @@ impl<'src> TypeChecker<'src> {
             span: name.span,
         };
         if self.sys.get_primitive_name(name.lexeme).is_some() {
-            self.errors.push(primitive_error);
+            self.report(primitive_error);
             Err(())
         } else if let Some(original) = self.sys.get_origin(name.lexeme) {
             if original == Span::default() {
-                self.errors.push(primitive_error);
+                self.report(primitive_error);
             } else {
-                self.errors
-                    .push(TypeCheckerError::DuplicateTypeDeclaration {
-                        name: name.lexeme.to_string(),
-                        span: name.span,
-                        original,
-                    });
+                self.report(TypeCheckerError::Duplicate(DuplicateDefinition {
+                    kind: DuplicateKind::Type,
+                    name: name.lexeme.to_string(),
+                    span: name.span,
+                    original,
+                }));
             }
             Err(())
         } else {
@@ -394,11 +406,12 @@ impl<'src> TypeChecker<'src> {
                 for (v_name, fields) in variants.iter() {
                     let sym: Symbol = v_name.lexeme.into();
                     if let Some(&original) = seen_variants.get(&sym) {
-                        guard.errors.push(TypeCheckerError::DuplicateVariant {
+                        guard.report(TypeCheckerError::Duplicate(DuplicateDefinition {
+                            kind: DuplicateKind::Variant,
                             name: v_name.lexeme.to_string(),
                             span: v_name.span,
                             original,
-                        });
+                        }));
                         continue;
                     }
                     seen_variants.insert(sym.clone(), v_name.span);
@@ -440,11 +453,12 @@ impl<'src> TypeChecker<'src> {
         for (name, type_ast) in fields.iter() {
             let sym: Symbol = name.lexeme.into();
             if let Some(&original) = seen.get(&sym) {
-                self.errors.push(TypeCheckerError::DuplicateField {
+                self.report(TypeCheckerError::Duplicate(DuplicateDefinition {
+                    kind: DuplicateKind::Field,
                     name: name.lexeme.to_string(),
                     span: name.span,
                     original,
-                });
+                }));
             } else {
                 seen.insert(sym.clone(), name.span);
                 let field_type = self

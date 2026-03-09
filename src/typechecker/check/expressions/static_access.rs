@@ -1,7 +1,7 @@
 use crate::parser::ast::Literal;
 use crate::scanner::Token;
 use crate::typechecker::core::ast::{ExprKind, TypedExpr};
-use crate::typechecker::core::error::TypeCheckerError;
+use crate::typechecker::core::error::{Mismatch, MismatchContext, TypeCheckerError};
 use crate::typechecker::core::types::{GenericArgs, Type};
 use crate::typechecker::system::{make_substitution_map, TypeBlueprint};
 use crate::typechecker::{similarity, Symbol, TypeChecker};
@@ -115,15 +115,14 @@ impl<'src> TypeChecker<'src> {
 
                 self.infer_ctx
                     .unify_types(&fresh_self, &concrete_type)
-                    .map_err(|msg| TypeCheckerError::ComplexTypeMismatch {
-                        expected: fresh_self.clone(),
-                        found: concrete_type,
-                        span: method_name.span,
-                        message: msg.into(),
+                    .map_err(|unif_err| TypeCheckerError::TypeMismatch {
+                        mismatch: Mismatch::from(unif_err),
+                        context: MismatchContext::Generic,
+                        primary_span: method_name.span,
+                        defined_at: None,
                     })?;
             }
             let res = self.infer_ctx.substitute(&method_with_fresh);
-            println!("{}", res);
             res
         } else {
             // Fallback: direct generic-name substitution.

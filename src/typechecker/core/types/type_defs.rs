@@ -78,7 +78,6 @@ impl EnumType {
         Some((*idx as u16, final_ty, fresh_generics))
     }
 
-    // TODO consider how to change logic
     pub fn get_variant_from_instance(
         &self,
         name: &str,

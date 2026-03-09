@@ -1,4 +1,4 @@
-use crate::typechecker::core::error::TypeCheckerError;
+use crate::typechecker::core::error::{BindingError, TypeCheckerError};
 use crate::typechecker::scope::variables::DeclarationKind;
 use crate::typechecker::tests::helpers::*;
 
@@ -49,10 +49,10 @@ fn test_destructured_tuple_binding_not_reassignable() {
     .expect_error(|e| {
         matches!(
             e,
-            TypeCheckerError::AssignmentToImmutableBinding {
+            TypeCheckerError::Binding(BindingError::Immutable {
                 kind: DeclarationKind::Binding,
                 ..
-            }
+            })
         )
     })
     .run();
@@ -69,10 +69,10 @@ fn test_destructured_tuple_second_binding_not_reassignable() {
     .expect_error(|e| {
         matches!(
             e,
-            TypeCheckerError::AssignmentToImmutableBinding {
+            TypeCheckerError::Binding(BindingError::Immutable {
                 kind: DeclarationKind::Binding,
                 ..
-            }
+            })
         )
     })
     .run();
@@ -99,10 +99,10 @@ fn test_nested_destructured_tuple_binding_not_reassignable() {
     .expect_error(|e| {
         matches!(
             e,
-            TypeCheckerError::AssignmentToImmutableBinding {
+            TypeCheckerError::Binding(BindingError::Immutable {
                 kind: DeclarationKind::Binding,
                 ..
-            }
+            })
         )
     })
     .run();

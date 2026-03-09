@@ -10,6 +10,14 @@ func other(a: number) {}
 number.square(12, 12);
 normal(12);
 
+{
+    impl number {
+        func add(self, a: Self): Self {
+            return self + a;
+        }
+    }
+}
+
 normal = other;
 
 

@@ -43,15 +43,15 @@ impl Display for Type {
                     function_type.return_type
                 )
             }
-            Type::Unknown => write!(f, "unknown"),
+            Type::Unknown => write!(f, "?"),
             Type::Any => write!(f, "any"),
             Type::Struct(name, generic_args) => {
-                write!(f, "struct {}", name,)?;
+                write!(f, "{}", name,)?;
                 print_generics(generic_args, f)
             }
-            Type::Interface(name) => write!(f, "interface {}", name),
+            Type::Interface(name) => write!(f, "{}", name),
             Type::Enum(name, generic_args) => {
-                write!(f, "enum {}", name,)?;
+                write!(f, "{}", name,)?;
                 print_generics(generic_args, f)
             }
             Type::Optional(inner) => write!(f, "{}?", inner),
@@ -59,7 +59,7 @@ impl Display for Type {
             Type::Tuple(types) => {
                 write!(
                     f,
-                    "tuple({})",
+                    "({})",
                     types
                         .types
                         .iter()

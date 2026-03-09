@@ -1,4 +1,6 @@
-use crate::typechecker::core::error::TypeCheckerError;
+use crate::typechecker::core::error::{
+    BindingError, CallError, CallParamError, CallParamKind, TypeCheckerError,
+};
 use crate::typechecker::tests::helpers::*;
 
 #[test]
@@ -34,7 +36,7 @@ fn test_missing_argument() {
         "#,
     )
     .expect_error(
-        |e| matches!(e, TypeCheckerError::MissingArgument { param_name, .. } if param_name == "b"),
+        |e| matches!(e, TypeCheckerError::CallParam(CallParamError { kind: CallParamKind::Missing, param_name, .. }) if param_name == "b"),
     )
     .run();
 }
@@ -50,11 +52,11 @@ fn test_too_many_arguments() {
     .expect_error(|e| {
         matches!(
             e,
-            TypeCheckerError::TooManyArguments {
+            TypeCheckerError::Call(CallError::TooMany {
                 expected: 2,
                 found: 3,
                 ..
-            }
+            })
         )
     })
     .run();
@@ -71,11 +73,11 @@ fn test_too_many_arguments_zero_params() {
     .expect_error(|e| {
         matches!(
             e,
-            TypeCheckerError::TooManyArguments {
+            TypeCheckerError::Call(CallError::TooMany {
                 expected: 0,
                 found: 1,
                 ..
-            }
+            })
         )
     })
     .run();
@@ -85,7 +87,7 @@ fn test_too_many_arguments_zero_params() {
 fn test_duplicate_parameter_name() {
     // Duplicate parameters produce a Redeclaration error (not DuplicateArgument which is for invocation)
     Tester::new(r#"func foo(x: number, x: string): void { x; }"#)
-        .expect_error(|e| matches!(e, TypeCheckerError::Redeclaration { name, .. } if name == "x"))
+        .expect_error(|e| matches!(e, TypeCheckerError::Binding(BindingError::Redeclaration { name, .. }) if name == "x"))
         .run();
 }
 
@@ -96,7 +98,7 @@ fn test_undefined_named_parameter() {
         func add(a: number, b: number): number { return a + b; }
         let x = add(a: 1, c: 2);
         "#).expect_error(
-        |e| matches!(e, TypeCheckerError::UndefinedParameter { param_name, .. } if param_name == "c"),
+        |e| matches!(e, TypeCheckerError::CallParam(CallParamError { kind: CallParamKind::Undefined, param_name, .. }) if param_name == "c"),
     ).run();
 }
 
@@ -108,7 +110,12 @@ fn test_positional_after_named_argument() {
         let x = add(a: 1, 2);
         "#,
     )
-    .expect_error(|e| matches!(e, TypeCheckerError::PositionalArgumentAfterNamed { .. }))
+    .expect_error(|e| {
+        matches!(
+            e,
+            TypeCheckerError::Call(CallError::PositionalAfterNamed { .. })
+        )
+    })
     .run();
 }
 
@@ -120,14 +127,7 @@ fn test_parameter_type_mismatch() {
         let x = add(1, true);
         "#,
     )
-    .expect_error(|e| {
-        matches!(
-            e,
-            TypeCheckerError::TypeMismatch { .. }
-                | TypeCheckerError::ComplexTypeMismatch { .. }
-                | TypeCheckerError::ComplexTypeMismatchWithOrigins { .. }
-        )
-    })
+    .expect_error(|e| matches!(e, TypeCheckerError::TypeMismatch { .. }))
     .run();
 }
 
@@ -140,14 +140,7 @@ fn test_return_type_mismatch() {
         }
         "#,
     )
-    .expect_error(|e| {
-        matches!(
-            e,
-            TypeCheckerError::TypeMismatch { .. }
-                | TypeCheckerError::ComplexTypeMismatch { .. }
-                | TypeCheckerError::ComplexTypeMismatchWithOrigins { .. }
-        )
-    })
+    .expect_error(|e| matches!(e, TypeCheckerError::TypeMismatch { .. }))
     .run();
 }
 

@@ -1,4 +1,4 @@
-use crate::typechecker::core::error::TypeCheckerError;
+use crate::typechecker::core::error::{BindingError, TypeCheckerError};
 use crate::typechecker::tests::helpers::*;
 
 #[test]
@@ -63,7 +63,7 @@ fn test_redeclaration_function() {
         "#,
     )
     .expect_error(
-        |e| matches!(e, TypeCheckerError::Redeclaration { name, .. } if name == "foo"),
+        |e| matches!(e, TypeCheckerError::Binding(BindingError::Redeclaration { name, .. }) if name == "foo"),
     )
     .run();
 }
@@ -108,7 +108,7 @@ fn test_assignment_to_captured_variable() {
         "#,
     )
     .expect_error(|e| {
-        matches!(e, TypeCheckerError::AssignmentToCapturedVariable { name, .. } if name == "local")
+        matches!(e, TypeCheckerError::Binding(BindingError::Captured { name, .. }) if name == "local")
     })
     .run();
 }

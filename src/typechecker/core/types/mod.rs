@@ -299,6 +299,10 @@ impl Type {
 
     // TODO change can compare logic
     pub fn can_compare(left: &Type, right: &Type) -> bool {
+        if matches!(left, Type::Never | Type::Error) || matches!(right, Type::Never | Type::Error) {
+            return true;
+        }
+
         match (left, right) {
             (Type::Optional(_), Type::Nil) | (Type::Nil, Type::Optional(_)) => true,
             (Type::Optional(inner_l), Type::Optional(inner_r)) => {
