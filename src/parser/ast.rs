@@ -28,6 +28,7 @@ pub enum TypeAst<'src> {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Expr<'src> {
+    #[allow(dead_code)]
     Error,
     Unary {
         operator: Token<'src>,
@@ -622,7 +623,7 @@ impl Expr<'_> {
             Expr::Tuple { elements } => elements
                 .last()
                 .map(|last| elements[0].span().merge(last.span()))
-                .unwrap_or_else(|| Span::default()),
+                .unwrap_or_default(),
             Expr::List {
                 elements,
                 bracket_token,
@@ -699,7 +700,7 @@ impl Binding<'_> {
             Binding::Tuple { fields } => fields
                 .last()
                 .map(|last| fields[0].span().merge(last.span()))
-                .unwrap_or_else(|| Span::default()),
+                .unwrap_or_default(),
             Binding::Variable(name) => name.span,
         }
     }
@@ -723,7 +724,7 @@ impl TypeAst<'_> {
             TypeAst::Tuple(types) => types
                 .last()
                 .map(|last| types[0].span().merge(last.span()))
-                .unwrap_or_else(|| Span::default()),
+                .unwrap_or_default(),
             TypeAst::Infer => Span::default(),
         }
     }

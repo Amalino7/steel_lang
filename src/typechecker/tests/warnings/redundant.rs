@@ -23,7 +23,7 @@ fn test_safe_access_on_non_optional_number() {
         let y = x?.something;
         "#,
     )
-    .expect_error(|e| matches!(e, TypeCheckerError::UndefinedMethod { .. }))
+    .expect_error(|e| matches!(e, TypeCheckerError::UndefinedMethod(_)))
     .expect_warning(|e| matches!(e, TypeCheckerWarning::SafeAccessOnNonOptional { .. }))
     .run();
 }

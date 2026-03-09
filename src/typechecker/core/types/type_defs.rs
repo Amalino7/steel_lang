@@ -160,13 +160,6 @@ impl StructType {
         self.ordered_fields = ordered_fields;
     }
 
-    pub fn get_field_by_index(&self, index: usize, generic_args: &GenericArgs) -> Option<Type> {
-        self.ordered_fields.get(index).map(|(_, ty)| {
-            let map = make_substitution_map(&self.generic_params, generic_args);
-            ty.clone().generic_to_concrete(&map)
-        })
-    }
-
     pub fn get_field(&self, field: &str, generic_args: &GenericArgs) -> Option<(usize, Type)> {
         self.fields.get(field).map(|idx| {
             let map = make_substitution_map(&self.generic_params, generic_args);

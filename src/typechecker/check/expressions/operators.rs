@@ -135,13 +135,14 @@ impl<'src> TypeChecker<'src> {
                 }
 
                 if left_type != Type::Number || right_type != Type::Number {
-                    return Err(TypeCheckerError::InvalidOperandTypes {
-                        operator: operator.lexeme.to_string(),
-                        left: left_type,
-                        right: right_type,
-                        span: total_span,
-                        help: "Arithmetic operators require both operands to be numbers.",
-                    });
+                    let err = TypeCheckerError::new_invalid_operand(
+                        operator.lexeme.to_string(),
+                        left_type,
+                        right_type,
+                        total_span,
+                        "Arithmetic operators require both operands to be numbers.",
+                    );
+                    return Err(err);
                 }
 
                 let op = match operator.token_type {
@@ -200,13 +201,14 @@ impl<'src> TypeChecker<'src> {
                         span: total_span,
                     })
                 } else {
-                    Err(TypeCheckerError::InvalidOperandTypes {
-                        operator: operator.lexeme.to_string(),
-                        left: left_type,
-                        right: right_type,
-                        span: total_span,
-                        help: "The '+' operator requires both operands to be numbers, or both to be strings (concatenation).",
-                    })
+                    let err = TypeCheckerError::new_invalid_operand(
+                        operator.lexeme.to_string(),
+                        left_type,
+                        right_type,
+                        total_span,
+                        "The '+' operator requires both operands to be numbers, or both to be strings (concatenation).",
+                    );
+                    Err(err)
                 }
             }
 
@@ -228,13 +230,14 @@ impl<'src> TypeChecker<'src> {
                 let cmp_compatible = (left_type == Type::Number || left_type == Type::String)
                     && left_type == right_type;
                 if !cmp_compatible {
-                    return Err(TypeCheckerError::InvalidOperandTypes {
-                        operator: operator.lexeme.to_string(),
-                        left: left_type,
-                        right: right_type,
-                        span: total_span,
-                        help: "Comparison operators require both operands to be numbers or both to be strings.",
-                    });
+                    let err = TypeCheckerError::new_invalid_operand(
+                        operator.lexeme.to_string(),
+                        left_type,
+                        right_type,
+                        total_span,
+                        "Comparison operators require both operands to be numbers or both to be strings.",
+                    );
+                    return Err(err);
                 }
 
                 let op = match (operator.token_type.clone(), &left_type) {
@@ -269,13 +272,14 @@ impl<'src> TypeChecker<'src> {
                 let total_span = left_typed.span.merge(right_typed.span);
 
                 if !Type::can_compare(&left_type, &right_type) {
-                    return Err(TypeCheckerError::InvalidOperandTypes {
-                        operator: operator.lexeme.to_string(),
-                        left: left_type,
-                        right: right_type,
-                        span: total_span,
-                        help: "Values can only be compared with '==' and '!=' if they have compatible types.",
-                    });
+                    let err = TypeCheckerError::new_invalid_operand(
+                        operator.lexeme.to_string(),
+                        left_type,
+                        right_type,
+                        total_span,
+                        "Values can only be compared with '==' and '!=' if they have compatible types.",
+                    );
+                    return Err(err);
                 }
 
                 let op = match &left_type {

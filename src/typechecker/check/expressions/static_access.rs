@@ -1,7 +1,7 @@
 use crate::parser::ast::Literal;
 use crate::scanner::Token;
 use crate::typechecker::core::ast::{ExprKind, TypedExpr};
-use crate::typechecker::core::error::{Mismatch, MismatchContext, TypeCheckerError};
+use crate::typechecker::core::error::{Mismatch, MismatchContext, TypeCheckerError, UndefinedMethodError};
 use crate::typechecker::core::types::{GenericArgs, Type};
 use crate::typechecker::system::{make_substitution_map, TypeBlueprint};
 use crate::typechecker::{similarity, Symbol, TypeChecker};
@@ -67,13 +67,13 @@ impl<'src> TypeChecker<'src> {
                 similarity::find_similar(method_name.lexeme, methods.iter().map(|s| s.as_str()), 3);
             let type_origin = self.sys.get_origin(type_name);
             let found = Type::Metatype(type_name.clone(), generics.clone());
-            TypeCheckerError::UndefinedMethod {
+            TypeCheckerError::UndefinedMethod(Box::new(UndefinedMethodError {
                 span: method_name.span,
                 found,
-                method_name: method_name.lexeme.to_string(),
+                method_name: method_name.lexeme.into(),
                 type_origin,
                 suggestions,
-            }
+            }))
         })?;
 
         let (ctx, resolved_var) = method;
@@ -116,14 +116,13 @@ impl<'src> TypeChecker<'src> {
                 self.infer_ctx
                     .unify_types(&fresh_self, &concrete_type)
                     .map_err(|unif_err| TypeCheckerError::TypeMismatch {
-                        mismatch: Mismatch::from(unif_err),
+                        mismatch: Box::new(Mismatch::from(unif_err)),
                         context: MismatchContext::Generic,
                         primary_span: method_name.span,
                         defined_at: None,
                     })?;
             }
-            let res = self.infer_ctx.substitute(&method_with_fresh);
-            res
+            self.infer_ctx.substitute(&method_with_fresh)
         } else {
             // Fallback: direct generic-name substitution.
             let params = self.sys.get_generic_param_names(type_name);

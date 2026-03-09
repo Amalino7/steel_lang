@@ -3,6 +3,7 @@ use crate::scanner::Token;
 use crate::typechecker::core::ast::{ExprKind, TypedExpr};
 use crate::typechecker::core::error::{
     Mismatch, MismatchContext, Operand, TypeCheckerError, TypeCheckerWarning, TypeRequirement,
+    UndefinedMethodError,
 };
 use crate::typechecker::core::types::Type;
 use crate::typechecker::system::{make_substitution_map, TypeSystem};
@@ -205,13 +206,15 @@ impl<'src> TypeChecker<'src> {
         let Some((idx, method_ty)) = iface.methods.get(member_token.lexeme) else {
             let method_names: Vec<&str> = iface.methods.keys().map(|s| s.as_str()).collect();
             let suggestions = similarity::find_similar(member_token.lexeme, method_names, 3);
-            return Err(TypeCheckerError::UndefinedMethod {
-                span: member_token.span,
-                found: Type::Interface(iface.name.clone()),
-                method_name: member_token.lexeme.to_string(),
-                type_origin: Some(iface.origin),
-                suggestions,
-            });
+            return Err(TypeCheckerError::UndefinedMethod(Box::new(
+                UndefinedMethodError {
+                    span: member_token.span,
+                    found: Type::Interface(iface.name.clone()),
+                    method_name: member_token.lexeme.into(),
+                    type_origin: Some(iface.origin),
+                    suggestions,
+                },
+            )));
         };
 
         let ty = match method_ty {
@@ -264,13 +267,15 @@ impl<'src> TypeChecker<'src> {
                 3,
             );
             let type_origin = self.sys.get_origin(type_name);
-            return Err(TypeCheckerError::UndefinedMethod {
-                span: method_token.span,
-                found: obj_type.clone(),
-                method_name: method_token.lexeme.to_string(),
-                type_origin,
-                suggestions,
-            });
+            return Err(TypeCheckerError::UndefinedMethod(Box::new(
+                UndefinedMethodError {
+                    span: method_token.span,
+                    found: obj_type.clone(),
+                    method_name: method_token.lexeme.into(),
+                    type_origin,
+                    suggestions,
+                },
+            )));
         };
         let definition_span = ctx.span;
         let method_type = ctx.type_info.clone();
@@ -304,7 +309,7 @@ impl<'src> TypeChecker<'src> {
             self.infer_ctx
                 .unify_types(&self_param_ty, &obj_type)
                 .map_err(|unif_err| TypeCheckerError::TypeMismatch {
-                    mismatch: Mismatch::from(unif_err),
+                    mismatch: Box::new(Mismatch::from(unif_err)),
                     context: MismatchContext::Generic,
                     primary_span: method_token.span,
                     defined_at: None,
@@ -401,8 +406,8 @@ fn resolve_member_type(
                         struct_def.fields.keys().map(|s| s.as_ref()).collect();
                     let suggestions = similarity::find_similar(field.lexeme, field_names, 3);
                     TypeCheckerError::UndefinedField {
-                        struct_name: struct_def.name.to_string(),
-                        field_name: field.lexeme.to_string(),
+                        struct_name: struct_def.name.clone(),
+                        field_name: field.lexeme.into(),
                         span: field.span,
                         struct_origin: Some(struct_def.origin),
                         suggestions,

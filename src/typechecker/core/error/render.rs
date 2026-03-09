@@ -1,8 +1,8 @@
 use crate::typechecker::core::error::report::{Diagnostic, ReportBuilder};
 use crate::typechecker::core::error::{
-    context_defined_at_message, context_short_message, kind_note, mismatch_label_message, BindingError, CallParamError,
-    CallParamKind, DuplicateDefinition, GenericError, Operand,
-    TypeCheckerError, TypeRequirement,
+    context_defined_at_message, context_short_message, kind_note, mismatch_label_message, BindingError,
+    CallParamError, CallParamKind, DuplicateDefinition, GenericError, InvalidOperandTypes,
+    Operand, TypeCheckerError, TypeRequirement,
 };
 use ariadne::Report;
 use std::ops::Range;
@@ -178,27 +178,21 @@ impl TypeCheckerError {
             .suggest(suggestions)
             .finish(),
 
-            TypeCheckerError::UndefinedMethod {
-                span,
-                found,
-                method_name,
-                type_origin,
-                suggestions,
-            } => ReportBuilder::error(
+            TypeCheckerError::UndefinedMethod(inner) => ReportBuilder::error(
                 source_id,
-                *span,
+                inner.span,
                 self.code(),
-                format!("Undefined method '{}'", method_name),
+                format!("Undefined method '{}'", inner.method_name),
             )
             .primary(
-                *span,
+                inner.span,
                 format!(
                     "Method '{}' does not exist on type '{}'",
-                    method_name, found
+                    inner.method_name, inner.found
                 ),
             )
-            .optional_origin(*type_origin, format!("Type '{}' defined here", found))
-            .suggest(suggestions)
+            .optional_origin(inner.type_origin, format!("Type '{}' defined here", inner.found))
+            .suggest(&inner.suggestions)
             .finish(),
 
             TypeCheckerError::UndefinedVariable {
@@ -218,27 +212,30 @@ impl TypeCheckerError {
             .suggest(suggestions)
             .finish(),
 
-            TypeCheckerError::InvalidOperandTypes {
-                operator,
-                left,
-                right,
-                span,
-                help,
-            } => ReportBuilder::error(
-                source_id,
-                *span,
-                self.code(),
-                format!("Invalid operand types for '{}'", operator),
-            )
-            .primary(
-                *span,
-                format!(
-                    "Operator '{}' cannot be applied to types '{}' and '{}'.",
-                    operator, left, right
-                ),
-            )
-            .help(*help)
-            .finish(),
+            TypeCheckerError::InvalidOperandTypes(inner) => {
+                let InvalidOperandTypes {
+                    operator,
+                    left,
+                    right,
+                    span,
+                    help,
+                } = &**inner;
+                ReportBuilder::error(
+                    source_id,
+                    *span,
+                    self.code(),
+                    format!("Invalid operand types for '{}'", operator),
+                )
+                .primary(
+                    *span,
+                    format!(
+                        "Operator '{}' cannot be applied to types '{}' and '{}'.",
+                        operator, left, right
+                    ),
+                )
+                .help(*help)
+                .finish()
+            }
 
             // Generic fallback
             err => ReportBuilder::error(source_id, err.span(), err.code(), err.title())

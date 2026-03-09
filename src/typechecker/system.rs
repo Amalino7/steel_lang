@@ -203,12 +203,12 @@ impl TypeSystem {
         if let Some(s) = self.structs.get(name) {
             Some(TypeBlueprint::Struct {
                 name: s.name.clone(),
-                arity: s.generic_params().len(),
+                arity: s.generic_count(),
             })
         } else if let Some(e) = self.enums.get(name) {
             Some(TypeBlueprint::Enum {
                 name: e.name.clone(),
-                arity: e.generic_params().len(),
+                arity: e.generic_count(),
             })
         } else if let Some(i) = self.interfaces.get(name) {
             Some(TypeBlueprint::Interface {

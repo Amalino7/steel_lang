@@ -94,6 +94,8 @@ pub struct Declaration {
 }
 
 impl Declaration {
+    // TODO use when adding mutability to variables.
+    #[allow(dead_code)]
     pub fn variable(name: Symbol, type_info: Type, span: Span) -> Self {
         Declaration {
             name,

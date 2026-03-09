@@ -173,6 +173,7 @@ impl TypedExpr {
 pub struct TypedStmt {
     pub kind: StmtKind,
     pub span: Span,
+    #[allow(dead_code)]
     pub type_info: Type,
 }
 

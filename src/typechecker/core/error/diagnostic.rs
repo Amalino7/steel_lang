@@ -2,7 +2,8 @@ use crate::scanner::Span;
 use crate::typechecker::core::error::report::Diagnostic;
 use crate::typechecker::core::error::{
     context_short_message, kind_note, mismatch_label_message, BindingError, CallError, CallParamError,
-    CallParamKind, DuplicateDefinition, GenericError, TypeCheckerError, TypeRequirement,
+    CallParamKind, DuplicateDefinition, GenericError, InvalidOperandTypes, TypeCheckerError,
+    TypeRequirement,
 };
 
 impl Diagnostic for TypeCheckerError {
@@ -19,14 +20,14 @@ impl Diagnostic for TypeCheckerError {
             TypeCheckerError::TypeHasNoFields { span, .. } => *span,
             TypeCheckerError::UndefinedField { span, .. } => *span,
             TypeCheckerError::NonGlobalDeclaration { span, .. } => *span,
-            TypeCheckerError::UndefinedMethod { span, .. } => *span,
+            TypeCheckerError::UndefinedMethod(inner) => inner.span,
             TypeCheckerError::StaticMethodOnInstance { span, .. } => *span,
             TypeCheckerError::MissingInterfaceMethods { span, .. } => *span,
             TypeCheckerError::InterfaceMethodTypeMismatch { span, .. } => *span,
             TypeCheckerError::UncoveredPattern { span, .. } => *span,
             TypeCheckerError::InvalidTupleIndex { span, .. } => *span,
             TypeCheckerError::InvalidIsUsage { span, .. } => *span,
-            TypeCheckerError::InvalidOperandTypes { span, .. } => *span,
+            TypeCheckerError::InvalidOperandTypes(inner) => inner.span,
             TypeCheckerError::PrimitiveTypeShadowing { span, .. } => *span,
             TypeCheckerError::Duplicate(d) => d.span(),
             TypeCheckerError::CallParam(c) => c.span(),
@@ -43,7 +44,7 @@ impl Diagnostic for TypeCheckerError {
             TypeCheckerError::UndefinedVariable { .. } => "E002",
             TypeCheckerError::UndefinedType { .. } => "E003",
             TypeCheckerError::UndefinedField { .. } => "E004",
-            TypeCheckerError::UndefinedMethod { .. } => "E005",
+            TypeCheckerError::UndefinedMethod(_) => "E005",
             TypeCheckerError::MissingReturnStatement { .. } => "E006",
             TypeCheckerError::InvalidReturnOutsideFunction { .. } => "E007",
             TypeCheckerError::CalleeIsNotCallable { .. } => "E008",
@@ -79,7 +80,7 @@ impl Diagnostic for TypeCheckerError {
             TypeCheckerError::TypeHasNoFields { .. } => "Type has no fields",
             TypeCheckerError::UndefinedField { .. } => "Undefined field",
             TypeCheckerError::NonGlobalDeclaration { .. } => "Non-global declaration",
-            TypeCheckerError::UndefinedMethod { .. } => "Undefined method",
+            TypeCheckerError::UndefinedMethod(_) => "Undefined method",
             TypeCheckerError::StaticMethodOnInstance { .. } => {
                 "Cannot call static method on instance"
             }
@@ -173,10 +174,8 @@ impl Diagnostic for TypeCheckerError {
             TypeCheckerError::NonGlobalDeclaration { name, kind, .. } => {
                 format!("{kind} '{}' is defined outside of global scope.", name)
             }
-            TypeCheckerError::UndefinedMethod {
-                method_name, found, ..
-            } => {
-                format!("Undefined method '{}' on type {}.", method_name, found)
+            TypeCheckerError::UndefinedMethod(inner) => {
+                format!("Undefined method '{}' on type {}.", inner.method_name, inner.found)
             }
             TypeCheckerError::StaticMethodOnInstance { method_name, .. } => {
                 format!(
@@ -217,12 +216,13 @@ impl Diagnostic for TypeCheckerError {
             TypeCheckerError::InvalidIsUsage { message, .. } => {
                 format!("Invalid usage of 'is' operator. {}", message)
             }
-            TypeCheckerError::InvalidOperandTypes {
-                operator,
-                left,
-                right,
-                ..
-            } => {
+            TypeCheckerError::InvalidOperandTypes(inner) => {
+                let InvalidOperandTypes {
+                    operator,
+                    left,
+                    right,
+                    ..
+                } = &**inner;
                 format!(
                     "Operator '{}' cannot be applied to types '{}' and '{}'.",
                     operator, left, right

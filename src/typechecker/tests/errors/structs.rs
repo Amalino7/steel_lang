@@ -14,7 +14,7 @@ fn test_undefined_field_access() {
         "#,
     )
     .expect_error(
-        |e| matches!(e, TypeCheckerError::UndefinedMethod { method_name, .. } if method_name == "z"),
+        |e| matches!(e, TypeCheckerError::UndefinedMethod(inner) if inner.method_name.as_ref() == "z"),
     )
     .run();
 }
@@ -29,7 +29,7 @@ fn test_undefined_field_assignment() {
         "#,
     )
     .expect_error(
-        |e| matches!(e, TypeCheckerError::UndefinedField { field_name, .. } if field_name == "z"),
+        |e| matches!(e, TypeCheckerError::UndefinedField { field_name, .. } if field_name.as_ref() == "z"),
     )
     .run();
 }
@@ -46,7 +46,7 @@ fn test_field_access_on_number_gives_undefined_method() {
         let y = x.non_existent_field;
         "#,
     )
-    .expect_error(|e| matches!(e, TypeCheckerError::UndefinedMethod { .. }))
+    .expect_error(|e| matches!(e, TypeCheckerError::UndefinedMethod(_)))
     .run();
 }
 
@@ -58,7 +58,7 @@ fn test_field_access_on_string_gives_undefined_method() {
         let x = s.non_existent_field;
         "#,
     )
-    .expect_error(|e| matches!(e, TypeCheckerError::UndefinedMethod { .. }))
+    .expect_error(|e| matches!(e, TypeCheckerError::UndefinedMethod(_)))
     .run();
 }
 
@@ -70,7 +70,7 @@ fn test_field_access_on_boolean_gives_undefined_method() {
         let x = b.non_existent_field;
         "#,
     )
-    .expect_error(|e| matches!(e, TypeCheckerError::UndefinedMethod { .. }))
+    .expect_error(|e| matches!(e, TypeCheckerError::UndefinedMethod(_)))
     .run();
 }
 
@@ -115,7 +115,7 @@ fn test_undefined_method() {
         "#,
     )
     .expect_error(|e| {
-        matches!(e, TypeCheckerError::UndefinedMethod { method_name, .. } if method_name == "undefined_method")
+        matches!(e, TypeCheckerError::UndefinedMethod(inner) if inner.method_name.as_ref() == "undefined_method")
     })
     .run();
 }

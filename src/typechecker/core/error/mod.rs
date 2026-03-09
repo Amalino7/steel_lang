@@ -11,6 +11,7 @@ use crate::typechecker::core::error::report::ReportBuilder;
 use crate::typechecker::core::types::Type;
 use crate::typechecker::inference::{InferenceContext, UnificationError, UnificationErrorKind};
 use crate::typechecker::scope::variables::DeclarationKind;
+use crate::typechecker::Symbol;
 use ariadne::Report;
 use std::ops::Range;
 
@@ -36,13 +37,13 @@ pub struct Mismatch {
 }
 
 impl Mismatch {
-    pub fn simple(expected: Type, found: Type) -> Self {
-        Self {
+    pub fn simple(expected: Type, found: Type) -> Box<Self> {
+        Box::from(Self {
             expected,
             found,
             kind: UnificationErrorKind::TypeMismatch,
             precise: None,
-        }
+        })
     }
 
     pub fn enriched(
@@ -50,7 +51,7 @@ impl Mismatch {
         root_found: &Type,
         unif_err: UnificationError,
         infer: &InferenceContext,
-    ) -> Self {
+    ) -> Box<Self> {
         let root_expected = infer.substitute(root_expected);
         let root_found = infer.substitute(root_found);
         let leaf_expected = infer.substitute(&unif_err.expected);
@@ -65,12 +66,12 @@ impl Mismatch {
             None
         };
 
-        Mismatch {
+        Box::from(Mismatch {
             expected: root_expected,
             found: root_found,
             kind: unif_err.kind,
             precise,
-        }
+        })
     }
 }
 
@@ -99,6 +100,7 @@ pub enum MismatchContext {
     ListElement,
     Condition,
     Coalesce,
+    #[allow(dead_code)]
     TupleElement {
         index: usize,
     },
@@ -324,7 +326,7 @@ pub enum TypeCheckerError {
         span: Span,
     },
     TypeMismatch {
-        mismatch: Mismatch,
+        mismatch: Box<Mismatch>,
         context: MismatchContext,
         primary_span: Span,
         defined_at: Option<Span>,
@@ -349,8 +351,8 @@ pub enum TypeCheckerError {
         span: Span,
     },
     UndefinedField {
-        struct_name: String,
-        field_name: String,
+        struct_name: Symbol,
+        field_name: Symbol,
         span: Span,
         struct_origin: Option<Span>,
         suggestions: Vec<String>,
@@ -360,13 +362,7 @@ pub enum TypeCheckerError {
         kind: &'static str,
         span: Span,
     },
-    UndefinedMethod {
-        span: Span,
-        found: Type,
-        method_name: String,
-        type_origin: Option<Span>,
-        suggestions: Vec<String>,
-    },
+    UndefinedMethod(Box<UndefinedMethodError>),
     StaticMethodOnInstance {
         method_name: String,
         span: Span,
@@ -380,7 +376,7 @@ pub enum TypeCheckerError {
     InterfaceMethodTypeMismatch {
         method_name: String,
         interface: String,
-        type_mismatch: Mismatch,
+        type_mismatch: Box<Mismatch>,
         span: Span,
         interface_origin: Span,
     },
@@ -397,13 +393,7 @@ pub enum TypeCheckerError {
         span: Span,
         message: &'static str,
     },
-    InvalidOperandTypes {
-        operator: String,
-        left: Type,
-        right: Type,
-        span: Span,
-        help: &'static str,
-    },
+    InvalidOperandTypes(Box<InvalidOperandTypes>),
     PrimitiveTypeShadowing {
         name: String,
         span: Span,
@@ -414,16 +404,43 @@ pub enum TypeCheckerError {
     Generic(GenericError),
     Binding(BindingError),
 }
+#[derive(Debug, Clone)]
+pub struct UndefinedMethodError {
+    pub span: Span,
+    pub found: Type,
+    pub method_name: Symbol,
+    pub type_origin: Option<Span>,
+    pub suggestions: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct InvalidOperandTypes {
+    operator: String,
+    left: Type,
+    right: Type,
+    span: Span,
+    help: &'static str,
+}
+
 impl TypeCheckerError {
-    pub fn new_duplicate(kind: DuplicateKind, name: String, span: Span, original: Span) -> Self {
-        Self::Duplicate(DuplicateDefinition {
-            kind,
-            name,
+    pub fn new_invalid_operand(
+        operator: String,
+        left: Type,
+        right: Type,
+        span: Span,
+        help: &'static str,
+    ) -> TypeCheckerError {
+        let inner = Box::new(InvalidOperandTypes {
+            operator,
+            left,
+            right,
             span,
-            original,
-        })
+            help,
+        });
+        TypeCheckerError::InvalidOperandTypes(inner)
     }
 }
+
 impl std::fmt::Display for TypeCheckerError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.message())

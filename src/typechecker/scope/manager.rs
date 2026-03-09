@@ -258,7 +258,7 @@ impl ScopeManager {
             .last()
             .map(FunctionContext::captures)
             .map(|v| v.to_vec())
-            .unwrap_or(Vec::new())
+            .unwrap_or_default()
     }
 
     /// Get all visible variable names in the current scope (for suggestions)

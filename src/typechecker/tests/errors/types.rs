@@ -4,24 +4,14 @@ use crate::typechecker::tests::helpers::*;
 #[test]
 fn test_type_mismatch_in_let() {
     Tester::new("let a: number = true;")
-        .expect_error(|e| {
-            matches!(
-                e,
-                TypeCheckerError::TypeMismatch { .. } | TypeCheckerError::TypeMismatch { .. }
-            )
-        })
+        .expect_error(|e| matches!(e, TypeCheckerError::TypeMismatch { .. }))
         .run();
 }
 
 #[test]
 fn test_type_mismatch_string_to_number() {
     Tester::new(r#"let a: number = "hello";"#)
-        .expect_error(|e| {
-            matches!(
-                e,
-                TypeCheckerError::TypeMismatch { .. } | TypeCheckerError::TypeMismatch { .. }
-            )
-        })
+        .expect_error(|e| matches!(e, TypeCheckerError::TypeMismatch { .. }))
         .run();
 }
 
@@ -49,36 +39,21 @@ fn test_comparison_type_mismatch() {
 #[test]
 fn test_if_condition_not_boolean() {
     Tester::new(r#"if 5 { }"#)
-        .expect_error(|e| {
-            matches!(
-                e,
-                TypeCheckerError::TypeMismatch { .. } | TypeCheckerError::TypeMismatch { .. }
-            )
-        })
+        .expect_error(|e| matches!(e, TypeCheckerError::TypeMismatch { .. }))
         .run();
 }
 
 #[test]
 fn test_if_condition_string() {
     Tester::new(r#"if "hello" { }"#)
-        .expect_error(|e| {
-            matches!(
-                e,
-                TypeCheckerError::TypeMismatch { .. } | TypeCheckerError::TypeMismatch { .. }
-            )
-        })
+        .expect_error(|e| matches!(e, TypeCheckerError::TypeMismatch { .. }))
         .run();
 }
 
 #[test]
 fn test_while_condition_not_boolean() {
     Tester::new(r#"while 42 { }"#)
-        .expect_error(|e| {
-            matches!(
-                e,
-                TypeCheckerError::TypeMismatch { .. } | TypeCheckerError::TypeMismatch { .. }
-            )
-        })
+        .expect_error(|e| matches!(e, TypeCheckerError::TypeMismatch { .. }))
         .run();
 }
 
@@ -90,12 +65,7 @@ fn test_assignment_type_mismatch() {
         x = "string";
         "#,
     )
-    .expect_error(|e| {
-        matches!(
-            e,
-            TypeCheckerError::TypeMismatch { .. } | TypeCheckerError::TypeMismatch { .. }
-        )
-    })
+    .expect_error(|e| matches!(e, TypeCheckerError::TypeMismatch { .. }))
     .run();
 }
 

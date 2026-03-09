@@ -124,8 +124,8 @@ impl<'src> TypeChecker<'src> {
                         let suggestions =
                             similarity::find_similar(variant_name.lexeme, variant_names, 3);
                         TypeCheckerError::UndefinedField {
-                            struct_name: ctx.enum_def.name.to_string(),
-                            field_name: variant_name.lexeme.to_string(),
+                            struct_name: ctx.enum_def.name.clone(),
+                            field_name: variant_name.lexeme.into(),
                             span: variant_name.span,
                             struct_origin: Some(ctx.enum_def.origin),
                             suggestions,
@@ -249,8 +249,8 @@ impl<'src> TypeChecker<'src> {
                             let suggestions =
                                 similarity::find_similar(field_name.lexeme, field_names, 3);
                             TypeCheckerError::UndefinedField {
-                                struct_name: struct_def.name.to_string(),
-                                field_name: field_name.lexeme.to_string(),
+                                struct_name: struct_def.name.clone(),
+                                field_name: field_name.lexeme.into(),
                                 span: field_name.span,
                                 struct_origin: Some(struct_def.origin),
                                 suggestions,
