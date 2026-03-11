@@ -1,0 +1,41 @@
+// Enum construction + pattern matching in a loop — tests match dispatch
+enum Direction {
+    North,
+    South,
+    East,
+    West,
+}
+
+func step(dir: Direction, x: number, y: number): number {
+    match dir {
+        .North => { return y + 1; }
+        .South => { return y - 1; }
+        .East  => { return x + 1; }
+        .West  => { return x - 1; }
+    }
+}
+
+func bench(): number {
+    let x = 0;
+    let y = 0;
+    let i = 0;
+    while i < 1000 {
+        // cycle through directions
+        if i / 4 * 4 == i {
+            y = step(Direction.North, x, y);
+        } else {
+            if (i - 1) / 4 * 4 == i - 1 {
+                x = step(Direction.East, x, y);
+            } else {
+                if (i - 2) / 4 * 4 == i - 2 {
+                    y = step(Direction.South, x, y);
+                } else {
+                    x = step(Direction.West, x, y);
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return x + y;
+}
+bench();

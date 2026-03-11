@@ -1,6 +1,6 @@
 [package]
 name = "steel_lang"
-version = "0.6.0"
+version = "0.6.1"
 edition = "2024"
 
 [features]
@@ -10,4 +10,11 @@ debug_gc = []
 stress_gc = []
 
 [dependencies]
-ariadne = "0.4.0"
+ariadne = "0.4.1"
+
+[dev-dependencies]
+criterion = { version = "0.8.2", features = ["html_reports"] }
+
+[[bench]]
+name = "vm_bench"
+harness = false

@@ -1,0 +1,11 @@
+// Sum 1..1000 — tests tight while-loop with counter
+func sum_to(n: number): number {
+    let acc = 0;
+    let i = 1;
+    while i <= n {
+        acc = acc + i;
+        i = i + 1;
+    }
+    return acc;
+}
+sum_to(1000);

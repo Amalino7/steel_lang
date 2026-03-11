@@ -1,5 +1,3 @@
-use crate::vm::tests::helpers::*;
-
 /// Helper that runs source with native functions (panic, assert, print)
 /// and verifies a runtime error occurs.
 fn assert_panics_with_natives(source: &str) {
@@ -7,10 +5,10 @@ fn assert_panics_with_natives(source: &str) {
     use crate::parser::Parser;
     use crate::scanner::Scanner;
     use crate::stdlib::get_natives;
-    use crate::typechecker::core::ast::StmtKind;
     use crate::typechecker::TypeChecker;
-    use crate::vm::gc::GarbageCollector;
+    use crate::typechecker::core::ast::StmtKind;
     use crate::vm::VM;
+    use crate::vm::gc::GarbageCollector;
 
     let natives = get_natives();
     let scanner = Scanner::new(source);
@@ -28,7 +26,7 @@ fn assert_panics_with_natives(source: &str) {
     let compiler = Compiler::new("main".to_string(), &mut gc);
     let function = compiler.compile(0, &typed_ast);
 
-    let mut vm = VM::new(global_count, gc);
+    let mut vm = VM::new(global_count, &mut gc);
     vm.set_native_functions(natives);
 
     assert!(

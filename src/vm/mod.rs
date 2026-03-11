@@ -27,16 +27,16 @@ struct CallFrame {
 
 const STACK_MAX: usize = 256 * 128;
 
-pub struct VM {
+pub struct VM<'gc> {
     vtables: Vec<Gc<VTable>>,
     frames: Vec<CallFrame>,
-    gc: GarbageCollector,
+    gc: &'gc mut GarbageCollector,
     stack: Stack<STACK_MAX>,
     globals: Vec<Value>,
 }
 
-impl VM {
-    pub fn new(global_count: usize, garbage_collector: GarbageCollector) -> Self {
+impl<'gc> VM<'gc> {
+    pub fn new(global_count: usize, garbage_collector: &'gc mut GarbageCollector) -> Self {
         VM {
             frames: Vec::with_capacity(128),
             gc: garbage_collector,
@@ -70,11 +70,11 @@ impl VM {
         }
     }
 
-    pub fn run(&mut self, main_function: Function) -> Result<Value, RuntimeError> {
+    pub fn run(&mut self, main_function: Gc<Function>) -> Result<Value, RuntimeError> {
         self.frames.push(CallFrame {
             slot_offset: 0,
             ip: 0,
-            function: self.gc.alloc(main_function),
+            function: main_function,
         });
 
         let mut current_frame = self.frames.pop().expect("No active frame");

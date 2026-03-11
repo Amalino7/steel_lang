@@ -1,0 +1,22 @@
+// Integer exponentiation by squaring — tests recursion depth + arithmetic
+func pow(base: number, exp: number): number {
+    if exp == 0 {
+        return 1;
+    }
+    if exp / 2 * 2 == exp {
+        let half = pow(base, exp / 2);
+        return half * half;
+    }
+    return base * pow(base, exp - 1);
+}
+
+func bench(): number {
+    let result = 0;
+    let i = 0;
+    while i < 200 {
+        result = result + pow(2, 20);
+        i = i + 1;
+    }
+    return result;
+}
+bench();

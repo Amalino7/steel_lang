@@ -6,7 +6,7 @@ use crate::typechecker::core::ast::{
     BinaryOp, ExprKind, LogicalOp, MatchCase, StmtKind, TypedBinding, TypedExpr, TypedStmt, UnaryOp,
 };
 use crate::vm::bytecode::{Chunk, Opcode};
-use crate::vm::gc::GarbageCollector;
+use crate::vm::gc::{GarbageCollector, Gc};
 use crate::vm::value::{Function, Value};
 
 pub struct Compiler<'a> {
@@ -25,7 +25,7 @@ impl<'a> Compiler<'a> {
         &mut self.function.chunk
     }
 
-    pub fn compile(mut self, reserved: u8, typed_ast: &TypedStmt) -> Function {
+    pub fn compile(mut self, reserved: u8, typed_ast: &TypedStmt) -> Gc<Function> {
         if reserved != 0 {
             self.emit_op(Opcode::Reserve, typed_ast.span.line);
             self.emit_byte(reserved, typed_ast.span.line);
@@ -34,7 +34,7 @@ impl<'a> Compiler<'a> {
 
         self.chunk().write_constant(Value::Nil, 0);
         self.emit_op(Opcode::Return, 0);
-        self.function
+        self.gc.alloc(self.function)
     }
     fn compile_stmt(&mut self, stmt: &TypedStmt) {
         match &stmt.kind {
@@ -184,9 +184,9 @@ impl<'a> Compiler<'a> {
                     return;
                 };
 
-                let compiled_fn = func_compiler.compile(*reserved, body);
-                let constant = Value::Function(self.gc.alloc(compiled_fn));
-                self.chunk().write_constant(constant, line as usize);
+                let constant_fn = func_compiler.compile(*reserved, body);
+                self.chunk()
+                    .write_constant(Value::Function(constant_fn), line as usize);
 
                 // Add captures
                 // Reverse captures to make sure they are in the right order

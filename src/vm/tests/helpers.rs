@@ -30,7 +30,7 @@ pub fn assert_global(source: &str, global_index: usize, expected: Value) {
     let compiler = Compiler::new("main".to_string(), &mut gc);
     let function = compiler.compile(0, &typed_ast);
 
-    let mut vm = VM::new(global_count, gc);
+    let mut vm = VM::new(global_count, &mut gc);
     vm.run(function).expect("VM execution failed");
 
     assert_eq!(
@@ -58,7 +58,7 @@ pub fn assert_panics(source: &str) {
     let compiler = Compiler::new("main".to_string(), &mut gc);
     let function = compiler.compile(0, &typed_ast);
 
-    let mut vm = VM::new(global_count, gc);
+    let mut vm = VM::new(global_count, &mut gc);
     assert!(
         vm.run(function).is_err(),
         "Expected runtime error but execution succeeded"

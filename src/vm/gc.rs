@@ -213,6 +213,17 @@ impl GarbageCollector {
             }
         });
     }
+
+    /// Mark the given root and everything reachable from it, then sweep
+    /// all unreachable objects. Useful for resetting GC state between
+    /// benchmark iterations while keeping compiled bytecode alive.
+    pub fn collect_roots<T: Trace + 'static>(&mut self, root: Gc<T>) {
+        self.mark(root);
+        self.trace_ref();
+        self.sweep();
+        self.live_bytes_after_gc = ALLOCATED.load(Relaxed);
+        self.next_gc = Self::THRESHOLD_GC;
+    }
 }
 
 // Clean-up on Drop
