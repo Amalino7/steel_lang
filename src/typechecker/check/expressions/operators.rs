@@ -122,7 +122,11 @@ impl<'src> TypeChecker<'src> {
         expected: &Type,
     ) -> Result<TypedExpr, TypeCheckerError> {
         match operator.token_type {
-            TokenType::Minus | TokenType::Slash | TokenType::Star => {
+            TokenType::Minus
+            | TokenType::Slash
+            | TokenType::Star
+            | TokenType::Percent
+            | TokenType::StarStar => {
                 let left_typed = self.check_expression(left, &Type::Number);
                 let right_typed = self.check_expression(right, &Type::Number);
 
@@ -149,6 +153,8 @@ impl<'src> TypeChecker<'src> {
                     TokenType::Minus => BinaryOp::Subtract,
                     TokenType::Slash => BinaryOp::Divide,
                     TokenType::Star => BinaryOp::Multiply,
+                    TokenType::Percent => BinaryOp::Modulo,
+                    TokenType::StarStar => BinaryOp::Power,
                     _ => unreachable!(),
                 };
                 Ok(TypedExpr {

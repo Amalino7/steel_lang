@@ -175,6 +175,30 @@ impl<'gc> VM<'gc> {
                     let a = self.stack.pop();
                     self.stack.push(a * b);
                 }
+                Opcode::Modulo => {
+                    let b = self.stack.pop();
+                    let a = self.stack.pop();
+                    match (a, b) {
+                        (Value::Number(a), Value::Number(b)) => {
+                            if b == 0.0 {
+                                self.frames.push(current_frame);
+                                return Err(self.make_error("Modulo by zero"));
+                            }
+                            self.stack.push(Value::Number(a % b));
+                        }
+                        _ => unreachable!("Operands must be numbers"),
+                    }
+                }
+                Opcode::Power => {
+                    let b = self.stack.pop();
+                    let a = self.stack.pop();
+                    match (a, b) {
+                        (Value::Number(a), Value::Number(b)) => {
+                            self.stack.push(Value::Number(a.powf(b)));
+                        }
+                        _ => unreachable!("Operands must be numbers"),
+                    }
+                }
                 Opcode::Not => {
                     let val = self.stack.pop();
                     self.stack.push(!val);

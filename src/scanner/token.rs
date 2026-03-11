@@ -50,11 +50,15 @@ pub enum TokenType {
     LessEqual,
     Arrow, // =>
 
+    Percent,
+    StarStar, // **
+
     // Assignment arithmetic operators.
     PlusEqual,
     MinusEqual,
     StarEqual,
     SlashEqual,
+    PercentEqual,
 
     // Literals.
     Identifier,
@@ -150,6 +154,9 @@ impl Display for TokenType {
             TokenType::Arrow => f.write_str("=>"),
             TokenType::Is => f.write_str("is"),
             TokenType::Try => f.write_str("try"),
+            TokenType::Percent => f.write_str("%"),
+            TokenType::PercentEqual => f.write_str("%="),
+            TokenType::StarStar => f.write_str("**"),
         }
     }
 }

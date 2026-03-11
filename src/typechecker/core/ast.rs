@@ -32,6 +32,8 @@ pub enum BinaryOp {
     Subtract,
     Multiply,
     Divide,
+    Modulo,
+    Power,
 
     LessNumber,
     LessEqualNumber,

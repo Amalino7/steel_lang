@@ -51,6 +51,8 @@ pub fn disassemble_instruction(
         Opcode::Add => println!("Add"),
         Opcode::Divide => println!("Divide"),
         Opcode::Multiply => println!("Multiply"),
+        Opcode::Modulo => println!("Modulo"),
+        Opcode::Power => println!("Power"),
         Opcode::Not => println!("Not"),
         Opcode::Concat => println!("Concat"),
         Opcode::Equal => {

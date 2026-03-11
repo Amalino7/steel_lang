@@ -51,8 +51,12 @@ impl<'src> Scanner<'src> {
             '+' if self.matches('=') => self.make_token(TokenType::PlusEqual),
             '+' => self.make_token(TokenType::Plus),
 
+            '*' if self.matches('*') => self.make_token(TokenType::StarStar),
             '*' if self.matches('=') => self.make_token(TokenType::StarEqual),
             '*' => self.make_token(TokenType::Star),
+
+            '%' if self.matches('=') => self.make_token(TokenType::PercentEqual),
+            '%' => self.make_token(TokenType::Percent),
 
             '/' if self.matches('=') => self.make_token(TokenType::SlashEqual),
             '/' => self.make_token(TokenType::Slash),

@@ -21,18 +21,14 @@ func bench(): number {
     let i = 0;
     while i < 1000 {
         // cycle through directions
-        if i / 4 * 4 == i {
+        if i % 4 == 0 {
             y = step(Direction.North, x, y);
+        } else if i % 4 == 1 {
+            x = step(Direction.East, x, y);
+        } else if i % 4 == 2 {
+            y = step(Direction.South, x, y);
         } else {
-            if (i - 1) / 4 * 4 == i - 1 {
-                x = step(Direction.East, x, y);
-            } else {
-                if (i - 2) / 4 * 4 == i - 2 {
-                    y = step(Direction.South, x, y);
-                } else {
-                    x = step(Direction.West, x, y);
-                }
-            }
+            x = step(Direction.West, x, y);
         }
         i = i + 1;
     }

@@ -3,7 +3,7 @@ func pow(base: number, exp: number): number {
     if exp == 0 {
         return 1;
     }
-    if exp / 2 * 2 == exp {
+    if exp % 2 == 0 {
         let half = pow(base, exp / 2);
         return half * half;
     }

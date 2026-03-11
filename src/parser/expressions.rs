@@ -22,7 +22,8 @@ impl<'src> Parser<'src> {
             TokT::PlusEqual,
             TokT::MinusEqual,
             TokT::StarEqual,
-            TokT::SlashEqual
+            TokT::SlashEqual,
+            TokT::PercentEqual
         ) {
             let op = self.previous_token.clone();
             let left = expr.clone();
@@ -34,6 +35,7 @@ impl<'src> Parser<'src> {
                     TokT::MinusEqual => TokT::Minus,
                     TokT::StarEqual => TokT::Star,
                     TokT::SlashEqual => TokT::Slash,
+                    TokT::PercentEqual => TokT::Percent,
                     _ => unreachable!(),
                 },
                 ..op.clone()
@@ -182,7 +184,7 @@ impl<'src> Parser<'src> {
 
     fn factor(&mut self) -> Result<Expr<'src>, ParserError<'src>> {
         let mut expr = self.unary()?;
-        while match_token_type!(self, TokT::Star, TokT::Slash) {
+        while match_token_type!(self, TokT::Star, TokT::Slash, TokT::Percent) {
             let op = self.previous_token.clone();
             let right = self.unary()?;
             expr = Expr::Binary {
@@ -193,6 +195,7 @@ impl<'src> Parser<'src> {
         }
         Ok(expr)
     }
+
     fn unary(&mut self) -> Result<Expr<'src>, ParserError<'src>> {
         if match_token_type!(self, TokT::Bang, TokT::Minus, TokT::Try) {
             let op = self.previous_token.clone();
@@ -202,7 +205,22 @@ impl<'src> Parser<'src> {
                 expression: Box::new(expr),
             })
         } else {
-            self.parser_is_type()
+            self.power()
+        }
+    }
+
+    fn power(&mut self) -> Result<Expr<'src>, ParserError<'src>> {
+        let base = self.parser_is_type()?;
+        if match_token_type!(self, TokT::StarStar) {
+            let op = self.previous_token.clone();
+            let exponent = self.unary()?;
+            Ok(Expr::Binary {
+                left: Box::new(base),
+                operator: op,
+                right: Box::new(exponent),
+            })
+        } else {
+            Ok(base)
         }
     }
 

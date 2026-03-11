@@ -12,6 +12,8 @@ pub enum Opcode {
     Add,
     Divide,
     Multiply,
+    Modulo,
+    Power,
     Not,
     Concat,
 

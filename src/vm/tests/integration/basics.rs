@@ -6,6 +6,76 @@ fn test_arithmetic_add() {
 }
 
 #[test]
+fn test_modulo_basic() {
+    assert_global("let a = 10 % 3;", 0, crate::vm::value::Value::Number(1.0));
+}
+
+#[test]
+fn test_modulo_even() {
+    assert_global("let a = 10 % 2;", 0, crate::vm::value::Value::Number(0.0));
+}
+
+#[test]
+fn test_modulo_compound_assignment() {
+    assert_global(
+        r#"
+        let a = 17;
+        a %= 5;
+        "#,
+        0,
+        crate::vm::value::Value::Number(2.0),
+    );
+}
+
+#[test]
+fn test_power_basic() {
+    assert_global(
+        "let a = 2 ** 10;",
+        0,
+        crate::vm::value::Value::Number(1024.0),
+    );
+}
+
+#[test]
+fn test_power_right_associative() {
+    // 2 ** 3 ** 2  ==  2 ** (3 ** 2)  ==  2 ** 9  ==  512
+    assert_global(
+        "let a = 2 ** 3 ** 2;",
+        0,
+        crate::vm::value::Value::Number(512.0),
+    );
+}
+
+#[test]
+fn test_power_unary_minus_on_base() {
+    // -3 ** 2  ==  -(3 ** 2)  ==  -9  (unary minus wraps the whole expression)
+    assert_global("let a = -3 ** 2;", 0, crate::vm::value::Value::Number(-9.0));
+}
+
+#[test]
+fn test_power_unary_minus_on_exponent() {
+    assert_global("let a = 4 ** -1;", 0, crate::vm::value::Value::Number(0.25));
+}
+
+#[test]
+fn test_power_precedence_over_multiply() {
+    assert_global(
+        "let a = 2 * 3 ** 2;",
+        0,
+        crate::vm::value::Value::Number(18.0),
+    );
+}
+#[test]
+fn test_tricky_power_precedence() {
+    // -2 ** -2 ** 2  ==  -(2 ** -(2 ** 2))  ==  -0.0625
+    assert_global(
+        "let a = -2 ** -2 ** 2;",
+        0,
+        crate::vm::value::Value::Number(-0.0625),
+    )
+}
+
+#[test]
 fn test_arithmetic_expression() {
     assert_global(
         "let a = 7 + 3 * 2 == 1;",

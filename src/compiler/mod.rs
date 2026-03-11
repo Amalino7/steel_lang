@@ -366,6 +366,8 @@ impl<'a> Compiler<'a> {
                     BinaryOp::Subtract => self.emit_op(Opcode::Subtract, line),
                     BinaryOp::Multiply => self.emit_op(Opcode::Multiply, line),
                     BinaryOp::Divide => self.emit_op(Opcode::Divide, line),
+                    BinaryOp::Modulo => self.emit_op(Opcode::Modulo, line),
+                    BinaryOp::Power => self.emit_op(Opcode::Power, line),
                     BinaryOp::LessString => self.emit_op(Opcode::LessString, line),
                     BinaryOp::LessNumber => self.emit_op(Opcode::LessNumber, line),
                     BinaryOp::GreaterString => self.emit_op(Opcode::GreaterString, line),

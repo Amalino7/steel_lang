@@ -4,7 +4,7 @@ func gcd(a: number, b: number): number {
     let b = b;
     while b != 0 {
         let tmp = b;
-        b = a - (a / b * b);
+        b = a - (a % b);
         a = tmp;
     }
     return a;

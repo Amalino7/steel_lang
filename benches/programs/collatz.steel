@@ -1,0 +1,16 @@
+// Count Collatz steps for n=837799 (longest sequence under 1M)
+// Tests conditional branching in a tight loop
+func collatz_steps(n: number): number {
+    let steps = 0;
+    let n = n;
+    while n != 1 {
+        if n % 2 == 0 {
+            n /= 2;
+        } else {
+            n = n * 3 + 1;
+        }
+        steps = steps + 1;
+    }
+    return steps;
+}
+collatz_steps(837799);

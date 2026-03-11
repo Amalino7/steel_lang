@@ -36,3 +36,15 @@ fn test_normal_division_succeeds() {
         crate::vm::value::Value::Number(5.0),
     );
 }
+
+#[test]
+fn test_modulo_by_zero_panics() {
+    assert_panics(
+        r#"
+        func rem(a: number, b: number): number {
+            return a % b;
+        }
+        rem(10, 0);
+        "#,
+    );
+}
