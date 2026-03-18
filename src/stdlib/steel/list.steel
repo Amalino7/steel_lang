@@ -1,0 +1,232 @@
+impl<Val> List<Val> {
+    extern func len(self): number;
+    extern func is_empty(self): boolean;
+    extern func push(self, value: Val): void;
+    extern func pop(self): Val?;
+    extern func slice(self, start: number, end_exclusive: number): List<Val>;
+    extern func concat(self, other: List<Val>): List<Val>;
+
+    func contains(self, value: Val): boolean {
+        let i = 0;
+        while i < self.len() {
+            if self[i] == value {
+                return true;
+            }
+            i += 1;
+        }
+        return false;
+    }
+
+    func fold<U>(self, initial: U, f: func(U, Val): U): U {
+        let result = initial;
+        let i = 0;
+        while i < self.len() {
+            result = f(result, self[i]);
+            i += 1;
+        }
+        return result;
+    }
+
+    func each(self, f: func(Val)): void {
+        let i = 0;
+        while i < self.len() {
+            f(self[i]);
+            i += 1;
+        }
+    }
+
+    func map<M>(self, f: func(Val): M): List<M> {
+        let out: List<M> = [];
+        let i = 0;
+        while i < self.len() {
+            let new: M = f(self[i]);
+            out.push(new);
+            i += 1;
+        }
+        return out;
+    }
+
+    func filter(self, f: func(Val): boolean): List<Val> {
+        let out: List<Val> = [];
+        let i = 0;
+        while i < self.len() {
+            if f(self[i]) {
+                out.push(self[i]);
+            }
+            i += 1;
+        }
+        return out;
+    }
+
+    func first(self): Val? {
+        if self.len() > 0 {
+            return self[0];
+        }
+        return nil;
+    }
+
+    func last(self): Val? {
+        if self.len() > 0 {
+            return self[self.len() - 1];
+        }
+        return nil;
+    }
+
+    func reverse(self): List<Val> {
+        let out: List<Val> = [];
+        let i = self.len() - 1;
+        while i >= 0 {
+            out.push(self[i]);
+            i -= 1;
+        }
+        return out;
+    }
+
+    func any(self, f: func(Val): boolean): boolean {
+        let i = 0;
+        while i < self.len() {
+            if f(self[i]) {
+                return true;
+            }
+            i += 1;
+        }
+        return false;
+    }
+
+    func all(self, f: func(Val): boolean): boolean {
+        let i = 0;
+        while i < self.len() {
+            if !f(self[i]) {
+                return false;
+            }
+            i += 1;
+        }
+        return true;
+    }
+
+    func find(self, f: func(Val): boolean): Val? {
+        let i = 0;
+        while i < self.len() {
+            if f(self[i]) {
+                return self[i];
+            }
+            i += 1;
+        }
+        return nil;
+    }
+
+    func count(self, f: func(Val): boolean): number {
+        let n = 0;
+        let i = 0;
+        while i < self.len() {
+            if f(self[i]) {
+                n += 1;
+            }
+            i += 1;
+        }
+        return n;
+    }
+
+    func index_of(self, value: Val): number? {
+        let i = 0;
+        while i < self.len() {
+            if self[i] == value {
+                return i;
+            }
+            i += 1;
+        }
+        return nil;
+    }
+
+    func flat_map<M>(self, f: func(Val): List<M>): List<M> {
+        let out: List<M> = [];
+        let i = 0;
+        while i < self.len() {
+            let inner = f(self[i]);
+            out = out.concat(inner);
+            i += 1;
+        }
+        return out;
+    }
+
+    func sort_by(self, less_than: func(Val, Val): boolean): List<Val> {
+        let out: List<Val> = [];
+        let i = 0;
+        while i < self.len() {
+            out.push(self[i]);
+            i += 1;
+        }
+        let n = out.len();
+        if n < 2 {
+            return out;
+        }
+        // Iterative quicksort: stack stores [low, high] pairs.
+        let stack: List<number> = [];
+        stack.push(0);
+        stack.push(n - 1);
+        while !stack.is_empty() {
+            let high = stack.pop()!;
+            let low = stack.pop()!;
+            // Partition: use last element as pivot, Lomuto scheme.
+            let pivot = out[high];
+            let store = low;
+            let k = low;
+            while k < high {
+                if less_than(out[k], pivot) {
+                    let tmp = out[store];
+                    out[store] = out[k];
+                    out[k] = tmp;
+                    store += 1;
+                }
+                k += 1;
+            }
+            let tmp = out[store];
+            out[store] = out[high];
+            out[high] = tmp;
+            // Push left sub-array if it has more than one element.
+            if low < store - 1 {
+                stack.push(low);
+                stack.push(store - 1);
+            }
+            // Push right sub-array if it has more than one element.
+            if store + 1 < high {
+                stack.push(store + 1);
+                stack.push(high);
+            }
+        }
+        return out;
+    }
+}
+
+impl List<number> {
+    func sum(self): number {
+        func add(a: number, b: number): number { return a + b; }
+        return self.fold(0, add);
+    }
+
+    func min(self): number? {
+        if self.is_empty() { return nil; }
+        let m = self[0];
+        let i = 1;
+        while i < self.len() {
+            if self[i] < m { m = self[i]; }
+            i += 1;
+        }
+        return m;
+    }
+
+    func max(self): number? {
+        if self.is_empty() { return nil; }
+        let m = self[0];
+        let i = 1;
+        while i < self.len() {
+            if self[i] > m { m = self[i]; }
+            i += 1;
+        }
+        return m;
+    }
+}
+
+impl List<string> {
+    extern func join(self, sep: string): string;
+}

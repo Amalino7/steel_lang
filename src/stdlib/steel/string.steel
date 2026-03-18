@@ -1,0 +1,27 @@
+impl string {
+    extern func length(self): number;
+    extern func split(self, sep: string): List<string>;
+    extern func trim(self): string;
+    extern func trim_start(self): string;
+    extern func trim_end(self): string;
+    extern func to_upper(self): string;
+    extern func to_lower(self): string;
+    extern func starts_with(self, prefix: string): boolean;
+    extern func ends_with(self, suffix: string): boolean;
+    extern func contains(self, substr: string): boolean;
+    extern func replace(self, from: string, to: string): string;
+    extern func substring(self, start: number, end_exclusive: number): string;
+    extern func index_of(self, substr: string): number?;
+    extern func chars(self): List<string>;
+    extern func parse_number(self): number?;
+
+    func repeat(self, n: number): string {
+        let result = "";
+        let i = 0;
+        while i < n {
+            result = result + self;
+            i += 1;
+        }
+        return result;
+    }
+}

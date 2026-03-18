@@ -1,0 +1,24 @@
+impl number {
+    func abs(self): number {
+        if self < 0 {
+            return -self;
+        }
+        else{
+            return self;
+        }
+    }
+    extern func floor(self): number;
+    extern func ceil(self): number;
+    extern func round(self): number;
+    extern func trunc(self): number;
+    extern func sqrt(self): number;
+    extern func pow(self, exp: number): number;
+    extern func log(self): number;
+    extern func log2(self): number;
+    extern func log10(self): number;
+    extern func sin(self): number;
+    extern func cos(self): number;
+    extern func tan(self): number;
+    extern func min(self, other: number): number;
+    extern func max(self, other: number): number;
+}
