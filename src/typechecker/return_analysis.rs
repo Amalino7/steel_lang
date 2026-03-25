@@ -84,6 +84,7 @@ impl<'src> TypeChecker<'src> {
                 .iter()
                 .try_for_each(|method| self.check_stmt_returns(method)),
             StmtKind::EnumDecl { .. } => Ok(()),
+            StmtKind::ExternFunction { .. } => Ok(()),
         }
     }
     #[allow(clippy::only_used_in_recursion)]
@@ -132,6 +133,7 @@ impl<'src> TypeChecker<'src> {
             StmtKind::StructDecl { .. } => false,
             StmtKind::Impl { .. } => false,
             &StmtKind::EnumDecl {} => false,
+            StmtKind::ExternFunction { .. } => false,
         })
     }
 }

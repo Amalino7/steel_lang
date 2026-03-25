@@ -4,22 +4,27 @@ fn assert_panics_with_natives(source: &str) {
     use crate::compiler::Compiler;
     use crate::parser::Parser;
     use crate::scanner::Scanner;
-    use crate::stdlib::get_natives;
+    use crate::stdlib::{get_natives, get_prelude};
     use crate::typechecker::TypeChecker;
     use crate::typechecker::core::ast::StmtKind;
     use crate::vm::VM;
     use crate::vm::gc::GarbageCollector;
 
+    let full_source = format!("{}{}", source, get_prelude());
     let natives = get_natives();
-    let scanner = Scanner::new(source);
+    let scanner = Scanner::new(&full_source);
     let mut parser = Parser::new(scanner);
     let ast = parser.parse().expect("Failed to parse");
     let mut typechecker = TypeChecker::new_with_natives(&natives);
     let (typed_ast, _) = typechecker.check(&ast).expect("Failed to typecheck");
 
-    let global_count = match &typed_ast.kind {
-        StmtKind::Global { global_count, .. } => *global_count as usize,
-        _ => 0,
+    let (global_count, extern_fns) = match &typed_ast.kind {
+        StmtKind::Global {
+            global_count,
+            extern_fns,
+            ..
+        } => (*global_count as usize, extern_fns.clone()),
+        _ => (0, vec![]),
     };
 
     let mut gc = GarbageCollector::new();
@@ -27,7 +32,7 @@ fn assert_panics_with_natives(source: &str) {
     let function = compiler.compile(0, &typed_ast);
 
     let mut vm = VM::new(global_count, &mut gc);
-    vm.set_native_functions(natives);
+    vm.set_natives_by_name(&natives, &extern_fns);
 
     assert!(
         vm.run(function).is_err(),

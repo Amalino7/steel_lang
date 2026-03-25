@@ -247,6 +247,7 @@ impl<'a> Compiler<'a> {
             }
             StmtKind::EnumDecl { .. } => {}
             StmtKind::StructDecl { .. } => {}
+            StmtKind::ExternFunction { .. } => {}
         }
     }
 

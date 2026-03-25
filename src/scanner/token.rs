@@ -83,6 +83,7 @@ pub enum TokenType {
     Impl,
     Self_,
     Interface,
+    Extern,
 
     Enum,
     Match,
@@ -144,6 +145,7 @@ impl Display for TokenType {
             TokenType::Impl => f.write_str("impl"),
             TokenType::Self_ => f.write_str("self"),
             TokenType::Interface => f.write_str("interface"),
+            TokenType::Extern => f.write_str("extern"),
             TokenType::Question => f.write_str("?"),
             TokenType::QuestionDot => f.write_str("?."),
             TokenType::QuestionQuestion => f.write_str("??"),

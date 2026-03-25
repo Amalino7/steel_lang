@@ -198,6 +198,11 @@ pub enum Stmt<'src> {
         generics: Vec<Token<'src>>,
         signature: FunctionSig<'src>,
     },
+    ExternFunction {
+        name: Token<'src>,
+        generics: Vec<Token<'src>>,
+        signature: FunctionSig<'src>,
+    },
     Struct {
         name: Token<'src>,
         fields: Vec<(Token<'src>, TypeAst<'src>)>,
@@ -487,6 +492,19 @@ impl Display for Stmt<'_> {
                     body
                 )
             }
+            Stmt::ExternFunction { name, signature, .. } => {
+                write!(
+                    f,
+                    "extern func {}({});",
+                    name.lexeme,
+                    signature
+                        .params
+                        .iter()
+                        .map(|t| format!("{}: {}", t.0.lexeme, t.1))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                )
+            }
             Stmt::Return { value, .. } => write!(f, "return {}", value),
 
             Stmt::Struct {
@@ -667,6 +685,9 @@ impl Stmt<'_> {
             }
             Stmt::While { condition, body } => condition.span().merge(body.span()),
             Stmt::Function { name, body, .. } => name.span.merge(body.span()),
+            Stmt::ExternFunction { name, signature, .. } => {
+                name.span.merge(signature.return_type.span())
+            }
             Stmt::Struct { name, fields, .. } => fields
                 .last()
                 .map(|(field, _)| name.span.merge(field.span))

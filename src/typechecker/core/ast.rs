@@ -192,6 +192,7 @@ pub enum StmtKind {
         global_count: u32,
         stmts: Vec<TypedStmt>,
         reserved: u16,
+        extern_fns: Vec<(Box<str>, u16)>,
     },
     Expression(TypedExpr),
     Return(TypedExpr),
@@ -222,6 +223,10 @@ pub enum StmtKind {
         name: Box<str>, // reduces memory usage by 8 bytes
         target: ResolvedVar,
         function_decl: TypedExpr,
+    },
+    ExternFunction {
+        name: Box<str>,
+        target: ResolvedVar,
     },
 }
 #[derive(Debug, Clone)]

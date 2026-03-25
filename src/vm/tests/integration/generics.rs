@@ -155,15 +155,15 @@ fn test_generic_enums() {
             Nil, Cons(T, LinkedList<T>)
         }
 
-        enum Result<T, E> { Ok(T), Err(E) }
-        impl<T, E> Result<T, E> {
-            func map_error<U>(self, transform: func(E): U): Result<T, U> {
+        enum Res<T, E> { Ok(T), Err(E) }
+        impl<T, E> Res<T, E> {
+            func map_error<U>(self, transform: func(E): U): Res<T, U> {
                 match self {
                     .Err(err) => {
                         let new_err = transform(err);
-                        return Result.Err(new_err);
+                        return Res.Err(new_err);
                     }
-                    .Ok(ok) => { return Result.Ok(ok); }
+                    .Ok(ok) => { return Res.Ok(ok); }
                 }
             }
         }
@@ -172,8 +172,8 @@ fn test_generic_enums() {
         assert(list is Cons, true);
 
         {
-            let res: Result<number, number> = Result.Err(21);
-            let res = Result.map_error(res, to_str.<number>);
+            let res: Res<number, number> = Res.Err(21);
+            let res = Res.map_error(res, to_str.<number>);
             if res is Ok {
                 println(res + 10);
             } else {

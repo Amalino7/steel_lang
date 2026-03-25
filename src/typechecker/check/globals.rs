@@ -22,6 +22,11 @@ impl<'src> TypeChecker<'src> {
                     generics,
                     signature,
                     ..
+                }
+                | Stmt::ExternFunction {
+                    name,
+                    generics,
+                    signature,
                 } => {
                     let mut guard = TypeScopeGuard::new_function(self, generics);
                     let func_ty = guard
@@ -57,14 +62,19 @@ impl<'src> TypeChecker<'src> {
                     }
 
                     for method in methods {
-                        let Stmt::Function {
-                            name: func_name,
-                            signature,
-                            generics,
-                            ..
-                        } = method
-                        else {
-                            unreachable!();
+                        let (func_name, signature, generics) = match method {
+                            Stmt::Function {
+                                name,
+                                signature,
+                                generics,
+                                ..
+                            }
+                            | Stmt::ExternFunction {
+                                name,
+                                signature,
+                                generics,
+                            } => (name, signature, generics),
+                            _ => unreachable!(),
                         };
                         let mut inner_guard = TypeScopeGuard::new_type_params(&mut guard, generics);
                         let func_ty = inner_guard
@@ -136,36 +146,49 @@ impl<'src> TypeChecker<'src> {
         let mut guard = TypeScopeGuard::new_impl(&mut outer_guard, self_ty);
         // define methods
         for method in methods {
-            let Stmt::Function {
-                name: func_name,
-                body,
-                signature,
-                generics,
-            } = method
-            else {
-                unreachable!();
-            };
-            let primary_mangled = format!("{}.{}", name.lexeme, func_name.lexeme);
-
-            if let Some(expr) = guard
-                .check_function(func_name, signature, body, generics)
-                .ok_or_report(&mut guard.errors)
-            {
-                let (_, location) = guard
-                    .scopes
-                    .lookup(&primary_mangled)
-                    .expect("Function was added");
-
-                let stmt = TypedStmt {
-                    kind: StmtKind::Function {
-                        name: primary_mangled.into_boxed_str(),
-                        target: location,
-                        function_decl: expr,
-                    },
-                    span: Default::default(),
-                    type_info: Type::Nil,
-                };
-                typed_methods.push(stmt)
+            match method {
+                Stmt::Function {
+                    name: func_name,
+                    body,
+                    signature,
+                    generics,
+                } => {
+                    let primary_mangled = format!("{}.{}", name.lexeme, func_name.lexeme);
+                    if let Some(expr) = guard
+                        .check_function(func_name, signature, body, generics)
+                        .ok_or_report(&mut guard.errors)
+                    {
+                        let (_, location) = guard
+                            .scopes
+                            .lookup(&primary_mangled)
+                            .expect("Function was added");
+                        typed_methods.push(TypedStmt {
+                            kind: StmtKind::Function {
+                                name: primary_mangled.into_boxed_str(),
+                                target: location,
+                                function_decl: expr,
+                            },
+                            span: Default::default(),
+                            type_info: Type::Nil,
+                        });
+                    }
+                }
+                Stmt::ExternFunction { name: func_name, .. } => {
+                    let primary_mangled = format!("{}.{}", name.lexeme, func_name.lexeme);
+                    let (_, location) = guard
+                        .scopes
+                        .lookup(&primary_mangled)
+                        .expect("Extern method was added");
+                    typed_methods.push(TypedStmt {
+                        kind: StmtKind::ExternFunction {
+                            name: primary_mangled.into_boxed_str(),
+                            target: location,
+                        },
+                        span: Default::default(),
+                        type_info: Type::Nil,
+                    });
+                }
+                _ => unreachable!(),
             }
         }
         drop(guard);

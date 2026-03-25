@@ -233,6 +233,23 @@ impl<'src> TypeChecker<'src> {
                 }
             }
 
+            Stmt::ExternFunction { name, .. } => {
+                if self.non_global("extern func", name) {
+                    return TypedStmt::new_blank(stmt.span());
+                }
+                let (_, location) = self
+                    .scopes
+                    .lookup(name.lexeme)
+                    .expect("extern func should have been declared");
+                TypedStmt {
+                    kind: StmtKind::ExternFunction {
+                        name: name.lexeme.into(),
+                        target: location,
+                    },
+                    span: name.span,
+                    type_info: Type::Void,
+                }
+            }
             Stmt::Struct { name, .. } => {
                 // structs already defined
                 self.non_global("Struct", name);

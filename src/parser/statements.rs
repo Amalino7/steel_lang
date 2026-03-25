@@ -21,6 +21,9 @@ impl<'src> Parser<'src> {
             self.impl_block()
         } else if match_token_type!(self, TokT::Interface) {
             self.interface_declaration()
+        } else if match_token_type!(self, TokT::Extern) {
+            self.consume(TokT::Func, "Expected 'func' after 'extern'.")?;
+            self.extern_func_declaration(false)
         } else {
             self.statement()
         }
@@ -134,6 +137,19 @@ impl<'src> Parser<'src> {
             signature,
             name,
             body: Box::new(body),
+        })
+    }
+
+    fn extern_func_declaration(
+        &mut self,
+        is_method: bool,
+    ) -> Result<Stmt<'src>, ParserError<'src>> {
+        let (name, generics, signature) = self.func_signature(is_method)?;
+        self.consume(TokT::Semicolon, "Expected ';' after extern function signature.")?;
+        Ok(Stmt::ExternFunction {
+            name,
+            generics,
+            signature,
         })
     }
 
@@ -552,9 +568,14 @@ impl<'src> Parser<'src> {
 
         self.consume(TokT::LeftBrace, "Expected '{' before impl block.")?;
         let mut methods = vec![];
-        while match_token_type!(self, TokT::Func) {
-            let method = self.func_declaration(true)?;
-            methods.push(method);
+        while check_token_type!(self, TokT::Func) || check_token_type!(self, TokT::Extern) {
+            if match_token_type!(self, TokT::Extern) {
+                self.consume(TokT::Func, "Expected 'func' after 'extern'.")?;
+                methods.push(self.extern_func_declaration(true)?);
+            } else {
+                match_token_type!(self, TokT::Func);
+                methods.push(self.func_declaration(true)?);
+            }
         }
         self.consume(TokT::RightBrace, "Expected '}' after impl block.")?;
 

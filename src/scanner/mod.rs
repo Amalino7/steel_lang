@@ -243,6 +243,7 @@ fn keywords() -> HashMap<&'static str, TokenType> {
         ("impl", TokenType::Impl),
         ("self", TokenType::Self_),
         ("interface", TokenType::Interface),
+        ("extern", TokenType::Extern),
         ("nil", TokenType::Nil),
         ("enum", TokenType::Enum),
         ("match", TokenType::Match),

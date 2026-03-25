@@ -1,0 +1,7 @@
+let my_list = [10,3,2,4,1,11,45, 23];
+
+func cmp(a: number, b: number): boolean {
+    return a < b;
+}
+
+println(my_list.sort_by(less_than: cmp));

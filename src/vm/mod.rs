@@ -62,11 +62,16 @@ impl<'gc> VM<'gc> {
         }
     }
 
-    pub fn set_native_functions(&mut self, natives: Vec<NativeDef>) {
-        self.globals
-            .resize(natives.len() + self.globals.len(), Value::Nil);
-        for (i, def) in natives.iter().enumerate() {
-            self.globals[i] = Value::NativeFunction(def.func);
+    /// Maps each native to the global slot assigned by the typechecker via extern declarations.
+    pub fn set_natives_by_name(&mut self, natives: &[NativeDef], extern_fns: &[(Box<str>, u16)]) {
+        let name_to_idx: std::collections::HashMap<&str, usize> = extern_fns
+            .iter()
+            .map(|(name, idx)| (name.as_ref(), *idx as usize))
+            .collect();
+        for def in natives {
+            if let Some(&slot) = name_to_idx.get(def.name) {
+                self.globals[slot] = Value::NativeFunction(def.func);
+            }
         }
     }
 

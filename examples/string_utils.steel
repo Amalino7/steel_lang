@@ -1,0 +1,22 @@
+let str = "   Hello, World!   ";
+
+println(str.trim());
+println(str.trim_end());
+println(str.trim_start());
+
+println(str.replace("Hello", "Hi"));
+println(str.replace("World", "Universe"));
+println(str.contains("World"));
+
+func append(str: string): string {
+    return str + "!";
+}
+func not_whitespace(str: string): boolean {
+    return !(str == " ");
+}
+
+str
+    .chars()
+    .filter(f: not_whitespace)
+    .map(append)
+    .each(println);

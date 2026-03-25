@@ -97,13 +97,17 @@ pub fn run_file(file_name: &str, source: &str, debug: bool, mode: &str, force: b
         vm::disassembler::disassemble_chunk(&func.chunk, "main_script");
         println!("===================");
     }
-    let global_count = match typed_ast.kind {
-        StmtKind::Global { global_count, .. } => global_count,
+    let (global_count, extern_fns) = match &typed_ast.kind {
+        StmtKind::Global {
+            global_count,
+            extern_fns,
+            ..
+        } => (*global_count, extern_fns.clone()),
         _ => panic!("Global statement expected"),
     };
     drop(typechecker);
     let mut vm = VM::new(global_count as usize, &mut gc);
-    vm.set_native_functions(natives);
+    vm.set_natives_by_name(&natives, &extern_fns);
 
     let res = vm.run(func);
     match res {
@@ -115,7 +119,8 @@ pub fn run_file(file_name: &str, source: &str, debug: bool, mode: &str, force: b
 }
 
 pub fn execute_source(source: &str, debug: bool, mode: &str, force: bool) {
-    run_file("test.steel", source, debug, mode, force);
+    let full_source = format!("{}{}", source, get_prelude());
+    run_file("test.steel", &full_source, debug, mode, force);
 }
 
 /// A compiled Steel program that can be run multiple times. Used in benching
@@ -123,6 +128,7 @@ pub struct SteelProgram {
     func: Gc<Function>,
     gc: GarbageCollector,
     global_count: usize,
+    extern_fns: Vec<(Box<str>, u16)>,
 }
 
 impl SteelProgram {
@@ -141,8 +147,12 @@ impl SteelProgram {
             .check(&ast)
             .expect("SteelProgram: type-check failed");
 
-        let global_count = match &typed_ast.kind {
-            StmtKind::Global { global_count, .. } => *global_count as usize,
+        let (global_count, extern_fns) = match &typed_ast.kind {
+            StmtKind::Global {
+                global_count,
+                extern_fns,
+                ..
+            } => (*global_count as usize, extern_fns.clone()),
             _ => panic!("SteelProgram: expected Global statement"),
         };
 
@@ -154,13 +164,15 @@ impl SteelProgram {
             func,
             gc,
             global_count,
+            extern_fns,
         }
     }
 
     pub fn run_once(&mut self) {
         let func = self.func;
+        let natives = get_natives();
         let mut vm = VM::new(self.global_count, &mut self.gc);
-        vm.set_native_functions(get_natives());
+        vm.set_natives_by_name(&natives, &self.extern_fns);
         vm.run(func).expect("SteelProgram: runtime error");
         drop(vm);
         self.gc.collect_roots(self.func);
