@@ -256,10 +256,10 @@ impl<'src> Parser<'src> {
                     callee: Box::new(expr),
                     generics,
                 };
-            } else if check_token_type!(self, TokT::Dot)
+            } else if check_token_type!(self, TokT::Question)
                 && check_next_token_type!(self, TokT::LeftBracket)
             {
-                self.consume(TokT::Dot, "unreachable")?;
+                self.consume(TokT::Question, "unreachable")?;
                 self.consume(TokT::LeftBracket, "unreachable")?;
 
                 let index = self.expression()?;

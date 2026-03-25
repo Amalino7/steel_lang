@@ -80,12 +80,39 @@ impl<'src> TypeChecker<'src> {
                 .ty
                 .unwrap_optional_safe(*safe, object_typed.span, &mut self.warnings);
 
+        // Map indexing: always returns V? (Optional)
+        if let (Some(key_ty), Some(val_ty)) =
+            (parent_type.map_key().cloned(), parent_type.map_value().cloned())
+        {
+            let index_typed = self.coerce_expression(
+                index,
+                &key_ty,
+                MismatchContext::IndexValue,
+                None,
+            );
+
+            let mut ty = Type::Optional(Box::new(val_ty));
+            if safe {
+                ty = ty.wrap_in_optional();
+            }
+
+            return Ok(TypedExpr {
+                ty,
+                span: expr.span(),
+                kind: ExprKind::MapGet {
+                    object: Box::new(object_typed),
+                    key: Box::new(index_typed),
+                    safe,
+                },
+            });
+        }
+
         let inner = parent_type.list_element().cloned().ok_or_else(|| {
             TypeCheckerError::OperatorConstraint {
                 operator: "[]",
                 operand: Operand::Lhs,
                 found: parent_type.clone(),
-                requirement: TypeRequirement::Structural("List"),
+                requirement: TypeRequirement::Structural("List or Map"),
                 span: object_typed.span,
             }
         })?;
@@ -129,12 +156,37 @@ impl<'src> TypeChecker<'src> {
                 .ty
                 .unwrap_optional_safe(*safe, object_typed.span, &mut self.warnings);
 
+        // Map set-indexing: upsert key -> value
+        if let (Some(key_ty), Some(val_ty)) =
+            (parent_type.map_key().cloned(), parent_type.map_value().cloned())
+        {
+            let index_typed = self.coerce_expression(
+                index,
+                &key_ty,
+                MismatchContext::IndexValue,
+                None,
+            );
+            let value_typed =
+                self.coerce_expression(value, &val_ty, MismatchContext::IndexValue, None);
+
+            return Ok(TypedExpr {
+                ty: val_ty,
+                span: expr.span(),
+                kind: ExprKind::MapSet {
+                    object: Box::new(object_typed),
+                    key: Box::new(index_typed),
+                    value: Box::new(value_typed),
+                    safe,
+                },
+            });
+        }
+
         let inner = parent_type.list_element().cloned().ok_or_else(|| {
             TypeCheckerError::OperatorConstraint {
                 operator: "[]",
                 operand: Operand::Lhs,
                 found: parent_type.clone(),
-                requirement: TypeRequirement::Structural("List"),
+                requirement: TypeRequirement::Structural("List or Map"),
                 span: object_typed.span,
             }
         })?;

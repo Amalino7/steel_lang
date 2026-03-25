@@ -705,6 +705,15 @@ impl<'a> Compiler<'a> {
                 self.emit_op(Opcode::MakeList, line);
                 self.emit_byte(elements.len() as u8, line);
             }
+            ExprKind::Map { pairs } => {
+                // Push pairs in reverse order
+                for (key, val) in pairs.iter().rev() {
+                    self.compile_expr(val);
+                    self.compile_expr(key);
+                }
+                self.emit_op(Opcode::MakeMap, line);
+                self.emit_byte(pairs.len() as u8, line);
+            }
             ExprKind::GetIndex {
                 object,
                 index,
@@ -742,6 +751,41 @@ impl<'a> Compiler<'a> {
                     self.compile_expr(object);
                     self.compile_expr(index);
                     self.emit_op(Opcode::SetIndex, line);
+                }
+            }
+            ExprKind::MapGet { object, key, safe } => {
+                self.compile_expr(object);
+                if *safe {
+                    let jump = self.emit_jump(Opcode::JumpIfNil, line);
+                    self.compile_expr(key);
+                    self.emit_op(Opcode::MapGet, line);
+                    self.patch_jump(jump);
+                } else {
+                    self.compile_expr(key);
+                    self.emit_op(Opcode::MapGet, line);
+                }
+            }
+            ExprKind::MapSet {
+                object,
+                key,
+                value,
+                safe,
+            } => {
+                self.compile_expr(value);
+                if *safe {
+                    self.compile_expr(object);
+                    let jump_nil = self.emit_jump(Opcode::JumpIfNil, line);
+                    self.compile_expr(key);
+                    self.emit_op(Opcode::MapSet, line);
+                    let escape_jump = self.emit_jump(Opcode::Jump, line);
+
+                    self.patch_jump(jump_nil);
+                    self.emit_op(Opcode::Pop, line); // Pop object
+                    self.patch_jump(escape_jump);
+                } else {
+                    self.compile_expr(object);
+                    self.compile_expr(key);
+                    self.emit_op(Opcode::MapSet, line);
                 }
             }
         }

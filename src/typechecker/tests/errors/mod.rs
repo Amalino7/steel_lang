@@ -7,4 +7,5 @@ mod structs;
 mod interfaces;
 mod enums;
 mod generics;
+mod maps;
 mod tuples;

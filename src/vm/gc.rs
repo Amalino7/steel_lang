@@ -1,5 +1,5 @@
 use crate::vm::value::{
-    BoundMethod, Closure, EnumVariant, Function, Instance, InterfaceObj, List, VTable, Value,
+    BoundMethod, Closure, EnumVariant, Function, Instance, InterfaceObj, List, Map, VTable, Value,
 };
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::fmt::{Debug, Display, Formatter};
@@ -32,6 +32,12 @@ pub struct Gc<T: ?Sized + Trace + 'static> {
 impl<T: Trace> PartialEq for Gc<T> {
     fn eq(&self, other: &Self) -> bool {
         self.ptr == other.ptr
+    }
+}
+
+impl<T: Trace> Gc<T> {
+    pub fn address(&self) -> usize {
+        self.ptr.as_ptr() as usize
     }
 }
 
@@ -74,6 +80,12 @@ pub struct GarbageCollector {
     live_bytes_after_gc: usize,
     objects: Vec<NonNull<HeapHeader>>,
     gray_stack: Vec<NonNull<HeapHeader>>,
+}
+
+impl Default for GarbageCollector {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl GarbageCollector {
@@ -177,6 +189,9 @@ impl GarbageCollector {
             }
             Value::List(list) => {
                 self.mark(list);
+            }
+            Value::Map(map) => {
+                self.mark(map);
             }
         }
     }
@@ -301,6 +316,15 @@ impl Trace for List {
     fn trace(&self, gc: &mut GarbageCollector) {
         for e in self.vec.iter() {
             gc.mark_value(*e);
+        }
+    }
+}
+
+impl Trace for Map {
+    fn trace(&self, gc: &mut GarbageCollector) {
+        for (k, v) in self.map.iter() {
+            gc.mark_value(k.0);
+            gc.mark_value(*v);
         }
     }
 }

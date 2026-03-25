@@ -8,3 +8,4 @@ mod enums;
 mod generics;
 mod advanced;
 mod lists;
+mod maps;

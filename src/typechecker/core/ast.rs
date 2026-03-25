@@ -120,6 +120,9 @@ pub enum ExprKind {
     List {
         elements: Vec<TypedExpr>,
     },
+    Map {
+        pairs: Vec<(TypedExpr, TypedExpr)>,
+    },
     GetIndex {
         object: Box<TypedExpr>,
         index: Box<TypedExpr>,
@@ -128,6 +131,17 @@ pub enum ExprKind {
     SetIndex {
         object: Box<TypedExpr>,
         index: Box<TypedExpr>,
+        value: Box<TypedExpr>,
+        safe: bool,
+    },
+    MapGet {
+        object: Box<TypedExpr>,
+        key: Box<TypedExpr>,
+        safe: bool,
+    },
+    MapSet {
+        object: Box<TypedExpr>,
+        key: Box<TypedExpr>,
         value: Box<TypedExpr>,
         safe: bool,
     },

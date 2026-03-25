@@ -37,6 +37,12 @@ pub struct TypeChecker<'src> {
     infer_ctx: InferenceContext,
 }
 
+impl<'src> Default for TypeChecker<'src> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<'src> TypeChecker<'src> {
     // This is used for testing purposes only.
     #[allow(dead_code)]

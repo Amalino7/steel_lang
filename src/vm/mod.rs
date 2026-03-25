@@ -5,7 +5,8 @@ use crate::vm::error::RuntimeError;
 use crate::vm::gc::{GarbageCollector, Gc};
 use crate::vm::stack::Stack;
 use crate::vm::value::{
-    BoundMethod, Closure, EnumVariant, Function, Instance, InterfaceObj, List, VTable, Value,
+    BoundMethod, Closure, EnumVariant, Function, HashableValue, Instance, InterfaceObj, List, Map,
+    VTable, Value,
 };
 
 mod byte_utils;
@@ -394,7 +395,7 @@ impl<'gc> VM<'gc> {
                             for i in 0..arg_count {
                                 args.push(self.stack.get_at(args_start + i));
                             }
-                            match native_fn(&args, &mut self.gc) {
+                            match native_fn(&args, self.gc) {
                                 Ok(result) => {
                                     self.stack.truncate(top - arg_count - 1);
                                     self.stack.push(result);
@@ -536,41 +537,47 @@ impl<'gc> VM<'gc> {
                     }
                 },
                 Opcode::GetIndex => {
-                    let Value::Number(index) = self.stack.pop() else {
-                        unreachable!("GetIndex expected number");
-                    };
-
-                    let list = self.stack.pop();
-                    let Value::List(list) = list else {
+                    let key = self.stack.pop();
+                    let object = self.stack.pop();
+                    let Value::List(list) = object else {
                         unreachable!("GetIndex on non-list");
                     };
-
+                    let Value::Number(index) = key else {
+                        unreachable!("GetIndex on list expected number key");
+                    };
                     match list.vec.get(index as usize) {
                         Some(&v) => {
                             self.stack.push(v);
                         }
                         None => {
-                            let error_msg =
-                                format!("Index {} out of bounds. Len: {}", index, list.vec.len());
+                            let error_msg = format!(
+                                "Index {} out of bounds. Len: {}",
+                                index,
+                                list.vec.len()
+                            );
+                            self.frames.push(current_frame);
                             return Err(self.make_error(error_msg.as_str()));
                         }
                     }
                 }
                 Opcode::SetIndex => unsafe {
-                    let Value::Number(index) = self.stack.pop() else {
-                        unreachable!("SetIndex expected number");
-                    };
-                    let index = index as usize;
-
-                    let list = self.stack.pop();
-                    let Value::List(mut list) = list else {
+                    let key = self.stack.pop();
+                    let object = self.stack.pop();
+                    let value = self.stack.pop();
+                    let Value::List(mut list) = object else {
                         unreachable!("SetIndex on non-list");
                     };
-
-                    let value = self.stack.pop();
+                    let Value::Number(index) = key else {
+                        unreachable!("SetIndex on list expected number key");
+                    };
+                    let index = index as usize;
                     if index >= list.vec.len() {
-                        let error_msg =
-                            format!("Index {} out of bounds. Len: {}", index, list.vec.len());
+                        let error_msg = format!(
+                            "Index {} out of bounds. Len: {}",
+                            index,
+                            list.vec.len()
+                        );
+                        self.frames.push(current_frame);
                         return Err(self.make_error(error_msg.as_str()));
                     }
                     list.deref_mut().vec[index] = value;
@@ -588,6 +595,52 @@ impl<'gc> VM<'gc> {
                     let list = self.alloc_list(List { vec: elements }, &current_frame);
                     self.stack.push(list);
                 }
+                Opcode::MakeMap => {
+                    let count = chunk.instructions[current_frame.ip] as usize;
+                    current_frame.ip += 1;
+
+                    let mut map = std::collections::HashMap::with_capacity(count);
+                    for _ in 0..count {
+                        // key was pushed on top, value beneath it
+                        let key = self.stack.pop();
+                        let val = self.stack.pop();
+                        map.insert(HashableValue(key), val);
+                    }
+
+                    let map_val = self.alloc_map(Map { map }, &current_frame);
+                    self.stack.push(map_val);
+                }
+                Opcode::MapGet => {
+                    let key = self.stack.pop();
+                    let object = self.stack.pop();
+                    let Value::Map(map) = object else {
+                        unreachable!("MapGet on non-map");
+                    };
+                    if let Value::Number(f) = key
+                        && f.is_nan()
+                    {
+                        self.frames.push(current_frame);
+                        return Err(self.make_error("NaN cannot be used as a map key"));
+                    }
+                    let result = map.map.get(&HashableValue(key)).copied();
+                    self.stack.push(result.unwrap_or(Value::Nil));
+                }
+                Opcode::MapSet => unsafe {
+                    let key = self.stack.pop();
+                    let object = self.stack.pop();
+                    let value = self.stack.pop();
+                    let Value::Map(mut map) = object else {
+                        unreachable!("MapSet on non-map");
+                    };
+                    if let Value::Number(f) = key
+                        && f.is_nan()
+                    {
+                        self.frames.push(current_frame);
+                        return Err(self.make_error("NaN cannot be used as a map key"));
+                    }
+                    map.deref_mut().map.insert(HashableValue(key), value);
+                    self.stack.push(value);
+                },
                 Opcode::BindMethod => {
                     let function = self.stack.pop();
                     let receiver = self.stack.pop();
@@ -701,6 +754,16 @@ impl<'gc> VM<'gc> {
             self.gc.collect();
         }
         Value::List(list)
+    }
+
+    fn alloc_map(&mut self, map: Map, current_frame: &CallFrame) -> Value {
+        let map = self.gc.alloc(map);
+        if self.gc.should_collect() {
+            self.gc.mark(map);
+            self.mark_roots(current_frame);
+            self.gc.collect();
+        }
+        Value::Map(map)
     }
 
     fn mark_roots(&mut self, current_frame: &CallFrame) {

@@ -186,6 +186,16 @@ pub fn disassemble_instruction(
             println!("Reserve {}", bytecode[offset])
         }
         Opcode::Dup => println!("Dup"),
+        Opcode::MakeMap => {
+            offset += 1;
+            println!("MakeMap {}", bytecode[offset]);
+        }
+        Opcode::MapGet => {
+            println!("MapGet");
+        }
+        Opcode::MapSet => {
+            println!("MapSet");
+        }
     };
     offset + 1
 }

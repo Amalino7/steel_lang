@@ -25,6 +25,9 @@ pub enum Opcode {
     GetIndex,
     SetIndex,
     MakeList,
+    MakeMap,
+    MapGet,
+    MapSet,
 
     GreaterString,
     LessString,
@@ -76,6 +79,11 @@ pub struct Chunk {
     pub constants: Vec<Value>,
     pub instructions: Vec<Bytecode>,
     pub lines: Vec<usize>,
+}
+impl Default for Chunk {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 impl Chunk {
     pub fn new() -> Self {

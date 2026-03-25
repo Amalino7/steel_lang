@@ -1,5 +1,6 @@
 mod core_natives;
 mod list_natives;
+mod map_natives;
 mod number_natives;
 mod string_natives;
 
@@ -21,6 +22,7 @@ pub fn get_prelude() -> &'static str {
         include_str!("steel/number.steel"),
         include_str!("steel/string.steel"),
         include_str!("steel/list.steel"),
+        include_str!("steel/map.steel"),
         include_str!("steel/result.steel"),
     )
 }
@@ -31,6 +33,7 @@ pub fn get_natives() -> Vec<NativeDef> {
     natives.extend(number_natives::natives());
     natives.extend(string_natives::natives());
     natives.extend(list_natives::natives());
+    natives.extend(map_natives::natives());
     natives
 }
 

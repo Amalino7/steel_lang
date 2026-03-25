@@ -309,6 +309,41 @@ impl<'src> TypeChecker<'src> {
         }
     }
 
+    pub(crate) fn check_map(
+        &mut self,
+        expr: &Expr<'src>,
+        kv_pairs: &[(Expr<'src>, Expr<'src>)],
+        expected: &Type,
+    ) -> TypedExpr {
+        let key_ty = expected
+            .map_key()
+            .cloned()
+            .unwrap_or_else(|| self.infer_ctx.new_type_var());
+        let val_ty = expected
+            .map_value()
+            .cloned()
+            .unwrap_or_else(|| self.infer_ctx.new_type_var());
+
+        let mut typed_pairs = Vec::with_capacity(kv_pairs.len());
+
+        for (key_expr, val_expr) in kv_pairs.iter() {
+            let typed_key =
+                self.coerce_expression(key_expr, &key_ty, MismatchContext::ListElement, None);
+            let typed_val =
+                self.coerce_expression(val_expr, &val_ty, MismatchContext::ListElement, None);
+            typed_pairs.push((typed_key, typed_val));
+        }
+
+        let final_ty = Type::new_map(key_ty, val_ty);
+        let inferred = self.infer_ctx.substitute(&final_ty);
+
+        TypedExpr {
+            ty: inferred,
+            kind: ExprKind::Map { pairs: typed_pairs },
+            span: expr.span(),
+        }
+    }
+
     pub(crate) fn check_list(
         &mut self,
         expr: &Expr<'src>,
@@ -316,6 +351,11 @@ impl<'src> TypeChecker<'src> {
         _bracket_token: &Token<'src>,
         expected: &Type,
     ) -> TypedExpr {
+        // Empty `[]` can be used as an empty map literal when the expected type is Map.
+        if elements.is_empty() && expected.map_key().is_some() {
+            return self.check_map(expr, &[], expected);
+        }
+
         let inner_ty = expected
             .list_element()
             .cloned()
