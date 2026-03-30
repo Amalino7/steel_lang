@@ -30,6 +30,20 @@ fn test_binary_op_type_mismatch_subtract() {
 }
 
 #[test]
+fn test_binary_op_type_mismatch_modulo() {
+    Tester::new(r#"let x = "hello" % 2;"#)
+        .expect_error(|e| matches!(e, TypeCheckerError::InvalidOperandTypes { .. }))
+        .run();
+}
+
+#[test]
+fn test_binary_op_type_mismatch_power() {
+    Tester::new(r#"let x = "hello" ** 2;"#)
+        .expect_error(|e| matches!(e, TypeCheckerError::InvalidOperandTypes { .. }))
+        .run();
+}
+
+#[test]
 fn test_comparison_type_mismatch() {
     Tester::new(r#"let x = 5 > "hello";"#)
         .expect_error(|e| matches!(e, TypeCheckerError::InvalidOperandTypes { .. }))
@@ -71,8 +85,6 @@ fn test_assignment_type_mismatch() {
 
 #[test]
 fn test_void_assignment() {
-    // This test checks if assigning void is allowed
-    // Based on test_assign_void in old tests, this should succeed
     assert_typechecks(
         r#"
         func noReturn(): void {

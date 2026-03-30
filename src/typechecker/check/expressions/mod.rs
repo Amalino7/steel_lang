@@ -237,9 +237,10 @@ impl<'src> TypeChecker<'src> {
                 elements,
                 bracket_token,
             } => self.check_list(expr, elements, bracket_token, expected),
-            Expr::Map { .. } => {
-                todo!()
-            }
+            Expr::Map {
+                kv_pairs,
+                ..
+            } => self.check_map(expr, kv_pairs, expected),
 
             Expr::GetIndex {
                 safe,

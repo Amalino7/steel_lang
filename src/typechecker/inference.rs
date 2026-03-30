@@ -281,19 +281,21 @@ impl InferenceContext {
     }
 
     fn is_trivially_unifiable(expected: &Type, provided: &Type, variance: Variance) -> bool {
+        if matches!(expected, Type::Error | Type::Unknown)
+            || matches!(provided, Type::Error | Type::Unknown)
+        {
+            return true;
+        }
         match variance {
             Variance::Covariant => {
                 matches!(provided, Type::Never)
-                    || matches!(expected, Type::Error | Type::Unknown | Type::Any)
+                    || matches!(expected, Type::Any)
                     || (matches!(expected, Type::Optional(_)) && matches!(provided, Type::Nil))
             }
             Variance::Contravariant => {
                 Self::is_trivially_unifiable(provided, expected, Variance::Covariant)
             }
-            Variance::Invariant => {
-                matches!(expected, Type::Error | Type::Unknown)
-                    || matches!(provided, Type::Error | Type::Unknown)
-            }
+            Variance::Invariant => false,
         }
     }
 

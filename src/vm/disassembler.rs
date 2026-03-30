@@ -51,6 +51,8 @@ pub fn disassemble_instruction(
         Opcode::Add => println!("Add"),
         Opcode::Divide => println!("Divide"),
         Opcode::Multiply => println!("Multiply"),
+        Opcode::Modulo => println!("Modulo"),
+        Opcode::Power => println!("Power"),
         Opcode::Not => println!("Not"),
         Opcode::Concat => println!("Concat"),
         Opcode::Equal => {
@@ -184,6 +186,16 @@ pub fn disassemble_instruction(
             println!("Reserve {}", bytecode[offset])
         }
         Opcode::Dup => println!("Dup"),
+        Opcode::MakeMap => {
+            offset += 1;
+            println!("MakeMap {}", bytecode[offset]);
+        }
+        Opcode::MapGet => {
+            println!("MapGet");
+        }
+        Opcode::MapSet => {
+            println!("MapSet");
+        }
     };
     offset + 1
 }

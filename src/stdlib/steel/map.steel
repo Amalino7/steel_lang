@@ -1,0 +1,5 @@
+impl<Key, Val> Map<Key, Val> {
+    extern func len(self): number;
+    extern func contains_key(self, key: Key): boolean;
+    extern func remove(self, key: Key): Val?;
+}

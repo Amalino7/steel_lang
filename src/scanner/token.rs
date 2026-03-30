@@ -50,11 +50,15 @@ pub enum TokenType {
     LessEqual,
     Arrow, // =>
 
+    Percent,
+    StarStar, // **
+
     // Assignment arithmetic operators.
     PlusEqual,
     MinusEqual,
     StarEqual,
     SlashEqual,
+    PercentEqual,
 
     // Literals.
     Identifier,
@@ -79,6 +83,7 @@ pub enum TokenType {
     Impl,
     Self_,
     Interface,
+    Extern,
 
     Enum,
     Match,
@@ -140,6 +145,7 @@ impl Display for TokenType {
             TokenType::Impl => f.write_str("impl"),
             TokenType::Self_ => f.write_str("self"),
             TokenType::Interface => f.write_str("interface"),
+            TokenType::Extern => f.write_str("extern"),
             TokenType::Question => f.write_str("?"),
             TokenType::QuestionDot => f.write_str("?."),
             TokenType::QuestionQuestion => f.write_str("??"),
@@ -150,6 +156,9 @@ impl Display for TokenType {
             TokenType::Arrow => f.write_str("=>"),
             TokenType::Is => f.write_str("is"),
             TokenType::Try => f.write_str("try"),
+            TokenType::Percent => f.write_str("%"),
+            TokenType::PercentEqual => f.write_str("%="),
+            TokenType::StarStar => f.write_str("**"),
         }
     }
 }

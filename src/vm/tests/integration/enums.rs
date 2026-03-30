@@ -95,12 +95,12 @@ fn test_enum_branch_analysis() {
 fn test_enum_with_methods() {
     assert_runs(
         r#"
-        enum Result { Ok(number), Err(string) }
-        impl Result {
+        enum Outcome { Ok(number), Err(string) }
+        impl Outcome {
             func unwrap(self): number {
                 match self {
-                    Result.Ok(val) => { return val; }
-                    Result.Err(err) => {
+                    Outcome.Ok(val) => { return val; }
+                    Outcome.Err(err) => {
                         panic("");
                         return 0;
                     }
@@ -108,15 +108,15 @@ fn test_enum_with_methods() {
             }
             func unwrap_or(self, default: number): number {
                 match self {
-                    Result.Ok(val) => { return val; }
-                    Result.Err(_) => { return default; }
+                    Outcome.Ok(val) => { return val; }
+                    Outcome.Err(_) => { return default; }
                 }
             }
         }
-        let res = Result.Ok(10);
+        let res = Outcome.Ok(10);
         let sum = res.unwrap() + 15;
         assert(sum, 25);
-        let res2 = Result.Err("Error");
+        let res2 = Outcome.Err("Error");
         assert(res2.unwrap_or(10), 10);
         "#,
     );

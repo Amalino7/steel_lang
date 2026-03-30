@@ -1,7 +1,9 @@
 use crate::vm::bytecode::Chunk;
 use crate::vm::gc::{GarbageCollector, Gc};
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
+use std::hash::{Hash, Hasher};
 use std::ops::{Add, Div, Mul, Neg, Not, Sub};
 
 #[derive(Debug)]
@@ -55,12 +57,113 @@ pub struct List {
     pub vec: Vec<Value>,
 }
 
+#[derive(Debug)]
+pub struct Map {
+    pub map: HashMap<HashableValue, Value>,
+}
+
+/// A wrapper that makes Value usable as a HashMap key.
+/// Hashing rules:
+/// - Number: hash via `f64::to_bits()` (NaN is disallowed)
+/// - String/Boolean/Nil: hash by content
+/// - Heap values (List, Map): identity hash (pointer address)
+#[derive(Debug, Clone)]
+pub struct HashableValue(pub Value);
+
+/// This needs to be different from normal Value Eq since hashmaps rely on stable values.
+impl PartialEq for HashableValue {
+    fn eq(&self, other: &Self) -> bool {
+        match (self.0, other.0) {
+            (Value::Number(l), Value::Number(r)) => l == r,
+            (Value::String(l), Value::String(r)) => l == r || l.as_str() == r.as_str(),
+            (Value::Boolean(l), Value::Boolean(r)) => l == r,
+            (Value::Nil, Value::Nil) => true,
+            (Value::List(l), Value::List(r)) => l == r,
+            (Value::Map(l), Value::Map(r)) => l == r,
+            (Value::Instance(l), Value::Instance(r)) => l == r,
+            (Value::Enum(l), Value::Enum(r)) => l == r,
+            (Value::Closure(l), Value::Closure(r)) => l == r,
+            (Value::Function(l), Value::Function(r)) => l == r,
+            (Value::NativeFunction(l), Value::NativeFunction(r)) => std::ptr::fn_addr_eq(l, r),
+            (Value::BoundMethod(l), Value::BoundMethod(r)) => l == r,
+            (Value::InterfaceObj(l), Value::InterfaceObj(r)) => l == r,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for HashableValue {}
+
+impl Hash for HashableValue {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match &self.0 {
+            Value::Number(f) => {
+                0u8.hash(state);
+                // Normalize 0 since, 0 == -0 but they have different bit representations
+                if *f == 0.0 || *f == -0.0 {
+                    0.hash(state);
+                } else {
+                    f.to_bits().hash(state);
+                }
+            }
+            Value::String(s) => {
+                1u8.hash(state);
+                s.as_str().hash(state);
+            }
+            Value::Boolean(b) => {
+                2u8.hash(state);
+                b.hash(state);
+            }
+            Value::Nil => {
+                3u8.hash(state);
+            }
+            Value::List(gc) => {
+                4u8.hash(state);
+                gc.address().hash(state);
+            }
+            Value::Map(gc) => {
+                5u8.hash(state);
+                gc.address().hash(state);
+            }
+            Value::Instance(gc) => {
+                6u8.hash(state);
+                gc.address().hash(state);
+            }
+            Value::Enum(gc) => {
+                7u8.hash(state);
+                gc.address().hash(state);
+            }
+            Value::Closure(gc) => {
+                8u8.hash(state);
+                gc.address().hash(state);
+            }
+            Value::Function(gc) => {
+                9u8.hash(state);
+                gc.address().hash(state);
+            }
+            Value::NativeFunction(f) => {
+                10u8.hash(state);
+                f.hash(state);
+            }
+            Value::BoundMethod(gc) => {
+                11u8.hash(state);
+                gc.address().hash(state);
+            }
+            Value::InterfaceObj(gc) => {
+                12u8.hash(state);
+                gc.address().hash(state);
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, Copy)]
 pub enum Value {
     Nil,
     Number(f64),
     Boolean(bool),
     List(Gc<List>),
+    Map(Gc<Map>),
     String(Gc<String>),
     Closure(Gc<Closure>),
     Function(Gc<Function>),
@@ -107,6 +210,8 @@ impl PartialEq for Value {
                 }
                 l.vec.len() == r.vec.len() && l.vec.iter().zip(r.vec.iter()).all(|(a, b)| a == b)
             }
+            // Map equality: identity only (pointer equality handled by Gc<T>'s PartialEq)
+            (Value::Map(l), Value::Map(r)) => l == r,
             _ => false,
         }
     }
@@ -136,6 +241,17 @@ impl Display for Value {
                 for (i, val) in list.vec.iter().enumerate() {
                     write!(f, "{}", val)?;
                     if i != list.vec.len() - 1 {
+                        write!(f, ", ")?;
+                    }
+                }
+                write!(f, "]")
+            }
+            Value::Map(map) => {
+                write!(f, "[")?;
+                let mut iter = map.map.iter().peekable();
+                while let Some((k, v)) = iter.next() {
+                    write!(f, "{}: {}", k.0, v)?;
+                    if iter.peek().is_some() {
                         write!(f, ", ")?;
                     }
                 }

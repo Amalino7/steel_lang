@@ -1,0 +1,43 @@
+enum Result<Ok, Err> {
+    Ok(Ok), Err(Err)
+}
+
+impl<Ok, Err> Result<Ok, Err> {
+    func unwrap(self): Ok {
+        match self {
+            .Ok(val) => { return val; }
+            .Err(err) => { return panic(err); }
+        }
+    }
+
+    func map<NewOk>(self, f: func(Ok): NewOk): Result<NewOk, Err> {
+        match self {
+            .Ok(val) => { return Result.Ok(f(val)); }
+            .Err(err) => { return Result.Err(err); }
+        }
+    }
+
+    func map_err<NewErr>(self, f: func(Err): NewErr): Result<Ok, NewErr> {
+        match self {
+            .Ok(val) => { return Result.Ok(val); }
+            .Err(err) => { return Result.Err(f(err)); }
+        }
+    }
+
+    func is_ok(self): boolean {
+        return self is Ok;
+    }
+
+    func is_err(self): boolean {
+        return self is Err;
+    }
+}
+
+impl<T> Result<T, T> {
+    func merge(self): T {
+        match self {
+            .Ok(val) => { return val; }
+            .Err(err) => { return err; }
+        }
+    }
+}

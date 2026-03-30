@@ -1,0 +1,38 @@
+// Struct instantiation + method calls — tests struct allocation and dispatch
+struct Point {
+    x: number,
+    y: number,
+}
+
+impl Point {
+    func new(x: number, y: number): Point {
+        return Point(x: x, y: y);
+    }
+
+    func add(self, other: Point): Point {
+        return Point(x: self.x + other.x, y: self.y + other.y);
+    }
+
+    func dot(self, other: Point): number {
+        return self.x * other.x + self.y * other.y;
+    }
+
+    func length_sq(self): number {
+        return self.x * self.x + self.y * self.y;
+    }
+}
+
+func bench(): number {
+    let p = Point.new(1, 2);
+    let q = Point.new(3, 4);
+    let result = 0;
+    let i = 0;
+    while i < 500 {
+        let r = p.add(q);
+        result = result + r.length_sq();
+        p = r;
+        i = i + 1;
+    }
+    return result;
+}
+bench();

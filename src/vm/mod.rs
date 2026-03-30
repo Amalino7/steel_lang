@@ -5,7 +5,8 @@ use crate::vm::error::RuntimeError;
 use crate::vm::gc::{GarbageCollector, Gc};
 use crate::vm::stack::Stack;
 use crate::vm::value::{
-    BoundMethod, Closure, EnumVariant, Function, Instance, InterfaceObj, List, VTable, Value,
+    BoundMethod, Closure, EnumVariant, Function, HashableValue, Instance, InterfaceObj, List, Map,
+    VTable, Value,
 };
 
 mod byte_utils;
@@ -27,16 +28,16 @@ struct CallFrame {
 
 const STACK_MAX: usize = 256 * 128;
 
-pub struct VM {
+pub struct VM<'gc> {
     vtables: Vec<Gc<VTable>>,
     frames: Vec<CallFrame>,
-    gc: GarbageCollector,
+    gc: &'gc mut GarbageCollector,
     stack: Stack<STACK_MAX>,
     globals: Vec<Value>,
 }
 
-impl VM {
-    pub fn new(global_count: usize, garbage_collector: GarbageCollector) -> Self {
+impl<'gc> VM<'gc> {
+    pub fn new(global_count: usize, garbage_collector: &'gc mut GarbageCollector) -> Self {
         VM {
             frames: Vec::with_capacity(128),
             gc: garbage_collector,
@@ -62,19 +63,24 @@ impl VM {
         }
     }
 
-    pub fn set_native_functions(&mut self, natives: Vec<NativeDef>) {
-        self.globals
-            .resize(natives.len() + self.globals.len(), Value::Nil);
-        for (i, def) in natives.iter().enumerate() {
-            self.globals[i] = Value::NativeFunction(def.func);
+    /// Maps each native to the global slot assigned by the typechecker via extern declarations.
+    pub fn set_natives_by_name(&mut self, natives: &[NativeDef], extern_fns: &[(Box<str>, u16)]) {
+        let name_to_idx: std::collections::HashMap<&str, usize> = extern_fns
+            .iter()
+            .map(|(name, idx)| (name.as_ref(), *idx as usize))
+            .collect();
+        for def in natives {
+            if let Some(&slot) = name_to_idx.get(def.name) {
+                self.globals[slot] = Value::NativeFunction(def.func);
+            }
         }
     }
 
-    pub fn run(&mut self, main_function: Function) -> Result<Value, RuntimeError> {
+    pub fn run(&mut self, main_function: Gc<Function>) -> Result<Value, RuntimeError> {
         self.frames.push(CallFrame {
             slot_offset: 0,
             ip: 0,
-            function: self.gc.alloc(main_function),
+            function: main_function,
         });
 
         let mut current_frame = self.frames.pop().expect("No active frame");
@@ -174,6 +180,30 @@ impl VM {
                     let b = self.stack.pop();
                     let a = self.stack.pop();
                     self.stack.push(a * b);
+                }
+                Opcode::Modulo => {
+                    let b = self.stack.pop();
+                    let a = self.stack.pop();
+                    match (a, b) {
+                        (Value::Number(a), Value::Number(b)) => {
+                            if b == 0.0 {
+                                self.frames.push(current_frame);
+                                return Err(self.make_error("Modulo by zero"));
+                            }
+                            self.stack.push(Value::Number(a % b));
+                        }
+                        _ => unreachable!("Operands must be numbers"),
+                    }
+                }
+                Opcode::Power => {
+                    let b = self.stack.pop();
+                    let a = self.stack.pop();
+                    match (a, b) {
+                        (Value::Number(a), Value::Number(b)) => {
+                            self.stack.push(Value::Number(a.powf(b)));
+                        }
+                        _ => unreachable!("Operands must be numbers"),
+                    }
                 }
                 Opcode::Not => {
                     let val = self.stack.pop();
@@ -365,7 +395,7 @@ impl VM {
                             for i in 0..arg_count {
                                 args.push(self.stack.get_at(args_start + i));
                             }
-                            match native_fn(&args, &mut self.gc) {
+                            match native_fn(&args, self.gc) {
                                 Ok(result) => {
                                     self.stack.truncate(top - arg_count - 1);
                                     self.stack.push(result);
@@ -507,41 +537,47 @@ impl VM {
                     }
                 },
                 Opcode::GetIndex => {
-                    let Value::Number(index) = self.stack.pop() else {
-                        unreachable!("GetIndex expected number");
-                    };
-
-                    let list = self.stack.pop();
-                    let Value::List(list) = list else {
+                    let key = self.stack.pop();
+                    let object = self.stack.pop();
+                    let Value::List(list) = object else {
                         unreachable!("GetIndex on non-list");
                     };
-
+                    let Value::Number(index) = key else {
+                        unreachable!("GetIndex on list expected number key");
+                    };
                     match list.vec.get(index as usize) {
                         Some(&v) => {
                             self.stack.push(v);
                         }
                         None => {
-                            let error_msg =
-                                format!("Index {} out of bounds. Len: {}", index, list.vec.len());
+                            let error_msg = format!(
+                                "Index {} out of bounds. Len: {}",
+                                index,
+                                list.vec.len()
+                            );
+                            self.frames.push(current_frame);
                             return Err(self.make_error(error_msg.as_str()));
                         }
                     }
                 }
                 Opcode::SetIndex => unsafe {
-                    let Value::Number(index) = self.stack.pop() else {
-                        unreachable!("SetIndex expected number");
-                    };
-                    let index = index as usize;
-
-                    let list = self.stack.pop();
-                    let Value::List(mut list) = list else {
+                    let key = self.stack.pop();
+                    let object = self.stack.pop();
+                    let value = self.stack.pop();
+                    let Value::List(mut list) = object else {
                         unreachable!("SetIndex on non-list");
                     };
-
-                    let value = self.stack.pop();
+                    let Value::Number(index) = key else {
+                        unreachable!("SetIndex on list expected number key");
+                    };
+                    let index = index as usize;
                     if index >= list.vec.len() {
-                        let error_msg =
-                            format!("Index {} out of bounds. Len: {}", index, list.vec.len());
+                        let error_msg = format!(
+                            "Index {} out of bounds. Len: {}",
+                            index,
+                            list.vec.len()
+                        );
+                        self.frames.push(current_frame);
                         return Err(self.make_error(error_msg.as_str()));
                     }
                     list.deref_mut().vec[index] = value;
@@ -559,6 +595,52 @@ impl VM {
                     let list = self.alloc_list(List { vec: elements }, &current_frame);
                     self.stack.push(list);
                 }
+                Opcode::MakeMap => {
+                    let count = chunk.instructions[current_frame.ip] as usize;
+                    current_frame.ip += 1;
+
+                    let mut map = std::collections::HashMap::with_capacity(count);
+                    for _ in 0..count {
+                        // key was pushed on top, value beneath it
+                        let key = self.stack.pop();
+                        let val = self.stack.pop();
+                        map.insert(HashableValue(key), val);
+                    }
+
+                    let map_val = self.alloc_map(Map { map }, &current_frame);
+                    self.stack.push(map_val);
+                }
+                Opcode::MapGet => {
+                    let key = self.stack.pop();
+                    let object = self.stack.pop();
+                    let Value::Map(map) = object else {
+                        unreachable!("MapGet on non-map");
+                    };
+                    if let Value::Number(f) = key
+                        && f.is_nan()
+                    {
+                        self.frames.push(current_frame);
+                        return Err(self.make_error("NaN cannot be used as a map key"));
+                    }
+                    let result = map.map.get(&HashableValue(key)).copied();
+                    self.stack.push(result.unwrap_or(Value::Nil));
+                }
+                Opcode::MapSet => unsafe {
+                    let key = self.stack.pop();
+                    let object = self.stack.pop();
+                    let value = self.stack.pop();
+                    let Value::Map(mut map) = object else {
+                        unreachable!("MapSet on non-map");
+                    };
+                    if let Value::Number(f) = key
+                        && f.is_nan()
+                    {
+                        self.frames.push(current_frame);
+                        return Err(self.make_error("NaN cannot be used as a map key"));
+                    }
+                    map.deref_mut().map.insert(HashableValue(key), value);
+                    self.stack.push(value);
+                },
                 Opcode::BindMethod => {
                     let function = self.stack.pop();
                     let receiver = self.stack.pop();
@@ -672,6 +754,16 @@ impl VM {
             self.gc.collect();
         }
         Value::List(list)
+    }
+
+    fn alloc_map(&mut self, map: Map, current_frame: &CallFrame) -> Value {
+        let map = self.gc.alloc(map);
+        if self.gc.should_collect() {
+            self.gc.mark(map);
+            self.mark_roots(current_frame);
+            self.gc.collect();
+        }
+        Value::Map(map)
     }
 
     fn mark_roots(&mut self, current_frame: &CallFrame) {

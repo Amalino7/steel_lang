@@ -1,3 +1,4 @@
+use crate::compiler::analysis::ResolvedVar;
 use crate::parser::ast::Stmt;
 use crate::scanner::Span;
 use crate::stdlib::NativeDef;
@@ -36,6 +37,12 @@ pub struct TypeChecker<'src> {
     infer_ctx: InferenceContext,
 }
 
+impl<'src> Default for TypeChecker<'src> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<'src> TypeChecker<'src> {
     // This is used for testing purposes only.
     #[allow(dead_code)]
@@ -62,7 +69,7 @@ impl<'src> TypeChecker<'src> {
         self.scopes.begin_scope(ScopeKind::Global);
         let mut typed_ast = vec![];
 
-        self.register_globals(self.natives);
+        let native_slots = self.register_globals(self.natives);
 
         // first types like structs and interfaces are declared
         self.declare_global_types(ast);
@@ -79,6 +86,10 @@ impl<'src> TypeChecker<'src> {
         let global_count = self.scopes.global_size();
         let reserved = self.scopes.end_scope() as u16;
 
+        let mut extern_fns = collect_extern_fns(&typed_ast);
+        // Merge in name→slot pairs for vararg natives registered via register_globals.
+        extern_fns.extend(native_slots);
+
         self.check_returns(&typed_ast);
         if !self.errors.is_empty() {
             Err(take(&mut self.errors))
@@ -89,6 +100,7 @@ impl<'src> TypeChecker<'src> {
                         global_count,
                         stmts: typed_ast,
                         reserved,
+                        extern_fns,
                     },
                     span: Span::default(),
                     type_info: Type::Void,
@@ -98,14 +110,21 @@ impl<'src> TypeChecker<'src> {
         }
     }
 
-    fn register_globals(&mut self, natives: &[NativeDef]) {
+    /// Registers only natives that carry an explicit type (e.g. vararg functions).
+    /// Returns name→slot pairs so the VM can bind them by name.
+    fn register_globals(&mut self, natives: &[NativeDef]) -> Vec<(Box<str>, u16)> {
+        let mut slots = vec![];
         for native in natives.iter() {
-            let decl =
-                Declaration::function(native.name.into(), native.type_.clone(), Span::default());
-            self.scopes
-                .declare(decl)
-                .expect("Failed to register global");
+            if let Some(ty) = &native.type_ {
+                let decl =
+                    Declaration::function(native.name.into(), ty.clone(), Span::default());
+                let resolved = self.scopes.declare(decl).expect("Failed to register global");
+                if let ResolvedVar::Global(idx) = resolved {
+                    slots.push((native.name.into(), idx));
+                }
+            }
         }
+        slots
     }
 
     fn res(&self) -> TypeResolver<'_> {
@@ -119,4 +138,29 @@ impl<'src> TypeChecker<'src> {
     pub(crate) fn warn(&mut self, warning: TypeCheckerWarning) {
         self.warnings.push(warning);
     }
+}
+
+fn collect_extern_fns(stmts: &[TypedStmt]) -> Vec<(Box<str>, u16)> {
+    let mut result = vec![];
+    for stmt in stmts {
+        match &stmt.kind {
+            StmtKind::ExternFunction {
+                name,
+                target: ResolvedVar::Global(idx),
+            } => result.push((name.clone(), *idx)),
+            StmtKind::Impl { methods, .. } => {
+                for method in methods.iter() {
+                    if let StmtKind::ExternFunction {
+                        name,
+                        target: ResolvedVar::Global(idx),
+                    } = &method.kind
+                    {
+                        result.push((name.clone(), *idx));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    result
 }

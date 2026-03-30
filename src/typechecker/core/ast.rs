@@ -32,6 +32,8 @@ pub enum BinaryOp {
     Subtract,
     Multiply,
     Divide,
+    Modulo,
+    Power,
 
     LessNumber,
     LessEqualNumber,
@@ -118,6 +120,9 @@ pub enum ExprKind {
     List {
         elements: Vec<TypedExpr>,
     },
+    Map {
+        pairs: Vec<(TypedExpr, TypedExpr)>,
+    },
     GetIndex {
         object: Box<TypedExpr>,
         index: Box<TypedExpr>,
@@ -126,6 +131,17 @@ pub enum ExprKind {
     SetIndex {
         object: Box<TypedExpr>,
         index: Box<TypedExpr>,
+        value: Box<TypedExpr>,
+        safe: bool,
+    },
+    MapGet {
+        object: Box<TypedExpr>,
+        key: Box<TypedExpr>,
+        safe: bool,
+    },
+    MapSet {
+        object: Box<TypedExpr>,
+        key: Box<TypedExpr>,
         value: Box<TypedExpr>,
         safe: bool,
     },
@@ -190,6 +206,7 @@ pub enum StmtKind {
         global_count: u32,
         stmts: Vec<TypedStmt>,
         reserved: u16,
+        extern_fns: Vec<(Box<str>, u16)>,
     },
     Expression(TypedExpr),
     Return(TypedExpr),
@@ -220,6 +237,10 @@ pub enum StmtKind {
         name: Box<str>, // reduces memory usage by 8 bytes
         target: ResolvedVar,
         function_decl: TypedExpr,
+    },
+    ExternFunction {
+        name: Box<str>,
+        target: ResolvedVar,
     },
 }
 #[derive(Debug, Clone)]

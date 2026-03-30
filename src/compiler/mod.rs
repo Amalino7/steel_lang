@@ -6,7 +6,7 @@ use crate::typechecker::core::ast::{
     BinaryOp, ExprKind, LogicalOp, MatchCase, StmtKind, TypedBinding, TypedExpr, TypedStmt, UnaryOp,
 };
 use crate::vm::bytecode::{Chunk, Opcode};
-use crate::vm::gc::GarbageCollector;
+use crate::vm::gc::{GarbageCollector, Gc};
 use crate::vm::value::{Function, Value};
 
 pub struct Compiler<'a> {
@@ -25,7 +25,7 @@ impl<'a> Compiler<'a> {
         &mut self.function.chunk
     }
 
-    pub fn compile(mut self, reserved: u8, typed_ast: &TypedStmt) -> Function {
+    pub fn compile(mut self, reserved: u8, typed_ast: &TypedStmt) -> Gc<Function> {
         if reserved != 0 {
             self.emit_op(Opcode::Reserve, typed_ast.span.line);
             self.emit_byte(reserved, typed_ast.span.line);
@@ -34,7 +34,7 @@ impl<'a> Compiler<'a> {
 
         self.chunk().write_constant(Value::Nil, 0);
         self.emit_op(Opcode::Return, 0);
-        self.function
+        self.gc.alloc(self.function)
     }
     fn compile_stmt(&mut self, stmt: &TypedStmt) {
         match &stmt.kind {
@@ -184,9 +184,9 @@ impl<'a> Compiler<'a> {
                     return;
                 };
 
-                let compiled_fn = func_compiler.compile(*reserved, body);
-                let constant = Value::Function(self.gc.alloc(compiled_fn));
-                self.chunk().write_constant(constant, line as usize);
+                let constant_fn = func_compiler.compile(*reserved, body);
+                self.chunk()
+                    .write_constant(Value::Function(constant_fn), line as usize);
 
                 // Add captures
                 // Reverse captures to make sure they are in the right order
@@ -247,6 +247,7 @@ impl<'a> Compiler<'a> {
             }
             StmtKind::EnumDecl { .. } => {}
             StmtKind::StructDecl { .. } => {}
+            StmtKind::ExternFunction { .. } => {}
         }
     }
 
@@ -366,6 +367,8 @@ impl<'a> Compiler<'a> {
                     BinaryOp::Subtract => self.emit_op(Opcode::Subtract, line),
                     BinaryOp::Multiply => self.emit_op(Opcode::Multiply, line),
                     BinaryOp::Divide => self.emit_op(Opcode::Divide, line),
+                    BinaryOp::Modulo => self.emit_op(Opcode::Modulo, line),
+                    BinaryOp::Power => self.emit_op(Opcode::Power, line),
                     BinaryOp::LessString => self.emit_op(Opcode::LessString, line),
                     BinaryOp::LessNumber => self.emit_op(Opcode::LessNumber, line),
                     BinaryOp::GreaterString => self.emit_op(Opcode::GreaterString, line),
@@ -702,6 +705,15 @@ impl<'a> Compiler<'a> {
                 self.emit_op(Opcode::MakeList, line);
                 self.emit_byte(elements.len() as u8, line);
             }
+            ExprKind::Map { pairs } => {
+                // Push pairs in reverse order
+                for (key, val) in pairs.iter().rev() {
+                    self.compile_expr(val);
+                    self.compile_expr(key);
+                }
+                self.emit_op(Opcode::MakeMap, line);
+                self.emit_byte(pairs.len() as u8, line);
+            }
             ExprKind::GetIndex {
                 object,
                 index,
@@ -739,6 +751,41 @@ impl<'a> Compiler<'a> {
                     self.compile_expr(object);
                     self.compile_expr(index);
                     self.emit_op(Opcode::SetIndex, line);
+                }
+            }
+            ExprKind::MapGet { object, key, safe } => {
+                self.compile_expr(object);
+                if *safe {
+                    let jump = self.emit_jump(Opcode::JumpIfNil, line);
+                    self.compile_expr(key);
+                    self.emit_op(Opcode::MapGet, line);
+                    self.patch_jump(jump);
+                } else {
+                    self.compile_expr(key);
+                    self.emit_op(Opcode::MapGet, line);
+                }
+            }
+            ExprKind::MapSet {
+                object,
+                key,
+                value,
+                safe,
+            } => {
+                self.compile_expr(value);
+                if *safe {
+                    self.compile_expr(object);
+                    let jump_nil = self.emit_jump(Opcode::JumpIfNil, line);
+                    self.compile_expr(key);
+                    self.emit_op(Opcode::MapSet, line);
+                    let escape_jump = self.emit_jump(Opcode::Jump, line);
+
+                    self.patch_jump(jump_nil);
+                    self.emit_op(Opcode::Pop, line); // Pop object
+                    self.patch_jump(escape_jump);
+                } else {
+                    self.compile_expr(object);
+                    self.compile_expr(key);
+                    self.emit_op(Opcode::MapSet, line);
                 }
             }
         }
