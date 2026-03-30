@@ -392,6 +392,10 @@ impl<'src> Parser<'src> {
                     });
                 } else if match_token_type!(self, TokT::Colon) {
                     self.consume(TokT::RightBracket, "Expected ']' after : in map literal.")?;
+                    return Ok(Expr::Map {
+                        kv_pairs: vec![],
+                        bracket_token,
+                    });
                 }
 
                 let first_expr = self.expression()?;
