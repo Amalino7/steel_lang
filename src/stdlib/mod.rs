@@ -18,6 +18,7 @@ pub struct NativeDef {
 /// Returns the full Steel prelude, assembled from `.steel` files at compile time.
 pub fn get_prelude() -> &'static str {
     concat!(
+        "\n",
         include_str!("steel/core.steel"),
         include_str!("steel/number.steel"),
         include_str!("steel/string.steel"),

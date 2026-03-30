@@ -18,11 +18,45 @@ use crate::vm::value::Function;
 use crate::vm::VM;
 use ariadne::{Color, Config, IndexType, Label, Report, ReportKind, Source};
 
-pub fn run_file(file_name: &str, source: &str, debug: bool, mode: &str, force: bool) {
+pub struct PhaseTimings {
+    pub scan_parse: std::time::Duration,
+    pub type_checking: std::time::Duration,
+    pub compilation: std::time::Duration,
+    pub execution: std::time::Duration,
+}
+
+impl PhaseTimings {
+    fn new() -> Self {
+        Self {
+            scan_parse: std::time::Duration::ZERO,
+            type_checking: std::time::Duration::ZERO,
+            compilation: std::time::Duration::ZERO,
+            execution: std::time::Duration::ZERO,
+        }
+    }
+
+    pub fn print(&self) {
+        let total = self.scan_parse + self.type_checking + self.compilation + self.execution;
+        println!("\n=== Phase Timings ===");
+        println!("Scan + Parse:  {:>8.3}ms", self.scan_parse.as_secs_f64() * 1000.0);
+        println!("Type checking: {:>8.3}ms", self.type_checking.as_secs_f64() * 1000.0);
+        println!("Compilation:   {:>8.3}ms", self.compilation.as_secs_f64() * 1000.0);
+        println!("Execution:     {:>8.3}ms", self.execution.as_secs_f64() * 1000.0);
+        println!("---------------------");
+        println!("Total:         {:>8.3}ms", total.as_secs_f64() * 1000.0);
+        println!("=====================");
+    }
+}
+
+pub fn run_file(file_name: &str, source: &str, debug: bool, mode: &str, force: bool, show_timings: bool) {
+    let mut timings = PhaseTimings::new();
+
+    let t = std::time::Instant::now();
     let scanner = Scanner::new(source);
     let mut parser = Parser::new(scanner);
-
     let ast = parser.parse();
+    timings.scan_parse = t.elapsed();
+
     if !force && let Err(errors) = &ast {
         for err in errors {
             let span = err.span();
@@ -50,13 +84,19 @@ pub fn run_file(file_name: &str, source: &str, debug: bool, mode: &str, force: b
             ast.iter().for_each(|e| println!("{}", e));
             println!("=============");
         }
+        if show_timings {
+            timings.print();
+        }
         return;
     }
 
     let natives = get_natives();
     let mut typechecker = TypeChecker::new_with_natives(&natives);
 
+    let t = std::time::Instant::now();
     let analysis = typechecker.check(&ast);
+    timings.type_checking = t.elapsed();
+
     if !force && let Err(errors) = &analysis {
         for err in errors {
             err.create_report(file_name)
@@ -85,12 +125,17 @@ pub fn run_file(file_name: &str, source: &str, debug: bool, mode: &str, force: b
             println!("Typed ast: {typed_ast:#?}");
             println!("====================");
         }
+        if show_timings {
+            timings.print();
+        }
         return;
     }
 
     let mut gc = GarbageCollector::new();
+    let t = std::time::Instant::now();
     let compiler = Compiler::new("main".to_string(), &mut gc);
     let func = compiler.compile(0, &typed_ast);
+    timings.compilation = t.elapsed();
 
     if debug {
         println!("=== Disassembly ===");
@@ -109,18 +154,25 @@ pub fn run_file(file_name: &str, source: &str, debug: bool, mode: &str, force: b
     let mut vm = VM::new(global_count as usize, &mut gc);
     vm.set_natives_by_name(&natives, &extern_fns);
 
+    let t = std::time::Instant::now();
     let res = vm.run(func);
+    timings.execution = t.elapsed();
+
     match res {
         Ok(_) => {}
         Err(err) => {
             println!("{err}");
         }
     }
+
+    if show_timings {
+        timings.print();
+    }
 }
 
 pub fn execute_source(source: &str, debug: bool, mode: &str, force: bool) {
     let full_source = format!("{}{}", source, get_prelude());
-    run_file("test.steel", &full_source, debug, mode, force);
+    run_file("test.steel", &full_source, debug, mode, force, false);
 }
 
 /// A compiled Steel program that can be run multiple times. Used in benching
