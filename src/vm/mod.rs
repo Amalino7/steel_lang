@@ -550,11 +550,8 @@ impl<'gc> VM<'gc> {
                             self.stack.push(v);
                         }
                         None => {
-                            let error_msg = format!(
-                                "Index {} out of bounds. Len: {}",
-                                index,
-                                list.vec.len()
-                            );
+                            let error_msg =
+                                format!("Index {} out of bounds. Len: {}", index, list.vec.len());
                             self.frames.push(current_frame);
                             return Err(self.make_error(error_msg.as_str()));
                         }
@@ -572,11 +569,8 @@ impl<'gc> VM<'gc> {
                     };
                     let index = index as usize;
                     if index >= list.vec.len() {
-                        let error_msg = format!(
-                            "Index {} out of bounds. Len: {}",
-                            index,
-                            list.vec.len()
-                        );
+                        let error_msg =
+                            format!("Index {} out of bounds. Len: {}", index, list.vec.len());
                         self.frames.push(current_frame);
                         return Err(self.make_error(error_msg.as_str()));
                     }

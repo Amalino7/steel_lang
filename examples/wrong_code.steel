@@ -18,6 +18,8 @@ normal(12);
     }
 }
 
+normal == other;
+
 normal = other;
 
 

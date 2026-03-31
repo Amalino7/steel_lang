@@ -1,5 +1,5 @@
 use crate::scanner::Span;
-use ariadne::{Color, Config, IndexType, Label, Report, ReportKind};
+use ariadne::{Color, Config, Label, Report, ReportKind};
 use std::ops::Range;
 
 #[derive(Debug, Clone)]
@@ -29,10 +29,14 @@ pub enum TypeCheckerWarning {
 }
 
 impl TypeCheckerWarning {
-    pub fn create_report<'a>(&self, source_id: &'a str) -> Report<'a, (&'a str, Range<usize>)> {
+    pub fn create_report<'a>(
+        &self,
+        source_id: &'a str,
+        config: Config,
+    ) -> Report<'a, (&'a str, Range<usize>)> {
         let offset = self.span().start;
-        let mut report = Report::build(ReportKind::Warning, source_id, offset)
-            .with_config(Config::default().with_index_type(IndexType::Byte));
+        let mut report =
+            Report::build(ReportKind::Warning, source_id, offset).with_config(config);
 
         match self {
             TypeCheckerWarning::UnusedBinding { name, span } => {
