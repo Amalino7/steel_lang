@@ -1,6 +1,7 @@
 use crate::scanner::Span;
-use ariadne::{Color, Config, IndexType, Label, Report, ReportKind};
+use ariadne::{Color, Config, Label, Report, ReportKind};
 use std::ops::Range;
+
 
 /// Common interface for all type-checker error diagnostics.
 ///
@@ -33,9 +34,10 @@ impl<'a> ReportBuilder<'a> {
         span: Span,
         code: &'static str,
         title: impl Into<String>,
+        config: Config,
     ) -> Self {
         let inner = Report::build(ReportKind::Error, source_id, span.start)
-            .with_config(Config::default().with_index_type(IndexType::Byte))
+            .with_config(config)
             .with_code(code)
             .with_message(title.into());
         Self { source_id, inner }

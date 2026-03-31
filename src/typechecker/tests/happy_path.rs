@@ -1,5 +1,6 @@
 use crate::execute_source;
 use crate::typechecker::tests::helpers::*;
+use crate::Mode;
 
 #[test]
 fn test_basic_types() {
@@ -117,7 +118,7 @@ fn test_variable_shadowing_types() {
         let b = a + 5;
         "#,
         false,
-        "check",
+        Mode::Check,
         true,
     );
 }
@@ -132,7 +133,7 @@ fn test_assign_void() {
         let x = noReturn();
         "#,
         false,
-        "check",
+        Mode::Check,
         true,
     );
 }

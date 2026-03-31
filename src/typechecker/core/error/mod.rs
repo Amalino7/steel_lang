@@ -225,7 +225,11 @@ pub enum CallError {
 }
 
 impl CallError {
-    pub(crate) fn render<'a>(&self, source_id: &'a str) -> Report<'a, (&'a str, Range<usize>)> {
+    pub(crate) fn render<'a>(
+        &self,
+        source_id: &'a str,
+        config: ariadne::Config,
+    ) -> Report<'a, (&'a str, Range<usize>)> {
         match self {
             CallError::TooMany {
                 expected,
@@ -233,7 +237,7 @@ impl CallError {
                 span,
                 callee,
                 callee_origin,
-            } => ReportBuilder::error(source_id, *span, self.code(), "Too many arguments")
+            } => ReportBuilder::error(source_id, *span, self.code(), "Too many arguments", config)
                 .primary(
                     *span,
                     format!(
@@ -249,6 +253,7 @@ impl CallError {
                 *span,
                 self.code(),
                 format!("Duplicate argument name '{}'", name),
+                config,
             )
             .primary(
                 *span,
@@ -256,7 +261,7 @@ impl CallError {
             )
             .finish(),
             CallError::PositionalAfterNamed { message, span } => {
-                ReportBuilder::error(source_id, *span, self.code(), "Invalid argument order")
+                ReportBuilder::error(source_id, *span, self.code(), "Invalid argument order", config)
                     .primary(*span, *message)
                     .finish()
             }

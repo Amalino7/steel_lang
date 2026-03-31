@@ -9,4 +9,5 @@ impl number : Complex
 {
     func print(self) { print(self);}
     func add(self, other: number) { return self + other;}
+    func sub(self, none:number) { return self - none;}
 }

@@ -1,5 +1,6 @@
 use crate::compiler::Compiler;
 use crate::execute_source;
+use crate::Mode;
 use crate::parser::Parser;
 use crate::scanner::Scanner;
 use crate::typechecker::core::ast::StmtKind;
@@ -10,7 +11,7 @@ use crate::vm::VM;
 
 /// Execute source and verify it runs successfully
 pub fn assert_runs(source: &str) {
-    execute_source(source, false, "run", true);
+    execute_source(source, false, Mode::Run, true);
 }
 
 /// Execute source and verify a global variable has expected value

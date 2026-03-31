@@ -4,17 +4,21 @@ use crate::typechecker::core::error::{
     CallParamError, CallParamKind, DuplicateDefinition, GenericError, InvalidOperandTypes,
     Operand, TypeCheckerError, TypeRequirement,
 };
-use ariadne::Report;
+use ariadne::{Config, Report};
 use std::ops::Range;
 
 impl TypeCheckerError {
-    pub fn create_report<'a>(&self, source_id: &'a str) -> Report<'a, (&'a str, Range<usize>)> {
+    pub fn create_report<'a>(
+        &self,
+        source_id: &'a str,
+        config: Config,
+    ) -> Report<'a, (&'a str, Range<usize>)> {
         match self {
-            TypeCheckerError::Duplicate(d) => d.render(source_id),
-            TypeCheckerError::CallParam(c) => c.render(source_id),
-            TypeCheckerError::Call(c) => c.render(source_id),
-            TypeCheckerError::Generic(g) => g.render(source_id),
-            TypeCheckerError::Binding(b) => b.render(source_id),
+            TypeCheckerError::Duplicate(d) => d.render(source_id, config),
+            TypeCheckerError::CallParam(c) => c.render(source_id, config),
+            TypeCheckerError::Call(c) => c.render(source_id, config),
+            TypeCheckerError::Generic(g) => g.render(source_id, config),
+            TypeCheckerError::Binding(b) => b.render(source_id, config),
             TypeCheckerError::TypeMismatch {
                 mismatch,
                 context,
@@ -34,6 +38,7 @@ impl TypeCheckerError {
                     *primary_span,
                     self.code(),
                     context_short_message(context),
+                    config,
                 )
                 .primary(*primary_span, primary_msg);
                 if let Some(origin) = defined_at {
@@ -69,6 +74,7 @@ impl TypeCheckerError {
                         "Operator '{}' cannot be applied to type '{}'",
                         operator, found
                     ),
+                    config,
                 )
                 .primary(
                     *span,
@@ -89,6 +95,7 @@ impl TypeCheckerError {
                 *span,
                 self.code(),
                 format!("Function '{}' is missing a return statement", fn_name),
+                config,
             )
             .primary(*span, "Implicitly returns () here")
             .origin(*fn_span, format!("'{}' declared here", fn_name))
@@ -105,6 +112,7 @@ impl TypeCheckerError {
                 *span,
                 self.code(),
                 format!("Methods needed to implement '{}' are missing", interface),
+                config,
             )
             .primary(
                 *span,
@@ -131,6 +139,7 @@ impl TypeCheckerError {
                         "Method '{}' does not satisfy interface '{}'",
                         method_name, interface
                     ),
+                    config,
                 )
                 .primary(
                     *span,
@@ -163,6 +172,7 @@ impl TypeCheckerError {
                 *span,
                 self.code(),
                 format!("Undefined field '{}'", field_name),
+                config,
             )
             .primary(
                 *span,
@@ -183,6 +193,7 @@ impl TypeCheckerError {
                 inner.span,
                 self.code(),
                 format!("Undefined method '{}'", inner.method_name),
+                config,
             )
             .primary(
                 inner.span,
@@ -204,6 +215,7 @@ impl TypeCheckerError {
                 *span,
                 self.code(),
                 format!("Undefined variable '{}'", name),
+                config,
             )
             .primary(
                 *span,
@@ -225,6 +237,7 @@ impl TypeCheckerError {
                     *span,
                     self.code(),
                     format!("Invalid operand types for '{}'", operator),
+                    config,
                 )
                 .primary(
                     *span,
@@ -238,7 +251,7 @@ impl TypeCheckerError {
             }
 
             // Generic fallback
-            err => ReportBuilder::error(source_id, err.span(), err.code(), err.title())
+            err => ReportBuilder::error(source_id, err.span(), err.code(), err.title(), config)
                 .primary(err.span(), err.message())
                 .finish(),
         }
@@ -246,12 +259,17 @@ impl TypeCheckerError {
 }
 
 impl DuplicateDefinition {
-    pub(crate) fn render<'a>(&self, source_id: &'a str) -> Report<'a, (&'a str, Range<usize>)> {
+    pub(crate) fn render<'a>(
+        &self,
+        source_id: &'a str,
+        config: Config,
+    ) -> Report<'a, (&'a str, Range<usize>)> {
         ReportBuilder::error(
             source_id,
             self.span,
             self.code(),
             self.kind.report_message(&self.name),
+            config,
         )
         .origin(self.original, self.kind.origin_label(&self.name))
         .primary(self.span, self.kind.primary_label(&self.name))
@@ -260,12 +278,16 @@ impl DuplicateDefinition {
 }
 
 impl CallParamError {
-    pub(crate) fn render<'a>(&self, source_id: &'a str) -> Report<'a, (&'a str, Range<usize>)> {
+    pub(crate) fn render<'a>(
+        &self,
+        source_id: &'a str,
+        config: Config,
+    ) -> Report<'a, (&'a str, Range<usize>)> {
         let primary_msg = match self.kind {
             CallParamKind::Missing => format!("Missing required argument '{}'", self.param_name),
             CallParamKind::Undefined => format!("Parameter '{}' does not exist", self.param_name),
         };
-        ReportBuilder::error(source_id, self.span, self.code(), self.title())
+        ReportBuilder::error(source_id, self.span, self.code(), self.title(), config)
             .primary(self.span, primary_msg)
             .optional_origin(self.callee_origin, "Callee declared here")
             .finish()
@@ -273,7 +295,11 @@ impl CallParamError {
 }
 
 impl BindingError {
-    pub(crate) fn render<'a>(&self, source_id: &'a str) -> Report<'a, (&'a str, Range<usize>)> {
+    pub(crate) fn render<'a>(
+        &self,
+        source_id: &'a str,
+        config: Config,
+    ) -> Report<'a, (&'a str, Range<usize>)> {
         match self {
             BindingError::Redeclaration {
                 name,
@@ -287,6 +313,7 @@ impl BindingError {
                     *span,
                     self.code(),
                     format!("Redeclaration of {} '{}'", kind_str, name),
+                    config,
                 )
                 .primary(*span, format!("Cannot redeclare {} '{}'", kind_str, name))
                 .secondary(
@@ -307,6 +334,7 @@ impl BindingError {
                     *span,
                     self.code(),
                     format!("Cannot assign to {} '{}'", kind_str, name),
+                    config,
                 )
                 .primary(
                     *span,
@@ -327,6 +355,7 @@ impl BindingError {
                 *span,
                 self.code(),
                 format!("Cannot assign to captured variable '{}'", name),
+                config,
             )
             .origin(*capture_origin, "Captured happens here.")
             .primary(*span, "Assignment happens here.")
@@ -336,7 +365,11 @@ impl BindingError {
 }
 
 impl GenericError {
-    pub(crate) fn render<'a>(&self, source_id: &'a str) -> Report<'a, (&'a str, Range<usize>)> {
+    pub(crate) fn render<'a>(
+        &self,
+        source_id: &'a str,
+        config: Config,
+    ) -> Report<'a, (&'a str, Range<usize>)> {
         match self {
             GenericError::CannotInfer {
                 span,
@@ -350,7 +383,7 @@ impl GenericError {
                         uninferred_generics.join(", ")
                     )
                 };
-                ReportBuilder::error(source_id, *span, self.code(), "Cannot infer type")
+                ReportBuilder::error(source_id, *span, self.code(), "Cannot infer type", config)
                     .primary(*span, label_msg)
                     .help(
                         "Add a type annotation or specify generics explicitly using .<Type> syntax",
@@ -367,6 +400,7 @@ impl GenericError {
                 *span,
                 self.code(),
                 format!("Generic count mismatch for '{}'", type_name),
+                config,
             )
             .primary(
                 *span,
@@ -381,6 +415,7 @@ impl GenericError {
                 *span,
                 self.code(),
                 "Invalid generic specification",
+                config,
             )
             .primary(*span, message.as_str())
             .finish(),

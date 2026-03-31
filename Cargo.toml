@@ -11,6 +11,8 @@ stress_gc = []
 
 [dependencies]
 ariadne = "0.4.1"
+clap = { version = "4", features = ["derive"] }
+notify = "6"
 
 [dev-dependencies]
 criterion = { version = "0.8.2", features = ["html_reports"] }
