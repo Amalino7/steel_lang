@@ -55,6 +55,7 @@ pub fn disassemble_instruction(
         Opcode::Power => println!("Power"),
         Opcode::Not => println!("Not"),
         Opcode::Concat => println!("Concat"),
+        Opcode::ToString => println!("ToString"),
         Opcode::Equal => {
             println!("Equal")
         }

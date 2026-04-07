@@ -1,6 +1,7 @@
 use crate::parser::ast::Expr::Tuple;
-use crate::parser::ast::{CallArg, Expr, Literal};
+use crate::parser::ast::{CallArg, Expr, Literal, StringPart};
 use crate::parser::error::ParserError;
+use crate::parser::literals::{parse_number, process_escapes, process_raw_string};
 use crate::parser::TokT;
 use crate::parser::{check_next_token_type, check_token_type};
 use crate::parser::{match_token_type, Parser};
@@ -368,15 +369,23 @@ impl<'src> Parser<'src> {
             TokT::Nil => self.literal(Literal::Nil),
             TokT::False => self.literal(Literal::Boolean(false)),
             TokT::Number => {
-                if let Ok(num) = self.previous_token.lexeme.parse() {
+                if let Some(num) = parse_number(self.previous_token.lexeme) {
                     self.literal(Literal::Number(num))
                 } else {
-                    Err(self.error_current("Expected number."))
+                    Err(self.error_current("Invalid number literal."))
                 }
             }
-            TokT::String => self.literal(Literal::String(String::from(
-                &self.previous_token.lexeme[1..self.previous_token.lexeme.len() - 1],
-            ))), // TODO Add string parsing
+            TokT::String => {
+                // Strip surrounding quotes.
+                let inner = &self.previous_token.lexeme[1..self.previous_token.lexeme.len() - 1];
+                let processed = process_escapes(inner).map_err(|msg| self.error_previous(msg))?;
+                self.literal(Literal::String(processed))
+            }
+            TokT::PartialString => self.parse_string_interp(),
+            TokT::RawString => {
+                let content = process_raw_string(self.previous_token.lexeme);
+                self.literal(Literal::String(content))
+            }
             TokT::Identifier => Ok(Expr::Variable {
                 name: self.previous_token.clone(),
             }),
@@ -468,5 +477,49 @@ impl<'src> Parser<'src> {
             literal,
             span: self.previous_token.span,
         })
+    }
+
+    /// Parses a `PartialString` token (already consumed) through to the
+    /// matching `String` terminator, collecting literal parts and `${expr}` segments.
+    fn parse_string_interp(&mut self) -> Result<Expr<'src>, ParserError<'src>> {
+        let start_span = self.previous_token.span;
+
+        // PartialString lexeme: `"<content>` (opening quote, then raw content up to `${`).
+        let first_raw = &self.previous_token.lexeme[1..]; // strip opening "
+        let first_text = process_escapes(first_raw).map_err(|msg| self.error_previous(msg))?;
+
+        let mut parts: Vec<StringPart<'src>> = Vec::new();
+        if !first_text.is_empty() {
+            parts.push(StringPart::Literal(first_text));
+        }
+
+        loop {
+            // Parse the interpolated expression.
+            let expr = self.expression()?;
+            parts.push(StringPart::Expr(Box::new(expr)));
+
+            if match_token_type!(self, TokT::String) {
+                // String lexeme: `<content>"`.
+                let end_raw = self.previous_token.lexeme;
+                let end_raw = &end_raw[..end_raw.len() - 1]; // strip closing "
+                let end_text = process_escapes(end_raw).map_err(|msg| self.error_previous(msg))?;
+                if !end_text.is_empty() {
+                    parts.push(StringPart::Literal(end_text));
+                }
+                let span = start_span.merge(self.previous_token.span);
+                return Ok(Expr::StringInterp { parts, span });
+            } else if match_token_type!(self, TokT::PartialString) {
+                let mid_text = process_escapes(self.previous_token.lexeme)
+                    .map_err(|msg| self.error_previous(msg))?;
+                if !mid_text.is_empty() {
+                    parts.push(StringPart::Literal(mid_text));
+                }
+                // Continue to parse the next interpolated expression.
+            } else {
+                return Err(
+                    self.error_current("Expected string interpolation to continue or close.")
+                );
+            }
+        }
     }
 }

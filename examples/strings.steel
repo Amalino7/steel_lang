@@ -1,0 +1,13 @@
+let a = """
+    When you're ready,
+    Tell me what to do.
+    I'm listening.
+    """;
+println(a);
+
+let unicode = "\u{1F600}"; // 😀
+println(unicode);
+
+struct Point { x: number, y: number}
+let p = Point(x: 0, y: 0);
+println("Point{x: ${p.x}, y: ${p.y}}");

@@ -11,6 +11,13 @@ pub struct Scanner<'src> {
     start: usize,
     current: usize,
     line: u32,
+    context_stack: Vec<InterpolationFrame>,
+}
+
+struct InterpolationFrame {
+    /// Tracks `{` depth inside a `${...}` expression so that `}` inside
+    /// nested blocks does not close the interpolation.
+    brace_depth: usize,
 }
 
 impl<'src> Scanner<'src> {
@@ -21,6 +28,7 @@ impl<'src> Scanner<'src> {
             start: 0,
             current: 0,
             line: 1,
+            context_stack: Vec::new(),
         }
     }
     pub fn next_token(&mut self) -> Token<'src> {
@@ -39,8 +47,27 @@ impl<'src> Scanner<'src> {
         match char {
             '(' => self.make_token(TokenType::LeftParen),
             ')' => self.make_token(TokenType::RightParen),
-            '{' => self.make_token(TokenType::LeftBrace),
-            '}' => self.make_token(TokenType::RightBrace),
+            '{' => {
+                if let Some(frame) = self.context_stack.last_mut() {
+                    frame.brace_depth += 1;
+                }
+                self.make_token(TokenType::LeftBrace)
+            }
+            '}' => {
+                if let Some(frame) = self.context_stack.last_mut() {
+                    if frame.brace_depth == 0 {
+                        self.context_stack.pop();
+                        // Exclude the `}` from the continuation lexeme.
+                        self.start = self.current;
+                        self.string()
+                    } else {
+                        frame.brace_depth -= 1;
+                        self.make_token(TokenType::RightBrace)
+                    }
+                } else {
+                    self.make_token(TokenType::RightBrace)
+                }
+            }
             '[' => self.make_token(TokenType::LeftBracket),
             ']' => self.make_token(TokenType::RightBracket),
             ',' => self.make_token(TokenType::Comma),
@@ -89,8 +116,17 @@ impl<'src> Scanner<'src> {
                 }
             }
 
-            '"' => self.string(),
-            '0'..='9' => self.number(),
+            '"' => {
+                // Three consecutive `"` for a raw string.
+                if self.peek_char() == '"' && self.peek_next_char() == '"' {
+                    self.advance(); // second "
+                    self.advance(); // third "
+                    self.raw_string()
+                } else {
+                    self.string()
+                }
+            }
+            c @ '0'..='9' => self.number(c),
             c if is_valid_identifier(c) => self.identifier(),
             _ => self.make_token(TokenType::UnexpectedSymbolError),
         }
@@ -175,36 +211,118 @@ impl<'src> Scanner<'src> {
         }
     }
 
+    /// Scans a regular (non-raw) string starting just after the opening `"`.
+    /// Returns `String` when it is the final piece, or `PartialString`
+    /// when `${` is encountered (leaving `current` past `${`).
     fn string(&mut self) -> Token<'src> {
-        while self.peek_char() != '"' && !self.is_at_end() {
-            if self.peek_char() == '\n' {
-                self.line += 1
-            } else if self.peek_char() == '\\' {
-                self.advance();
+        loop {
+            if self.is_at_end() {
+                return self.error("Unterminated string.");
             }
-            self.advance();
-        }
-        if self.is_at_end() {
-            return self.error("Unterminated string.");
-        }
-        self.advance();
-        self.make_token(TokenType::String)
-    }
-
-    fn number(&mut self) -> Token<'src> {
-        let mut is_float = false;
-        while self.peek_char().is_ascii_digit() || self.peek_char() == '.' {
-            if self.peek_char() == '.' {
-                if is_float {
-                    return self.make_token(TokenType::Number);
-                } else if self.peek_next_char().is_ascii_digit() {
-                    is_float = true;
-                } else {
-                    return self.make_token(TokenType::Number);
+            let c = self.peek_char();
+            match c {
+                '"' => {
+                    self.advance();
+                    return self.make_token(TokenType::String);
+                }
+                '\\' => {
+                    self.advance();
+                    self.advance(); // escaped character - skip without interpretation
+                }
+                '$' if self.peek_next_char() == '{' => {
+                    // Emit the content up to (not including) `${`.
+                    let token = self.make_token(TokenType::PartialString);
+                    self.advance(); // $
+                    self.advance(); // {
+                    self.context_stack
+                        .push(InterpolationFrame { brace_depth: 0 });
+                    return token;
+                }
+                '\n' => {
+                    self.advance();
+                    self.line += 1;
+                }
+                _ => {
+                    self.advance();
                 }
             }
+        }
+    }
+
+    /// Scans a raw string `"""..."""`.  No escape processing, no interpolation.
+    fn raw_string(&mut self) -> Token<'src> {
+        loop {
+            if self.is_at_end() {
+                return self.error("Unterminated raw string.");
+            }
+            let c = self.advance();
+            if c == '\n' {
+                self.line += 1;
+            } else if c == '"' {
+                let c2 = self.peek_char();
+                let c3 = self.peek_next_char();
+                if c2 == '"' && c3 == '"' {
+                    self.advance();
+                    self.advance();
+                    return self.make_token(TokenType::RawString);
+                }
+            }
+        }
+    }
+
+    fn number(&mut self, first: char) -> Token<'src> {
+        // Base prefixes
+        if first == '0' {
+            match self.peek_char() {
+                'b' | 'B' => {
+                    self.advance();
+                    while matches!(self.peek_char(), '0' | '1' | '_') {
+                        self.advance();
+                    }
+                    return self.make_token(TokenType::Number);
+                }
+                'o' | 'O' => {
+                    self.advance();
+                    while matches!(self.peek_char(), '0'..='7' | '_') {
+                        self.advance();
+                    }
+                    return self.make_token(TokenType::Number);
+                }
+                'x' | 'X' => {
+                    self.advance();
+                    while self.peek_char().is_ascii_hexdigit() || self.peek_char() == '_' {
+                        self.advance();
+                    }
+                    return self.make_token(TokenType::Number);
+                }
+                _ => {}
+            }
+        }
+
+        // Decimal part
+        while is_valid_digit(self.peek_char()) {
             self.advance();
         }
+
+        // Fractional part
+        if self.peek_char() == '.' && self.peek_next_char().is_ascii_digit() {
+            self.advance(); // consume '.'
+            while is_valid_digit(self.peek_char()) {
+                self.advance();
+            }
+        }
+
+        // Exponent part: `e` or `E`, optional sign, digits.
+        if matches!(self.peek_char(), 'e' | 'E') {
+            self.advance();
+            if matches!(self.peek_char(), '+' | '-') {
+                self.advance();
+            }
+            while is_valid_digit(self.peek_char()) {
+                self.advance();
+            }
+        }
+
         self.make_token(TokenType::Number)
     }
 
@@ -223,6 +341,10 @@ impl<'src> Scanner<'src> {
 
 fn is_valid_identifier(identifier_char: char) -> bool {
     identifier_char.is_alphabetic() || identifier_char == '_'
+}
+
+fn is_valid_digit(digit_char: char) -> bool {
+    digit_char.is_ascii_digit() || digit_char == '_'
 }
 
 fn keywords() -> HashMap<&'static str, TokenType> {

@@ -16,6 +16,7 @@ pub enum Opcode {
     Power,
     Not,
     Concat,
+    ToString,
 
     EqualString,
     EqualNumber,

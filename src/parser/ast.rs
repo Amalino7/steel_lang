@@ -2,6 +2,12 @@ use crate::scanner::{Span, Token};
 use std::fmt;
 use std::fmt::{Debug, Display, Formatter};
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum StringPart<'src> {
+    Literal(String),
+    Expr(Box<Expr<'src>>),
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum Literal {
     Number(f64),
@@ -107,6 +113,10 @@ pub enum Expr<'src> {
     ForceUnwrap {
         expression: Box<Expr<'src>>,
         operator: Token<'src>,
+    },
+    StringInterp {
+        parts: Vec<StringPart<'src>>,
+        span: Span,
     },
 }
 #[derive(Clone, Debug, PartialEq)]
@@ -384,6 +394,16 @@ impl Display for Expr<'_> {
                 value,
                 ..
             } => write!(f, "{}[{}] = {}", object, index, value),
+            Expr::StringInterp { parts, .. } => {
+                write!(f, "\"")?;
+                for part in parts {
+                    match part {
+                        StringPart::Literal(s) => write!(f, "{}", s)?,
+                        StringPart::Expr(e) => write!(f, "${{{}}}", e)?,
+                    }
+                }
+                write!(f, "\"")
+            }
         }
     }
 }
@@ -492,7 +512,9 @@ impl Display for Stmt<'_> {
                     body
                 )
             }
-            Stmt::ExternFunction { name, signature, .. } => {
+            Stmt::ExternFunction {
+                name, signature, ..
+            } => {
                 write!(
                     f,
                     "extern func {}({});",
@@ -659,6 +681,7 @@ impl Expr<'_> {
             Expr::GetIndex { object, index, .. } => object.span().merge(index.span()),
             Expr::SetIndex { object, value, .. } => object.span().merge(value.span()),
             Expr::ForceUnwrap { operator, .. } => operator.span,
+            Expr::StringInterp { span, .. } => *span,
         }
     }
 }
@@ -685,9 +708,9 @@ impl Stmt<'_> {
             }
             Stmt::While { condition, body } => condition.span().merge(body.span()),
             Stmt::Function { name, body, .. } => name.span.merge(body.span()),
-            Stmt::ExternFunction { name, signature, .. } => {
-                name.span.merge(signature.return_type.span())
-            }
+            Stmt::ExternFunction {
+                name, signature, ..
+            } => name.span.merge(signature.return_type.span()),
             Stmt::Struct { name, fields, .. } => fields
                 .last()
                 .map(|(field, _)| name.span.merge(field.span))

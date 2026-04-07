@@ -159,6 +159,12 @@ impl<'gc> VM<'gc> {
                         _ => unreachable!("Can only concatenate strings"),
                     }
                 }
+                Opcode::ToString => {
+                    let val = self.stack.pop();
+                    let s = val.to_string();
+                    let result = self.alloc_string(s, &current_frame);
+                    self.stack.push(result);
+                }
                 Opcode::Divide => {
                     let b = self.stack.pop();
                     let a = self.stack.pop();

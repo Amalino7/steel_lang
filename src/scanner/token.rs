@@ -62,7 +62,9 @@ pub enum TokenType {
 
     // Literals.
     Identifier,
-    String,
+    String,        // Last part of a string or a full string.
+    PartialString, // String followed by ${...}
+    RawString,     // """..."""
     Number,
 
     // Keywords.
@@ -123,6 +125,8 @@ impl Display for TokenType {
             TokenType::LessEqual => f.write_str("<="),
             TokenType::Identifier => f.write_str("binding"),
             TokenType::String => f.write_str("string"),
+            TokenType::PartialString => f.write_str("partial string"),
+            TokenType::RawString => f.write_str("raw string"),
             TokenType::Number => f.write_str("number"),
             TokenType::And => f.write_str("and"),
             TokenType::Or => f.write_str("or"),
