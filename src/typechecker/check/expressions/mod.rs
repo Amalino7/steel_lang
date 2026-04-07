@@ -6,10 +6,10 @@ pub(crate) mod static_access;
 
 use crate::compiler::analysis::ResolvedVar;
 use crate::compiler::analysis::ResolvedVar::Global;
-use crate::parser::ast::{Expr, Literal};
+use crate::parser::ast::{Expr, Literal, StringPart};
 use crate::scanner::Span;
 use crate::scanner::TokenType;
-use crate::typechecker::core::ast::{ExprKind, TypedExpr};
+use crate::typechecker::core::ast::{ExprKind, TypedExpr, TypedStringPart};
 use crate::typechecker::core::error::{
     BindingError, GenericError, Mismatch, MismatchContext, Recoverable, TypeCheckerError,
 };
@@ -87,6 +87,23 @@ impl<'src> TypeChecker<'src> {
             }
 
             Expr::Grouping { expression } => self.check_expression(expression, expected),
+
+            Expr::StringInterp { parts, span } => {
+                let typed_parts = parts
+                    .iter()
+                    .map(|part| match part {
+                        StringPart::Literal(s) => TypedStringPart::Literal(s.clone()),
+                        StringPart::Expr(e) => TypedStringPart::Expr(Box::new(
+                            self.check_expression(e, &Type::Unknown),
+                        )),
+                    })
+                    .collect();
+                TypedExpr {
+                    ty: Type::String,
+                    kind: ExprKind::StringInterpolation { parts: typed_parts },
+                    span: *span,
+                }
+            }
 
             Expr::Literal { literal, span } => {
                 let ty = match literal {
@@ -237,10 +254,7 @@ impl<'src> TypeChecker<'src> {
                 elements,
                 bracket_token,
             } => self.check_list(expr, elements, bracket_token, expected),
-            Expr::Map {
-                kv_pairs,
-                ..
-            } => self.check_map(expr, kv_pairs, expected),
+            Expr::Map { kv_pairs, .. } => self.check_map(expr, kv_pairs, expected),
 
             Expr::GetIndex {
                 safe,
@@ -335,12 +349,7 @@ impl<'src> TypeChecker<'src> {
             }
             Err(unif_err) => {
                 self.report(TypeCheckerError::TypeMismatch {
-                    mismatch: Mismatch::enriched(
-                        expected,
-                        &provided_ty,
-                        unif_err,
-                        &self.infer_ctx,
-                    ),
+                    mismatch: Mismatch::enriched(expected, &provided_ty, unif_err, &self.infer_ctx),
                     context,
                     primary_span: span,
                     defined_at,

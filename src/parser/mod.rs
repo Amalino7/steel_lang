@@ -1,6 +1,7 @@
 pub mod ast;
 pub mod error;
 mod expressions;
+mod literals;
 mod statements;
 
 use crate::parser::error::ParserError;

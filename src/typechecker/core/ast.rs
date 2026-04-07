@@ -123,6 +123,9 @@ pub enum ExprKind {
     Map {
         pairs: Vec<(TypedExpr, TypedExpr)>,
     },
+    StringInterpolation {
+        parts: Vec<TypedStringPart>,
+    },
     GetIndex {
         object: Box<TypedExpr>,
         index: Box<TypedExpr>,
@@ -156,6 +159,12 @@ pub enum ExprKind {
         body: Box<TypedStmt>,
         captures: Box<[ResolvedVar]>,
     },
+}
+
+#[derive(Debug)]
+pub enum TypedStringPart {
+    Literal(String),
+    Expr(Box<TypedExpr>),
 }
 
 impl TypedStmt {

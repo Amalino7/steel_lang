@@ -3,7 +3,8 @@ pub mod analysis;
 use crate::compiler::analysis::ResolvedVar;
 use crate::parser::ast::Literal;
 use crate::typechecker::core::ast::{
-    BinaryOp, ExprKind, LogicalOp, MatchCase, StmtKind, TypedBinding, TypedExpr, TypedStmt, UnaryOp,
+    BinaryOp, ExprKind, LogicalOp, MatchCase, StmtKind, TypedBinding, TypedExpr, TypedStmt,
+    TypedStringPart, UnaryOp,
 };
 use crate::vm::bytecode::{Chunk, Opcode};
 use crate::vm::gc::{GarbageCollector, Gc};
@@ -422,6 +423,19 @@ impl<'a> Compiler<'a> {
                 }
                 Literal::Nil => self.emit_op(Opcode::Nil, line),
             },
+            ExprKind::StringInterpolation { parts } => {
+                if parts.is_empty() {
+                    let empty = self.gc.alloc(String::new());
+                    self.chunk()
+                        .write_constant(Value::String(empty), line as usize);
+                    return;
+                }
+                self.compile_string_part(&parts[0], line);
+                for part in &parts[1..] {
+                    self.compile_string_part(part, line);
+                    self.emit_op(Opcode::Concat, line);
+                }
+            }
             ExprKind::Try { operand } => {
                 self.compile_expr(operand);
                 self.emit_op(Opcode::Dup, expr.span.line);
@@ -787,6 +801,19 @@ impl<'a> Compiler<'a> {
                     self.compile_expr(key);
                     self.emit_op(Opcode::MapSet, line);
                 }
+            }
+        }
+    }
+    fn compile_string_part(&mut self, part: &TypedStringPart, line: u32) {
+        match part {
+            TypedStringPart::Literal(s) => {
+                let str = self.gc.alloc(s.clone());
+                self.chunk()
+                    .write_constant(Value::String(str), line as usize);
+            }
+            TypedStringPart::Expr(expr) => {
+                self.compile_expr(expr);
+                self.emit_op(Opcode::ToString, line);
             }
         }
     }

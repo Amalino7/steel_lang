@@ -9,3 +9,5 @@ mod generics;
 mod advanced;
 mod lists;
 mod maps;
+mod strings;
+mod numbers;
