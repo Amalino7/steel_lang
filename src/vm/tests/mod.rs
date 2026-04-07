@@ -6,6 +6,3 @@ pub mod integration;
 
 // Runtime error tests
 pub mod runtime_errors;
-
-// Re-export helpers for convenience
-pub use helpers::*;

@@ -51,11 +51,11 @@ pub fn assert_panics_with_prelude(source: &str) {
     let scanner = Scanner::new(&full_source);
     let mut parser = Parser::new(scanner);
     let ast = parser.parse().expect("Failed to parse");
-    let mut typechecker = crate::typechecker::TypeChecker::new_with_natives(&natives);
+    let mut typechecker = TypeChecker::new_with_natives(&natives);
     let (typed_ast, _) = typechecker.check(&ast).expect("Failed to typecheck");
 
     let (global_count, extern_fns) = match &typed_ast.kind {
-        crate::typechecker::core::ast::StmtKind::Global {
+        StmtKind::Global {
             global_count,
             extern_fns,
             ..
@@ -64,7 +64,7 @@ pub fn assert_panics_with_prelude(source: &str) {
     };
 
     let mut gc = GarbageCollector::new();
-    let compiler = crate::compiler::Compiler::new("main".to_string(), &mut gc);
+    let compiler = Compiler::new("main".to_string(), &mut gc);
     let function = compiler.compile(0, &typed_ast);
 
     let mut vm = VM::new(global_count, &mut gc);

@@ -1,7 +1,5 @@
 use crate::vm::tests::helpers::*;
 
-// ── Task 1: unknown escapes are parser errors ─────────────────────────────────
-
 #[test]
 fn test_unknown_escape_is_error() {
     assert_parse_fails(r#"let s = "\q";"#);
@@ -18,8 +16,6 @@ fn test_trailing_backslash_is_error() {
     // (The scanner skips past EOF but process_escapes catches it.)
     assert_parse_fails("let s = \"test\\\";");
 }
-
-// ── Task 1: escape sequences ──────────────────────────────────────────────────
 
 #[test]
 fn test_escape_newline() {
@@ -74,8 +70,6 @@ fn test_escape_unicode_multi() {
     assert_global_string(r#"let s = "\u{48}\u{69}";"#, 0, "Hi");
 }
 
-// ── Task 2: string interpolation ─────────────────────────────────────────────
-
 #[test]
 fn test_interp_simple_variable() {
     assert_global_string(
@@ -127,8 +121,18 @@ fn test_interp_with_escapes() {
 fn test_interp_escaped_dollar_not_interpolated() {
     assert_global_string(r#"let s = "cost: \$${5 + 5}";"#, 0, "cost: $10");
 }
-
-// ── Task 3: raw strings ───────────────────────────────────────────────────────
+#[test]
+fn test_complex_interp() {
+    assert_global_string(
+        r#"
+        let a = "foo";
+        let b = "bar";
+        let c = "buz";
+        let s = "a = ${a + "& ${"nested" + "1"} here"}, b = ${b}, c = ${c}";"#,
+        3,
+        "a = foo& nested1 here, b = bar, c = buz",
+    );
+}
 
 #[test]
 fn test_raw_string_basic() {
@@ -150,8 +154,6 @@ fn test_raw_string_no_interpolation() {
     // `${expr}` is NOT interpolated in raw strings.
     assert_global_string(r#"let s = """value: ${1+2}""";"#, 0, "value: ${1+2}");
 }
-
-// ── Task 4: aligned raw strings (Swift-style indentation) ────────────────────
 
 #[test]
 fn test_raw_string_aligned_basic() {

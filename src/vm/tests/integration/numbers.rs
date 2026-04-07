@@ -70,3 +70,13 @@ fn test_hex_literal_with_separator() {
 fn test_combined_scientific_and_separator() {
     assert_global("let a = 1_000e2;", 0, Value::Number(100_000.0));
 }
+
+#[test]
+fn test_many_separators() {
+    assert_runs("let a = 1_000_000_000_000_000_000;");
+}
+
+#[test]
+fn test_many_separators2() {
+    assert_runs("let a = 1____2___2.4_____2____1__1____4;");
+}
