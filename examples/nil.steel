@@ -1,2 +1,2 @@
-let name: string = nil;
+let name: string = nil; // should be an error
 println(name.length());

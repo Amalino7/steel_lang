@@ -20,10 +20,10 @@ impl Motorcycle : Vehicle {
     func startEngine(self): void {
         println("Motorcycle engine started.");
     }
-    /*
+
     func stopEngine(self): void {
         println("Motorcycle engine stopped.");
-    } */
+    }
 
     func getNumberOfWheels(self): number {
         return 2;
@@ -35,6 +35,5 @@ func vehicleDemo(vehicle: Vehicle): void {
     println("This vehicle has ", vehicle.getNumberOfWheels(), " wheels.");
     vehicle.stopEngine();
 }
-func vehicleDemo(vehicle: Car) {}
 vehicleDemo(vehicle: Car());
-vehicleDemo(Motorcycle(), 10);
+vehicleDemo(Motorcycle());

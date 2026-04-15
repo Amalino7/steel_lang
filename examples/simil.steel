@@ -1,3 +1,4 @@
+// Wrong code contains typos to showcase suggestions
 func my_func() {}
 
 my_fnc();

@@ -6,6 +6,6 @@ impl Point {
     }
 }
 let point = Point(y: 1,x: 2);
-println(point.x," ", point.y);
+println("${point.x} ${point.y}");
 point.move(to: Point(x: 10, y: 20));
-println(point.x," ", point.y);
+println("${point.x} ${point.y}");

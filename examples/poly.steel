@@ -15,12 +15,12 @@ impl Rectangle : Shape {
 func printArea(s: Shape): void {
     s.area();
     assert(s.area(), 78.5); // 5*5 * 3.14
-    //println(s.area());
+    println(s.area());
 }
 func printPerimeter(s: Shape): void {
     s.perimeter();
     assert(s.perimeter(), (10 + 5) * 2 );
-    //println(s.perimeter());
+    println(s.perimeter());
 }
 
 
@@ -29,7 +29,7 @@ let i = 0;
 
 
 
-while i < 1000000 {
+while i < 10_000 {
     let c: Shape = Circle ( radius:5);
     let r: Shape = Rectangle ( width:10,height:5);
     printArea(c);

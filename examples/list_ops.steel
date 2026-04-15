@@ -4,4 +4,8 @@ func cmp(a: number, b: number): boolean {
     return a < b;
 }
 
-println(my_list.sort_by(less_than: cmp));
+let sorted = my_list.sort_by(less_than: cmp);
+println(sorted);
+println(sorted.reverse());
+println(sorted.reverse().first(), " ", sorted.last());
+println(my_list.contains(11));

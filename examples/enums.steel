@@ -11,7 +11,7 @@ enum Message {
     }
 }
 let msg = Message.Move(x: 10, y: 20);
-// msg = Message.Quit;
+//msg = Message.Quit;
 // msg = Message.ChangeColor(r: 10, g: 20, b: 30);
 match msg {
     .Quit => {println("Quit");}

@@ -1,3 +1,4 @@
+// Intentionally wrong code
 impl number {
     func square(self): number {
         return self * self;

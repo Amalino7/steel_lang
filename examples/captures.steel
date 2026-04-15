@@ -1,8 +1,0 @@
-struct number {
-    x: string,
-    x: number,
-}
-enum Duplicate {
-    Var,
-    Var,
-}
