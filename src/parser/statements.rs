@@ -145,7 +145,10 @@ impl<'src> Parser<'src> {
         is_method: bool,
     ) -> Result<Stmt<'src>, ParserError<'src>> {
         let (name, generics, signature) = self.func_signature(is_method)?;
-        self.consume(TokT::Semicolon, "Expected ';' after extern function signature.")?;
+        self.consume(
+            TokT::Semicolon,
+            "Expected ';' after extern function signature.",
+        )?;
         Ok(Stmt::ExternFunction {
             name,
             generics,
@@ -210,7 +213,7 @@ impl<'src> Parser<'src> {
         ))
     }
 
-    fn type_block(&mut self) -> Result<TypeAst<'src>, ParserError<'src>> {
+    pub(super) fn type_block(&mut self) -> Result<TypeAst<'src>, ParserError<'src>> {
         const UNDER: Token<'static> = Token {
             token_type: TokenType::Identifier,
             span: Span::new(0, 0, 0),
@@ -395,7 +398,7 @@ impl<'src> Parser<'src> {
         })
     }
 
-    fn pattern(&mut self) -> Result<Pattern<'src>, ParserError<'src>> {
+    pub(super) fn pattern(&mut self) -> Result<Pattern<'src>, ParserError<'src>> {
         if check_token_type!(self, TokT::Identifier) && !check_next_token_type!(self, TokT::Dot) {
             self.consume(TokT::Identifier, "Expected variable name.")?;
             let var_name = self.previous_token.clone();
@@ -620,5 +623,21 @@ impl<'src> Parser<'src> {
             name,
             signature,
         })
+    }
+
+    pub(crate) fn is_stmt_start(&self) -> bool {
+        let current_token = self.current_token.clone();
+        matches!(
+            current_token.token_type,
+            TokT::Let
+                | TokT::Func
+                | TokT::Struct
+                | TokT::Impl
+                | TokT::Interface
+                | TokT::Extern
+                | TokT::Enum
+                | TokT::While
+                | TokT::Return
+        )
     }
 }

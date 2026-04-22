@@ -9,12 +9,16 @@ use crate::compiler::analysis::ResolvedVar::Global;
 use crate::parser::ast::{Expr, Literal, StringPart};
 use crate::scanner::Span;
 use crate::scanner::TokenType;
-use crate::typechecker::core::ast::{ExprKind, TypedExpr, TypedStringPart};
+use crate::typechecker::core::ast::{
+    ExprKind, StmtKind, TypedExpr, TypedRefinements, TypedStmt, TypedStringPart,
+};
 use crate::typechecker::core::error::{
     BindingError, GenericError, Mismatch, MismatchContext, Recoverable, TypeCheckerError,
 };
 use crate::typechecker::core::types::Type;
 use crate::typechecker::inference::{UnificationError, UnificationErrorKind};
+use crate::typechecker::scope::guards::ScopeGuard;
+use crate::typechecker::scope::manager::ScopeKind;
 use crate::typechecker::similarity::find_similar;
 use crate::typechecker::TypeChecker;
 
@@ -277,6 +281,249 @@ impl<'src> TypeChecker<'src> {
                 // Already reported by parser
                 TypedExpr::new_blank(expr.span())
             }
+
+            Expr::Block { body, tail, .. } => {
+                self.check_block_expr(body, tail.as_deref(), expected, span)
+            }
+
+            Expr::IfExpr {
+                condition,
+                then_branch,
+                else_branch,
+            } => self.check_if_expr(
+                condition,
+                then_branch,
+                else_branch.as_deref(),
+                expected,
+                span,
+            ),
+
+            Expr::MatchExpr { value, arms } => self
+                .check_match_expr(value, arms)
+                .recover(&mut self.errors, fallback()),
+
+            Expr::Lambda {
+                params,
+                body,
+                pipe_token,
+            } => self.check_lambda(params, body, expected, pipe_token.span),
+        }
+    }
+
+    // ── Block expression ──────────────────────────────────────────────────────
+
+    pub(crate) fn check_block_expr(
+        &mut self,
+        body: &[crate::parser::ast::Stmt<'src>],
+        tail: Option<&Expr<'src>>,
+        expected: &Type,
+        span: Span,
+    ) -> TypedExpr {
+        let mut scope = ScopeGuard::new(self, ScopeKind::Block);
+        let typed_stmts = body.iter().map(|s| scope.check_stmt(s)).collect::<Vec<_>>();
+
+        let typed_tail = match tail {
+            Some(tail_expr) => scope.check_expression(tail_expr, expected),
+            None => TypedExpr {
+                ty: Type::Void,
+                kind: ExprKind::Literal(Literal::Void),
+                span,
+            },
+        };
+        let ty = typed_tail.ty.clone();
+        drop(scope);
+
+        TypedExpr {
+            ty,
+            kind: ExprKind::Block {
+                body: typed_stmts,
+                tail: Box::new(typed_tail),
+            },
+            span,
+        }
+    }
+
+    // ── If expression ─────────────────────────────────────────────────────────
+
+    fn check_if_expr(
+        &mut self,
+        condition: &Expr<'src>,
+        then_branch: &Expr<'src>,
+        else_branch: Option<&Expr<'src>>,
+        expected: &Type,
+        span: Span,
+    ) -> TypedExpr {
+        let cond_typed =
+            self.coerce_expression(condition, &Type::Boolean, MismatchContext::Condition, None);
+
+        let refinements = self.analyze_condition(&cond_typed);
+        let mut typed_refinements = TypedRefinements {
+            true_path: vec![],
+            else_path: vec![],
+            after_path: vec![],
+        };
+
+        let then_typed = {
+            let mut scope = ScopeGuard::new(self, ScopeKind::Block);
+            for (name, ty) in refinements.true_path.iter() {
+                if let Some(case) = scope.scopes.refine(name, ty.clone()) {
+                    typed_refinements.true_path.push(case);
+                }
+            }
+            scope.check_expression(then_branch, expected)
+        };
+        let then_ty = then_typed.ty.clone();
+
+        let else_typed = else_branch.map(|eb| {
+            let typed = {
+                let mut scope = ScopeGuard::new(self, ScopeKind::Block);
+                for (name, ty) in refinements.false_path.iter() {
+                    if let Some(case) = scope.scopes.refine(name, ty.clone()) {
+                        typed_refinements.else_path.push(case);
+                    }
+                }
+                scope.check_expression(eb, &then_ty)
+                // scope dropped here
+            };
+            // Coerce the else branch to the then-branch type for consistency.
+            self.coerce_typed(typed, &then_ty, MismatchContext::Generic, None)
+        });
+
+        let ty = else_typed
+            .as_ref()
+            .map(|e| e.ty.clone())
+            .unwrap_or(Type::Void);
+
+        if else_typed.is_none() && then_typed.ty != ty {
+            panic!(
+                "Expected else branch to be of type {}, got {}",
+                ty, then_typed.ty
+            );
+            // TODO add error reporting here
+        }
+
+        TypedExpr {
+            ty,
+            kind: ExprKind::IfExpr {
+                condition: Box::new(cond_typed),
+                then_branch: Box::new(then_typed),
+                else_branch: else_typed.map(Box::new),
+                typed_refinements: Box::new(typed_refinements),
+            },
+            span,
+        }
+    }
+
+    // ── Lambda ────────────────────────────────────────────────────────────────
+
+    pub(crate) fn check_lambda(
+        &mut self,
+        params: &[(
+            crate::scanner::Token<'src>,
+            crate::parser::ast::TypeAst<'src>,
+        )],
+        body: &Expr<'src>,
+        expected: &Type,
+        span: Span,
+    ) -> TypedExpr {
+        use crate::typechecker::core::types::{FunctionType, Symbol};
+        use crate::typechecker::scope::variables::Declaration;
+        use std::rc::Rc;
+
+        // Extract expected parameter types / return type from context if available.
+        let expected_fn = if let Type::Function(ft) = expected {
+            Some(ft.clone())
+        } else {
+            None
+        };
+
+        // Resolve each parameter type: use annotation if present, else try hint, else infer.
+        let mut resolved_params: Vec<(Symbol, Type)> = Vec::with_capacity(params.len());
+        for (i, (name, type_ast)) in params.iter().enumerate() {
+            use crate::parser::ast::TypeAst;
+            let ty = if !matches!(type_ast, TypeAst::Infer) {
+                self.res()
+                    .resolve(type_ast)
+                    .recover(&mut self.errors, Type::Error)
+            } else if let Some(hint) = expected_fn.as_ref().and_then(|ft| ft.params.get(i)) {
+                hint.1.clone()
+            } else {
+                self.infer_ctx.new_type_var()
+            };
+            resolved_params.push((name.lexeme.into(), ty));
+        }
+
+        let return_type = expected_fn
+            .as_ref()
+            .map(|ft| ft.return_type.clone())
+            .unwrap_or_else(|| self.infer_ctx.new_type_var());
+
+        // Enter function scope and declare parameters.
+        let mut guard = ScopeGuard::new_function(self, return_type.clone(), span);
+        let func_type = Type::Function(Rc::new(FunctionType {
+            is_vararg: false,
+            params: resolved_params.clone(),
+            return_type: return_type.clone(),
+            type_params: vec![],
+        }));
+        let decl = Declaration::function(
+            "__lambda__".into(),
+            func_type,
+            Span::new(span.start, span.start, span.line),
+        );
+        guard.scopes.declare(decl).expect("Lambda must have a name");
+        for (name, ty) in &resolved_params {
+            let decl = Declaration::parameter(name.clone(), ty.clone(), span);
+            guard.scopes.declare(decl).ok_or_report(&mut guard.errors);
+        }
+
+        // Type-check the body expression as the return value.
+        let typed_body =
+            guard.coerce_expression(body, &return_type, MismatchContext::Return, Some(span));
+        let actual_return = typed_body.ty.clone();
+        let reserved = guard.scopes.max_index();
+        let old_closures = guard.scopes.get_closures();
+        drop(guard);
+
+        // Resolve captures from the outer scope.
+        let mut captures = vec![];
+        for clos_var in old_closures {
+            let (_, var_ctx) = self
+                .scopes
+                .lookup(clos_var.as_ref())
+                .expect("Captured variable must exist in outer scope.");
+            captures.push(var_ctx);
+        }
+
+        // Substitute any solved inference variables.
+        let final_return = self.infer_ctx.substitute(&actual_return);
+        let final_params: Vec<_> = resolved_params
+            .iter()
+            .map(|(n, t)| (n.clone(), self.infer_ctx.substitute(t)))
+            .collect();
+        let final_func_type = Type::Function(Rc::new(FunctionType {
+            is_vararg: false,
+            params: final_params,
+            return_type: final_return.clone(),
+            type_params: vec![],
+        }));
+
+        // Wrap the expression body in a Return statement for the compiler.
+        let body_stmt = TypedStmt {
+            span: typed_body.span,
+            type_info: final_return,
+            kind: StmtKind::Return(typed_body),
+        };
+
+        TypedExpr {
+            ty: final_func_type,
+            kind: ExprKind::Function {
+                reserved: reserved as u8,
+                signature: span,
+                body: Box::new(body_stmt),
+                captures: Box::from(captures),
+            },
+            span,
         }
     }
 

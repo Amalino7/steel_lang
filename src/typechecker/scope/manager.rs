@@ -81,9 +81,7 @@ impl ScopeManager {
     pub fn end_scope(&mut self) -> usize {
         let finished_scope = self.scopes.pop().expect("No scope to end");
         let max = finished_scope.max_index;
-        if let Some(parent) = self.scopes.last_mut()
-            && parent.kind != ScopeKind::Global
-        {
+        if let Some(parent) = self.scopes.last_mut() {
             parent.max_index = parent.max_index.max(max);
         }
 
@@ -135,7 +133,9 @@ impl ScopeManager {
         };
 
         scope.last_index += 1;
-        scope.max_index = scope.max_index.max(scope.last_index);
+        if ScopeKind::Global != scope.kind {
+            scope.max_index = scope.max_index.max(scope.last_index);
+        }
 
         Ok(resolved)
     }

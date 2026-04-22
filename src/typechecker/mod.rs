@@ -84,7 +84,7 @@ impl<'src> TypeChecker<'src> {
         }
 
         let global_count = self.scopes.global_size();
-        let reserved = self.scopes.end_scope() as u16;
+        let reserved = self.scopes.max_index() as u16;
 
         let mut extern_fns = collect_extern_fns(&typed_ast);
         // Merge in name→slot pairs for vararg natives registered via register_globals.
@@ -116,9 +116,11 @@ impl<'src> TypeChecker<'src> {
         let mut slots = vec![];
         for native in natives.iter() {
             if let Some(ty) = &native.type_ {
-                let decl =
-                    Declaration::function(native.name.into(), ty.clone(), Span::default());
-                let resolved = self.scopes.declare(decl).expect("Failed to register global");
+                let decl = Declaration::function(native.name.into(), ty.clone(), Span::default());
+                let resolved = self
+                    .scopes
+                    .declare(decl)
+                    .expect("Failed to register global");
                 if let ResolvedVar::Global(idx) = resolved {
                     slots.push((native.name.into(), idx));
                 }

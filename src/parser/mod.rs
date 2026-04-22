@@ -1,3 +1,4 @@
+mod advanced_expr;
 pub mod ast;
 pub mod error;
 mod expressions;

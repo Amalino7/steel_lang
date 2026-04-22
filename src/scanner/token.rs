@@ -89,6 +89,7 @@ pub enum TokenType {
 
     Enum,
     Match,
+    Pipe, // |
 
     // Reports errors.
     Error,
@@ -157,6 +158,7 @@ impl Display for TokenType {
             TokenType::Nil => f.write_str("nil"),
             TokenType::Enum => f.write_str("enum"),
             TokenType::Match => f.write_str("match"),
+            TokenType::Pipe => f.write_str("|"),
             TokenType::Arrow => f.write_str("=>"),
             TokenType::Is => f.write_str("is"),
             TokenType::Try => f.write_str("try"),

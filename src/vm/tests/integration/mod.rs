@@ -1,6 +1,7 @@
 // Integration tests organized by feature
 
 mod basics;
+mod expressions;
 mod functions;
 mod structs;
 mod interfaces;

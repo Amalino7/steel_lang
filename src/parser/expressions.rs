@@ -1,5 +1,5 @@
 use crate::parser::ast::Expr::Tuple;
-use crate::parser::ast::{CallArg, Expr, Literal, StringPart};
+use crate::parser::ast::{CallArg, Expr, ExprMatchArm, Literal, Stmt, StringPart, TypeAst};
 use crate::parser::error::ParserError;
 use crate::parser::literals::{parse_number, process_escapes, process_raw_string};
 use crate::parser::TokT;
@@ -11,7 +11,6 @@ impl<'src> Parser<'src> {
     pub(crate) fn expression(&mut self) -> Result<Expr<'src>, ParserError<'src>> {
         self.assignment()
     }
-
     fn assignment(&mut self) -> Result<Expr<'src>, ParserError<'src>> {
         let expr = self.null_coalescing()?;
 
@@ -466,6 +465,10 @@ impl<'src> Parser<'src> {
                     expression: Box::new(expr),
                 })
             }
+            TokT::LeftBrace => self.parse_block_expr(),
+            TokT::If => self.parse_if_expr(),
+            TokT::Match => self.parse_match_expr(),
+            TokT::Pipe => self.parse_lambda(),
             _ => Err(self.error_previous(format!(
                 "Expected expression, but found '{}'.",
                 self.previous_token.lexeme
@@ -476,6 +479,175 @@ impl<'src> Parser<'src> {
         Ok(Expr::Literal {
             literal,
             span: self.previous_token.span,
+        })
+    }
+
+    /// `{` already consumed. Parses a block expression: `{ stmt* expr? }`.
+    /// Declarations (let, func, struct, …) and while/return are always statements.
+    /// Any other item without a trailing `;` before `}` becomes the tail expression.
+    fn parse_block_expr(&mut self) -> Result<Expr<'src>, ParserError<'src>> {
+        let brace_token = self.previous_token.clone();
+        let mut body: Vec<Stmt<'src>> = vec![];
+        let mut tail: Option<Box<Expr<'src>>> = None;
+
+        loop {
+            if check_token_type!(self, TokT::RightBrace) || check_token_type!(self, TokT::EOF) {
+                break;
+            }
+
+            // Items that are only ever statements — delegate to the full declaration path.
+            if self.is_stmt_start() {
+                match self.declaration() {
+                    Ok(stmt) => body.push(stmt),
+                    Err(e) => {
+                        self.synchronize();
+                        self.errors.push(e);
+                        if check_token_type!(self, TokT::EOF) {
+                            break;
+                        }
+                    }
+                }
+                continue;
+            }
+
+            // Limit brace expressions in mid positions
+            let expr = match self.current_token.token_type {
+                TokT::LeftBrace => {
+                    self.consume(TokT::LeftBrace, "Expected '{' to open block expression.")?;
+                    self.parse_block_expr()
+                }
+                TokT::If => {
+                    self.consume(TokT::If, "Expected 'if' to open if expression.")?;
+                    self.parse_if_expr()
+                }
+                TokT::Match => {
+                    self.consume(TokT::Match, "Expected 'match' to open match expr ")?;
+                    self.parse_match_expr()
+                }
+                _ => self.expression(),
+            };
+
+            match expr {
+                Ok(expr) => {
+                    let is_brace_expr = self.previous_token.token_type == TokT::RightBrace;
+                    let is_final = self.current_token.token_type == TokT::RightBrace;
+                    let has_semicolon = match_token_type!(self, TokT::Semicolon);
+                    // } + semicolon -> discard
+                    // expr + ; -> stmt
+                    // expr + final -> tail
+                    // expr + !final -> error
+                    // } + final -> tail
+                    match (is_final, has_semicolon) {
+                        (true, false) => tail = Some(Box::new(expr)),
+                        (_, true) => body.push(Stmt::Expression(expr)),
+                        (false, false) => {
+                            if is_brace_expr {
+                                // TODO how to classify if else stmt like expr
+                                body.push(Stmt::Expression(expr));
+                            } else {
+                                self.error_previous("Expected ';' after expression.");
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    self.synchronize();
+                    self.errors.push(e);
+                    if check_token_type!(self, TokT::EOF) {
+                        break;
+                    }
+                }
+            }
+        }
+
+        self.consume(TokT::RightBrace, "Expected '}' to close block expression.")?;
+        Ok(Expr::Block {
+            brace_token,
+            body,
+            tail,
+        })
+    }
+
+    /// `if` already consumed. Parses `if cond { expr } (else ({ expr } | if ...))?`.
+    fn parse_if_expr(&mut self) -> Result<Expr<'src>, ParserError<'src>> {
+        let condition = self.expression()?;
+        // Consume `{` and parse the then-branch as a block expression.
+        self.consume(TokT::LeftBrace, "Expected '{' after if condition.")?;
+        let then_branch = self.parse_block_expr()?;
+
+        let else_branch = if match_token_type!(self, TokT::Else) {
+            if match_token_type!(self, TokT::If) {
+                Some(Box::new(self.parse_if_expr()?))
+            } else {
+                self.consume(TokT::LeftBrace, "Expected '{' after else.")?;
+                Some(Box::new(self.parse_block_expr()?))
+            }
+        } else {
+            None
+        };
+
+        Ok(Expr::IfExpr {
+            condition: Box::new(condition),
+            then_branch: Box::new(then_branch),
+            else_branch,
+        })
+    }
+
+    /// `match` already consumed. Parses `match expr { (pattern => expr ,?)* }`.
+    fn parse_match_expr(&mut self) -> Result<Expr<'src>, ParserError<'src>> {
+        let value = self.expression()?;
+        self.consume(TokT::LeftBrace, "Expected '{' after match value.")?;
+        let mut arms: Vec<ExprMatchArm<'src>> = vec![];
+
+        while !check_token_type!(self, TokT::RightBrace) && !check_token_type!(self, TokT::EOF) {
+            let pattern = self.pattern()?;
+            self.consume(TokT::Arrow, "Expected '=>' after match pattern.")?;
+            let body = self.expression()?;
+            arms.push(ExprMatchArm { pattern, body });
+            // Optional comma between arms; allows trailing comma.
+            match_token_type!(self, TokT::Comma);
+        }
+
+        self.consume(TokT::RightBrace, "Expected '}' after match arms.")?;
+        Ok(Expr::MatchExpr {
+            value: Box::new(value),
+            arms,
+        })
+    }
+
+    /// `|` already consumed. Parses `|param*| body_expr`.
+    /// Zero-param form: `|| expr` (the opening `|` was consumed, next is `|`).
+    fn parse_lambda(&mut self) -> Result<Expr<'src>, ParserError<'src>> {
+        let pipe_token = self.previous_token.clone();
+        let mut params: Vec<(Token<'src>, TypeAst<'src>)> = vec![];
+
+        if !match_token_type!(self, TokT::Pipe) {
+            // Parse parameter list until closing `|`.
+            while !check_token_type!(self, TokT::Pipe) && !check_token_type!(self, TokT::EOF) {
+                // Name: identifier or `_`.
+                if !match_token_type!(self, TokT::Identifier) {
+                    return Err(self.error_current("Expected parameter name in lambda."));
+                }
+                let name = self.previous_token.clone();
+                let type_ann = if match_token_type!(self, TokT::Colon) {
+                    self.type_block()?
+                } else {
+                    TypeAst::Infer
+                };
+                params.push((name, type_ann));
+                if !match_token_type!(self, TokT::Comma) {
+                    break;
+                }
+            }
+            self.consume(TokT::Pipe, "Expected '|' to close lambda parameters.")?;
+        }
+
+        // Body: any expression (block expression included).
+        let body = self.expression()?;
+        Ok(Expr::Lambda {
+            params,
+            body: Box::new(body),
+            pipe_token,
         })
     }
 

@@ -159,6 +159,23 @@ pub enum ExprKind {
         body: Box<TypedStmt>,
         captures: Box<[ResolvedVar]>,
     },
+    /// Block expression: `{ stmt* tail }` — yields the tail value (Void if absent).
+    Block {
+        body: Vec<TypedStmt>,
+        tail: Box<TypedExpr>,
+    },
+    /// If expression: both branches are expressions; else is optional (then type is Void).
+    IfExpr {
+        condition: Box<TypedExpr>,
+        then_branch: Box<TypedExpr>,
+        else_branch: Option<Box<TypedExpr>>,
+        typed_refinements: Box<TypedRefinements>,
+    },
+    /// Match expression: all arms produce a value of the same type.
+    MatchExpr {
+        value: Box<TypedExpr>,
+        cases: Vec<ExprMatchCase>,
+    },
 }
 
 #[derive(Debug)]
@@ -277,4 +294,18 @@ pub struct TypedRefinements {
     pub true_path: Vec<(ResolvedVar, ResolvedVar)>,
     pub else_path: Vec<(ResolvedVar, ResolvedVar)>,
     pub after_path: Vec<(ResolvedVar, ResolvedVar)>,
+}
+
+/// A single arm inside a *match expression* (body is an expression, not a statement).
+#[derive(Debug)]
+pub enum ExprMatchCase {
+    Variable {
+        binding: TypedBinding,
+        body: TypedExpr,
+    },
+    Named {
+        variant_idx: u16,
+        binding: TypedBinding,
+        body: TypedExpr,
+    },
 }
