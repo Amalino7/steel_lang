@@ -159,23 +159,21 @@ pub enum ExprKind {
         body: Box<TypedStmt>,
         captures: Box<[ResolvedVar]>,
     },
-    /// Block expression: `{ stmt* tail }` — yields the tail value (Void if absent).
     Block {
         body: Vec<TypedStmt>,
         tail: Box<TypedExpr>,
     },
-    /// If expression: both branches are expressions; else is optional (then type is Void).
     IfExpr {
         condition: Box<TypedExpr>,
         then_branch: Box<TypedExpr>,
         else_branch: Option<Box<TypedExpr>>,
         typed_refinements: Box<TypedRefinements>,
     },
-    /// Match expression: all arms produce a value of the same type.
     MatchExpr {
         value: Box<TypedExpr>,
         cases: Vec<ExprMatchCase>,
     },
+    Return(Box<TypedExpr>),
 }
 
 #[derive(Debug)]
@@ -235,7 +233,6 @@ pub enum StmtKind {
         extern_fns: Vec<(Box<str>, u16)>,
     },
     Expression(TypedExpr),
-    Return(TypedExpr),
     Let {
         binding: TypedBinding,
         value: TypedExpr,

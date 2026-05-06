@@ -256,13 +256,29 @@ impl<'src> TypeChecker<'src> {
             captures.push(var_ctx);
         }
         let function_span = name.span.merge(func_body.span);
+        let fn_span = name.span.merge(Span {
+            end: func_body.span.start,
+            ..func_body.span
+        });
+
+        let return_type = match &func_type {
+            Type::Function(f) => &f.return_type,
+            _ => unreachable!(),
+        };
+        if *return_type != Type::Void && !self.stmt_diverges(&func_body).exits_function() {
+            self.report(TypeCheckerError::MissingReturnStatement {
+                fn_span,
+                fn_name: name.lexeme.to_string(),
+                span: Span {
+                    start: func_body.span.end,
+                    ..func_body.span
+                },
+            });
+        }
 
         Ok(TypedExpr {
             kind: ExprKind::Function {
-                signature: name.span.merge(Span {
-                    end: func_body.span.start,
-                    ..func_body.span
-                }),
+                signature: fn_span,
                 body: Box::new(func_body),
                 captures: Box::from(captures),
                 reserved: reserved as u8,

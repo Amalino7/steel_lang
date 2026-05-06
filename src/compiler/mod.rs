@@ -217,10 +217,6 @@ impl<'a> Compiler<'a> {
                     }
                 }
             }
-            StmtKind::Return(val) => {
-                self.compile_expr(val);
-                self.emit_op(Opcode::Return, stmt.span.line);
-            }
             StmtKind::Global {
                 stmts, reserved, ..
             } => {
@@ -451,6 +447,11 @@ impl<'a> Compiler<'a> {
                     self.patch_jump(jump);
                 }
             }
+            ExprKind::Return(val) => {
+                self.compile_expr(val);
+                self.emit_op(Opcode::Return, line);
+            }
+
             ExprKind::NoOp => {}
             ExprKind::Binary {
                 left,

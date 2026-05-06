@@ -305,8 +305,34 @@ impl<'src> TypeChecker<'src> {
             Expr::Lambda {
                 params,
                 body,
+                return_type,
                 pipe_token,
-            } => self.check_lambda(params, body, expected, pipe_token.span),
+            } => self.check_lambda(
+                params,
+                body,
+                return_type.as_ref(),
+                expected,
+                pipe_token.span,
+            ),
+
+            Expr::Return { keyword, value } => {
+                if let Some((func_return_type, func_span)) = self.scopes.return_type() {
+                    let coerced = self.coerce_expression(
+                        value,
+                        &func_return_type,
+                        MismatchContext::Return,
+                        Some(func_span),
+                    );
+                    TypedExpr {
+                        ty: Type::Never,
+                        kind: ExprKind::Return(Box::new(coerced)),
+                        span: keyword.span.merge(value.span()),
+                    }
+                } else {
+                    self.report(TypeCheckerError::InvalidReturnOutsideFunction { span });
+                    fallback()
+                }
+            }
         }
     }
 
@@ -330,8 +356,14 @@ impl<'src> TypeChecker<'src> {
                 span,
             },
         };
-        let ty = typed_tail.ty.clone();
         drop(scope);
+
+        // If the block has no tail expression and the body always returns, the block type is Never.
+        let ty = if tail.is_none() && self.expr_always_returns_in_block(&typed_stmts) {
+            Type::Never
+        } else {
+            typed_tail.ty.clone()
+        };
 
         TypedExpr {
             ty,
@@ -341,6 +373,13 @@ impl<'src> TypeChecker<'src> {
             },
             span,
         }
+    }
+
+    fn expr_always_returns_in_block(
+        &self,
+        stmts: &[crate::typechecker::core::ast::TypedStmt],
+    ) -> bool {
+        stmts.iter().any(|s| self.stmt_diverges(s).exits_function())
     }
 
     // ── If expression ─────────────────────────────────────────────────────────
@@ -374,6 +413,14 @@ impl<'src> TypeChecker<'src> {
         };
         let then_ty = then_typed.ty.clone();
 
+        // When the then-branch diverges (Never), fall back to `expected` so the else branch
+        // is not incorrectly required to produce `Never` as well.
+        let else_target = if then_ty == Type::Never {
+            expected
+        } else {
+            &then_ty
+        };
+
         let else_typed = else_branch.map(|eb| {
             let typed = {
                 let mut scope = ScopeGuard::new(self, ScopeKind::Block);
@@ -382,25 +429,47 @@ impl<'src> TypeChecker<'src> {
                         typed_refinements.else_path.push(case);
                     }
                 }
-                scope.check_expression(eb, &then_ty)
+                scope.check_expression(eb, else_target)
                 // scope dropped here
             };
-            // Coerce the else branch to the then-branch type for consistency.
-            self.coerce_typed(typed, &then_ty, MismatchContext::Generic, None)
+            self.coerce_typed(typed, else_target, MismatchContext::Generic, None)
         });
 
-        let ty = else_typed
-            .as_ref()
-            .map(|e| e.ty.clone())
-            .unwrap_or(Type::Void);
+        // Compute the if-expression type, accounting for Never branches.
+        // - If one branch is Never (always returns/diverges), the type is the other branch's type.
+        // - Both Never → Never.
+        // - No else → Void (condition may be false, yielding nothing).
+        let ty = match (
+            then_typed.ty.clone(),
+            else_typed.as_ref().map(|e| e.ty.clone()),
+        ) {
+            (_, Some(Type::Never)) => then_typed.ty.clone(),
+            (Type::Never, Some(else_ty)) => else_ty,
+            (Type::Never, None) => Type::Void,
+            (_, Some(else_ty)) => else_ty,
+            (_, None) => Type::Void,
+        };
 
-        if else_typed.is_none() && then_typed.ty != ty {
-            panic!(
-                "Expected else branch to be of type {}, got {}",
-                ty, then_typed.ty
-            );
-            // TODO add error reporting here
+        // Guard logic: if a branch always returns (Never), apply the opposite path's refinements
+        // to the outer scope so subsequent code sees the narrowed type.
+        // e.g. `if x is Err { return; }` → after the if, `x` is narrowed to non-Err.
+        if then_typed.ty == Type::Never {
+            for (name, ty) in refinements.false_path.iter() {
+                if let Some(case) = self.scopes.refine(name, ty.clone()) {
+                    typed_refinements.after_path.push(case);
+                }
+            }
         }
+        if else_typed.as_ref().is_some_and(|e| e.ty == Type::Never) {
+            for (name, ty) in refinements.true_path.iter() {
+                if let Some(case) = self.scopes.refine(name, ty.clone()) {
+                    typed_refinements.after_path.push(case);
+                }
+            }
+        }
+
+        // TODO (Phase 4): report a proper error when the if expression is used as a value
+        // and the then-branch type doesn't match (e.g. if without else in a non-void context).
 
         TypedExpr {
             ty,
@@ -423,6 +492,7 @@ impl<'src> TypeChecker<'src> {
             crate::parser::ast::TypeAst<'src>,
         )],
         body: &Expr<'src>,
+        return_type_ann: Option<&crate::parser::ast::TypeAst<'src>>,
         expected: &Type,
         span: Span,
     ) -> TypedExpr {
@@ -453,10 +523,16 @@ impl<'src> TypeChecker<'src> {
             resolved_params.push((name.lexeme.into(), ty));
         }
 
-        let return_type = expected_fn
-            .as_ref()
-            .map(|ft| ft.return_type.clone())
-            .unwrap_or_else(|| self.infer_ctx.new_type_var());
+        let return_type = if let Some(ann) = return_type_ann {
+            self.res()
+                .resolve(ann)
+                .recover(&mut self.errors, Type::Error)
+        } else {
+            expected_fn
+                .as_ref()
+                .map(|ft| ft.return_type.clone())
+                .unwrap_or_else(|| self.infer_ctx.new_type_var())
+        };
 
         // Enter function scope and declare parameters.
         let mut guard = ScopeGuard::new_function(self, return_type.clone(), span);
@@ -496,7 +572,16 @@ impl<'src> TypeChecker<'src> {
         }
 
         // Substitute any solved inference variables.
-        let final_return = self.infer_ctx.substitute(&actual_return);
+        // When the body diverges (Never), the actual return type was solved by the `return`
+        // statements inside and is stored in `return_type`, not in the block expression type.
+        let final_return = {
+            let sub_body = self.infer_ctx.substitute(&actual_return);
+            if sub_body == Type::Never {
+                self.infer_ctx.substitute(&return_type)
+            } else {
+                sub_body
+            }
+        };
         let final_params: Vec<_> = resolved_params
             .iter()
             .map(|(n, t)| (n.clone(), self.infer_ctx.substitute(t)))
@@ -512,7 +597,11 @@ impl<'src> TypeChecker<'src> {
         let body_stmt = TypedStmt {
             span: typed_body.span,
             type_info: final_return,
-            kind: StmtKind::Return(typed_body),
+            kind: StmtKind::Expression(TypedExpr {
+                ty: Type::Never,
+                span: typed_body.span,
+                kind: ExprKind::Return(typed_body.into()),
+            }),
         };
 
         TypedExpr {

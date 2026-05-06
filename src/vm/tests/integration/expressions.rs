@@ -1,8 +1,6 @@
 use crate::vm::tests::helpers::*;
 use crate::vm::value::Value;
 
-// ── Block expressions ─────────────────────────────────────────────────────────
-
 #[test]
 fn test_block_expr_tail_value() {
     assert_global("let a = { 1 + 2 };", 0, Value::Number(3.0));
@@ -49,8 +47,6 @@ fn test_nested_block_expr() {
         Value::Number(13.0),
     );
 }
-
-// ── If expressions ────────────────────────────────────────────────────────────
 
 #[test]
 fn test_if_expr_true_branch() {
@@ -143,8 +139,6 @@ fn test_if_expr_with_return() {
     );
 }
 
-// ── Match expressions ─────────────────────────────────────────────────────────
-
 #[test]
 fn test_match_expr_basic() {
     assert_global(
@@ -209,8 +203,6 @@ fn test_match_expr_block_body() {
         Value::Number(1.0),
     );
 }
-
-// ── Lambda expressions ────────────────────────────────────────────────────────
 
 #[test]
 fn test_lambda_basic() {
@@ -290,5 +282,55 @@ fn test_lambda_inferred_param_type() {
         "#,
         1,
         Value::Number(10.0),
+    );
+}
+
+#[test]
+fn test_lambda_block_with_return_stmt() {
+    // Body always exits via `return` — return type must be inferred from the return
+    // statement, not from the block expression type (which would wrongly be Never).
+    assert_global(
+        r#"
+        let double = |x: number| { return x * 2; };
+        let result = double(6);
+        "#,
+        1,
+        Value::Number(12.0),
+    );
+}
+
+#[test]
+fn test_lambda_early_return() {
+    // Early return pattern: guard + fallthrough.
+    assert_global(
+        r#"
+        func clamp(x: number): number {
+            let f = |n: number|: number {
+                if n < 0 { return 0; }
+                if n > 100 { return 100; }
+                n
+            };
+            return f(x);
+        }
+        let a = clamp(-5);
+        let b = clamp(50);
+        let c = clamp(200);
+        "#,
+        // globals: clamp (func), a, b, c  — a is index 1
+        1,
+        Value::Number(0.0),
+    );
+}
+
+#[test]
+fn test_lambda_void_return() {
+    // `return;` inside a lambda should work without a type mismatch.
+    assert_runs(
+        r#"
+        func apply(f: func(number): void, x: number): void {
+            f(x);
+        }
+        apply(|x: number| { if x > 10 { return; } println(x); }, 5);
+        "#,
     );
 }

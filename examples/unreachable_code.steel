@@ -1,0 +1,23 @@
+func test() {
+    panic("exit");
+
+    10 + 10;
+    println("unreachable");
+    return;
+}
+
+func local() {
+    let _a = 10;
+}
+
+
+
+func some_func() {
+    let _ = {
+        10;
+        20;
+        panic("exit");
+        30
+    };
+
+}

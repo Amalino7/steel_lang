@@ -118,28 +118,29 @@ pub enum Expr<'src> {
         parts: Vec<StringPart<'src>>,
         span: Span,
     },
-    /// `{ stmt* expr? }` — block that yields the trailing expression (or void).
     Block {
         brace_token: Token<'src>,
         body: Vec<Stmt<'src>>,
         tail: Option<Box<Expr<'src>>>,
     },
-    /// `if cond { expr } else { expr }` — expression form; else is optional (void).
     IfExpr {
         condition: Box<Expr<'src>>,
         then_branch: Box<Expr<'src>>,
         else_branch: Option<Box<Expr<'src>>>,
     },
-    /// `match expr { pattern => expr, ... }` — expression form.
     MatchExpr {
         value: Box<Expr<'src>>,
         arms: Vec<ExprMatchArm<'src>>,
     },
-    /// `|param, ...| expr` or `|param, ...| { ... }`.
     Lambda {
         params: Vec<(Token<'src>, TypeAst<'src>)>,
+        return_type: Option<TypeAst<'src>>,
         body: Box<Expr<'src>>,
         pipe_token: Token<'src>,
+    },
+    Return {
+        keyword: Token<'src>,
+        value: Box<Expr<'src>>,
     },
 }
 #[derive(Clone, Debug, PartialEq)]
@@ -154,7 +155,6 @@ pub struct MatchArm<'src> {
     pub body: Stmt<'src>,
 }
 
-/// An arm in a match *expression*: `pattern => expr`
 #[derive(Clone, Debug, PartialEq)]
 pub struct ExprMatchArm<'src> {
     pub pattern: Pattern<'src>,
@@ -214,10 +214,6 @@ pub enum Stmt<'src> {
         binding: Binding<'src>,
         value: Expr<'src>,
         type_info: TypeAst<'src>,
-    },
-    Return {
-        keyword: Token<'src>,
-        value: Expr<'src>,
     },
     Block {
         brace_token: Token<'src>,
@@ -288,7 +284,11 @@ impl Display for Pattern<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Pattern::Variable(name) => write!(f, "{}", name.lexeme),
-            Pattern::Named { enum_name, variant_name, bind } => {
+            Pattern::Named {
+                enum_name,
+                variant_name,
+                bind,
+            } => {
                 if let Some(en) = enum_name {
                     write!(f, "{}.{}", en.lexeme, variant_name.lexeme)?;
                 } else {
@@ -463,7 +463,11 @@ impl Display for Expr<'_> {
                 }
                 write!(f, " }}")
             }
-            Expr::IfExpr { condition, then_branch, else_branch } => {
+            Expr::IfExpr {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
                 write!(f, "if {} {}", condition, then_branch)?;
                 if let Some(else_branch) = else_branch {
                     write!(f, " else {}", else_branch)?;
@@ -477,14 +481,26 @@ impl Display for Expr<'_> {
                 }
                 write!(f, " }}")
             }
-            Expr::Lambda { params, body, .. } => {
+            Expr::Lambda {
+                params,
+                return_type,
+                body,
+                ..
+            } => {
                 write!(f, "|")?;
                 for (i, (name, ty)) in params.iter().enumerate() {
-                    if i > 0 { write!(f, ", ")?; }
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
                     write!(f, "{}: {}", name.lexeme, ty)?;
                 }
-                write!(f, "| {}", body)
+                write!(f, "|")?;
+                if let Some(rt) = return_type {
+                    write!(f, ": {}", rt)?;
+                }
+                write!(f, " {}", body)
             }
+            Expr::Return { value, .. } => write!(f, "return {}", value),
         }
     }
 }
@@ -608,8 +624,6 @@ impl Display for Stmt<'_> {
                         .join(", "),
                 )
             }
-            Stmt::Return { value, .. } => write!(f, "return {}", value),
-
             Stmt::Struct {
                 name,
                 fields,
@@ -762,7 +776,11 @@ impl Expr<'_> {
             Expr::SetIndex { object, value, .. } => object.span().merge(value.span()),
             Expr::ForceUnwrap { operator, .. } => operator.span,
             Expr::StringInterp { span, .. } => *span,
-            Expr::Block { brace_token, body, tail } => {
+            Expr::Block {
+                brace_token,
+                body,
+                tail,
+            } => {
                 let base = brace_token.span;
                 if let Some(t) = tail {
                     base.merge(t.span())
@@ -772,15 +790,25 @@ impl Expr<'_> {
                     base
                 }
             }
-            Expr::IfExpr { condition, then_branch, else_branch } => {
+            Expr::IfExpr {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
                 let base = condition.span().merge(then_branch.span());
-                else_branch.as_ref().map(|e| base.merge(e.span())).unwrap_or(base)
+                else_branch
+                    .as_ref()
+                    .map(|e| base.merge(e.span()))
+                    .unwrap_or(base)
             }
             Expr::MatchExpr { value, arms } => arms
                 .last()
                 .map(|a| value.span().merge(a.body.span()))
                 .unwrap_or_else(|| value.span()),
-            Expr::Lambda { pipe_token, body, .. } => pipe_token.span.merge(body.span()),
+            Expr::Lambda {
+                pipe_token, body, ..
+            } => pipe_token.span.merge(body.span()),
+            Expr::Return { keyword, value } => keyword.span.merge(value.span()),
         }
     }
 }
@@ -789,7 +817,6 @@ impl Stmt<'_> {
         match self {
             Stmt::Expression(expr) => expr.span(),
             Stmt::Let { binding, value, .. } => binding.span().merge(value.span()),
-            Stmt::Return { value, keyword } => keyword.span.merge(value.span()),
             Stmt::Block { body, brace_token } => body
                 .first()
                 .map(|first| brace_token.span.merge(first.span()))

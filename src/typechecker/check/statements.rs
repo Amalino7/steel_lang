@@ -130,7 +130,7 @@ impl<'src> TypeChecker<'src> {
                 };
 
                 // Guard logic
-                if self.stmt_returns(&then_branch_typed).unwrap_or(false) {
+                if self.stmt_diverges(&then_branch_typed).exits_function() {
                     for (name, ty) in refinements.false_path {
                         if let Some(case) = self.scopes.refine(&name, ty.clone()) {
                             typed_refinements.after_path.push(case)
@@ -138,7 +138,7 @@ impl<'src> TypeChecker<'src> {
                     }
                 }
                 if let Some(else_branch_typed) = &else_branch_typed
-                    && self.stmt_returns(else_branch_typed).unwrap_or(false)
+                    && self.stmt_diverges(else_branch_typed).exits_function()
                 {
                     for (name, ty) in refinements.true_path {
                         if let Some(case) = self.scopes.refine(&name, ty.clone()) {
@@ -211,28 +211,6 @@ impl<'src> TypeChecker<'src> {
                     },
                 }
             }
-            Stmt::Return { value, keyword } => {
-                if let Some((func_return_type, func_span)) = self.scopes.return_type() {
-                    let coerced_return = self.coerce_expression(
-                        value,
-                        &func_return_type,
-                        MismatchContext::Return,
-                        Some(func_span),
-                    );
-
-                    TypedStmt {
-                        span: coerced_return.span.merge(keyword.span),
-                        kind: StmtKind::Return(coerced_return),
-                        type_info: Type::Void,
-                    }
-                } else {
-                    let span = stmt.span();
-                    self.report(TypeCheckerError::InvalidReturnOutsideFunction { span });
-
-                    TypedStmt::new_blank(span)
-                }
-            }
-
             Stmt::ExternFunction { name, .. } => {
                 if self.non_global("extern func", name) {
                     return TypedStmt::new_blank(stmt.span());
