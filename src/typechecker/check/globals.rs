@@ -1,12 +1,12 @@
 use crate::compiler::analysis::ResolvedVar;
-use crate::parser::ast::{FunctionSig, Stmt, TypeAst, VariantType};
+use crate::parser::ast::{Stmt, TypeAst, VariantType};
 use crate::scanner::{Span, Token};
-use crate::typechecker::core::ast::{ExprKind, StmtKind, TypedExpr, TypedStmt};
+use crate::typechecker::core::ast::{StmtKind, TypedStmt};
 use crate::typechecker::core::error::{
     DuplicateDefinition, DuplicateKind, Mismatch, Recoverable, TypeCheckerError,
 };
 use crate::typechecker::core::types::Type;
-use crate::typechecker::scope::guards::{ScopeGuard, TypeScopeGuard};
+use crate::typechecker::scope::guards::TypeScopeGuard;
 use crate::typechecker::scope::variables::Declaration;
 use crate::typechecker::system::ImplMethod;
 use crate::typechecker::{Symbol, TypeChecker};
@@ -154,24 +154,21 @@ impl<'src> TypeChecker<'src> {
                     generics,
                 } => {
                     let primary_mangled = format!("{}.{}", name.lexeme, func_name.lexeme);
-                    if let Some(expr) = guard
-                        .check_function(func_name, signature, body, generics)
-                        .ok_or_report(&mut guard.errors)
-                    {
-                        let (_, location) = guard
-                            .scopes
-                            .lookup(&primary_mangled)
-                            .expect("Function was added");
-                        typed_methods.push(TypedStmt {
-                            kind: StmtKind::Function {
-                                name: primary_mangled.into_boxed_str(),
-                                target: location,
-                                function_decl: expr,
-                            },
-                            span: Default::default(),
-                            type_info: Type::Nil,
-                        });
-                    }
+                    let (fn_decl, _, _) =
+                        guard.check_function(func_name, signature, body, generics);
+                    let (_, location) = guard
+                        .scopes
+                        .lookup(&primary_mangled)
+                        .expect("Function was added");
+                    typed_methods.push(TypedStmt {
+                        kind: StmtKind::Function {
+                            name: primary_mangled.into_boxed_str(),
+                            target: location,
+                            decl: fn_decl,
+                        },
+                        span: Default::default(),
+                        type_info: Type::Nil,
+                    });
                 }
                 Stmt::ExternFunction { name: func_name, .. } => {
                     let primary_mangled = format!("{}.{}", name.lexeme, func_name.lexeme);
@@ -211,81 +208,6 @@ impl<'src> TypeChecker<'src> {
             span: impl_block.span(),
             type_info: Type::Void,
         }
-    }
-
-    pub(crate) fn check_function(
-        &mut self,
-        name: &Token<'src>,
-        sig: &FunctionSig,
-        body: &Stmt<'src>,
-        generics: &[Token<'src>],
-    ) -> Result<TypedExpr, TypeCheckerError> {
-        let mut ty_guard = TypeScopeGuard::new_function(self, generics);
-        let func = ty_guard.res().resolve_generic_func(sig)?;
-        let func_type = Type::Function(func.clone());
-        let mut guard =
-            ScopeGuard::new_function(&mut ty_guard, func.return_type.clone(), name.span);
-
-        let decl = Declaration::function(name.lexeme.into(), func_type.clone(), name.span);
-        guard.scopes.declare(decl)?;
-
-        // Declare parameters. Use ok_or_report so duplicate-param errors don't prevent body checking.
-        for (i, (param, _)) in sig.params.iter().enumerate() {
-            let param_decl =
-                Declaration::parameter(param.lexeme.into(), func.params[i].1.clone(), param.span);
-            guard
-                .scopes
-                .declare(param_decl)
-                .ok_or_report(&mut guard.errors);
-        }
-
-        let func_body = guard.check_stmt(body);
-
-        let reserved = guard.scopes.max_index();
-
-        let old_closures = guard.scopes.get_closures();
-        drop(guard);
-        drop(ty_guard);
-
-        let mut captures = vec![];
-        for clos_var in old_closures {
-            let (_, var_ctx) = self
-                .scopes
-                .lookup(clos_var.as_ref())
-                .expect("Variable should exist in upper scope.");
-            captures.push(var_ctx);
-        }
-        let function_span = name.span.merge(func_body.span);
-        let fn_span = name.span.merge(Span {
-            end: func_body.span.start,
-            ..func_body.span
-        });
-
-        let return_type = match &func_type {
-            Type::Function(f) => &f.return_type,
-            _ => unreachable!(),
-        };
-        if *return_type != Type::Void && !self.stmt_diverges(&func_body).exits_function() {
-            self.report(TypeCheckerError::MissingReturnStatement {
-                fn_span,
-                fn_name: name.lexeme.to_string(),
-                span: Span {
-                    start: func_body.span.end,
-                    ..func_body.span
-                },
-            });
-        }
-
-        Ok(TypedExpr {
-            kind: ExprKind::Function {
-                signature: fn_span,
-                body: Box::new(func_body),
-                captures: Box::from(captures),
-                reserved: reserved as u8,
-            },
-            ty: func_type,
-            span: function_span,
-        })
     }
 
     fn declare_function(

@@ -219,11 +219,6 @@ pub enum Stmt<'src> {
         brace_token: Token<'src>,
         body: Vec<Stmt<'src>>,
     },
-    If {
-        condition: Expr<'src>,
-        then_branch: Box<Stmt<'src>>,
-        else_branch: Option<Box<Stmt<'src>>>,
-    },
     While {
         condition: Expr<'src>,
         body: Box<Stmt<'src>>,
@@ -259,10 +254,6 @@ pub enum Stmt<'src> {
         name: Token<'src>,
         variants: Vec<(Token<'src>, VariantType<'src>)>,
         generics: Vec<Token<'src>>,
-    },
-    Match {
-        value: Box<Expr<'src>>,
-        arms: Vec<MatchArm<'src>>,
     },
 }
 
@@ -574,21 +565,6 @@ impl Display for Stmt<'_> {
                 }
                 write!(f, "end")
             }
-            Stmt::If {
-                condition,
-                then_branch,
-                else_branch,
-            } => {
-                if let Some(else_branch) = else_branch {
-                    write!(
-                        f,
-                        "if {} then {} else {}",
-                        condition, then_branch, else_branch
-                    )
-                } else {
-                    write!(f, "if {} then {}", condition, then_branch)
-                }
-            }
             Stmt::While { condition, body } => write!(f, "while {} then {}", condition, body),
             Stmt::Function {
                 name,
@@ -713,13 +689,6 @@ impl Display for Stmt<'_> {
                 }
                 write!(f, "}}")
             }
-            Stmt::Match { value, arms } => {
-                write!(f, "match {} {{", value)?;
-                for arm in arms {
-                    write!(f, " {} => {}", arm.pattern, arm.body)?;
-                }
-                write!(f, "}}")
-            }
         }
     }
 }
@@ -821,17 +790,6 @@ impl Stmt<'_> {
                 .first()
                 .map(|first| brace_token.span.merge(first.span()))
                 .unwrap_or(brace_token.span),
-            Stmt::If {
-                condition,
-                then_branch,
-                else_branch,
-            } => {
-                let base = condition.span().merge(then_branch.span());
-                else_branch
-                    .as_ref()
-                    .map(|branch| base.merge(branch.span()))
-                    .unwrap_or(base)
-            }
             Stmt::While { condition, body } => condition.span().merge(body.span()),
             Stmt::Function { name, body, .. } => name.span.merge(body.span()),
             Stmt::ExternFunction {
@@ -853,10 +811,6 @@ impl Stmt<'_> {
                 .last()
                 .map(|(variant, _)| name.span.merge(variant.span))
                 .unwrap_or(name.span),
-            Stmt::Match { value, arms } => arms
-                .last()
-                .map(|arm| value.span().merge(arm.body.span()))
-                .unwrap_or_else(|| value.span()),
         }
     }
 }

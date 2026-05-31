@@ -1,6 +1,6 @@
 use crate::scanner::Span;
 use crate::typechecker::core::ast::{
-    ExprKind, ExprMatchCase, MatchCase, StmtKind, TypedExpr, TypedStmt, TypedStringPart,
+    ExprKind, FunctionBody, MatchCase, StmtKind, TypedExpr, TypedStmt, TypedStringPart,
 };
 use crate::typechecker::core::error::TypeCheckerWarning;
 use crate::typechecker::core::types::Type;
@@ -35,18 +35,6 @@ impl Diverges {
     }
 }
 
-fn stmt_case_body(case: &MatchCase) -> &TypedStmt {
-    match case {
-        MatchCase::Variable { body, .. } | MatchCase::Named { body, .. } => body,
-    }
-}
-
-fn expr_case_body(case: &ExprMatchCase) -> &TypedExpr {
-    match case {
-        ExprMatchCase::Variable { body, .. } | ExprMatchCase::Named { body, .. } => body,
-    }
-}
-
 /// Check for diverging code
 impl<'src> TypeChecker<'src> {
     pub(crate) fn stmt_diverges(&self, stmt: &TypedStmt) -> Diverges {
@@ -63,36 +51,6 @@ impl<'src> TypeChecker<'src> {
                     }
                 }
                 Diverges::No
-            }
-
-            StmtKind::If {
-                condition,
-                then_branch,
-                else_branch,
-                ..
-            } => {
-                let cd = self.expr_diverges(condition);
-                if cd.is_divergent() {
-                    return cd;
-                }
-                match else_branch {
-                    Some(eb) => self.stmt_diverges(then_branch).meet(self.stmt_diverges(eb)),
-                    None => Diverges::No,
-                }
-            }
-
-            StmtKind::Match { value, cases } => {
-                let vd = self.expr_diverges(value);
-                if vd.is_divergent() {
-                    return vd;
-                }
-                if cases.is_empty() {
-                    return Diverges::No;
-                }
-                cases
-                    .iter()
-                    .map(|c| self.stmt_diverges(stmt_case_body(c)))
-                    .fold(Diverges::Always, Diverges::meet)
             }
 
             StmtKind::While { condition, .. } => self.expr_diverges(condition),
@@ -140,7 +98,7 @@ impl<'src> TypeChecker<'src> {
                 self.expr_diverges(tail)
             }
 
-            ExprKind::IfExpr {
+            ExprKind::If {
                 condition,
                 then_branch,
                 else_branch,
@@ -157,7 +115,7 @@ impl<'src> TypeChecker<'src> {
                 }
             }
 
-            ExprKind::MatchExpr { value, cases } => {
+            ExprKind::Match { value, cases } => {
                 let vd = self.expr_diverges(value);
                 if vd.is_divergent() {
                     return vd;
@@ -167,7 +125,7 @@ impl<'src> TypeChecker<'src> {
                 }
                 cases
                     .iter()
-                    .map(|c| self.expr_diverges(expr_case_body(c)))
+                    .map(|c| self.expr_diverges(case_body(c)))
                     .fold(Diverges::Always, Diverges::meet)
             }
 
@@ -285,7 +243,7 @@ impl<'src> TypeChecker<'src> {
             }
 
             // Lambda body is its own function — defining it never diverges.
-            ExprKind::Function { .. } => Diverges::No,
+            ExprKind::Lambda(_) => Diverges::No,
 
             // Leaf nodes.
             ExprKind::Literal(_) | ExprKind::GetVar(_, _) | ExprKind::NoOp => Diverges::No,
@@ -311,26 +269,6 @@ impl<'src> TypeChecker<'src> {
                 self.walk_block_stmts(stmts);
             }
 
-            StmtKind::If {
-                condition,
-                then_branch,
-                else_branch,
-                ..
-            } => {
-                self.walk_expr(condition);
-                self.walk_stmt(then_branch);
-                if let Some(eb) = else_branch {
-                    self.walk_stmt(eb);
-                }
-            }
-
-            StmtKind::Match { value, cases } => {
-                self.walk_expr(value);
-                for case in cases {
-                    self.walk_stmt(stmt_case_body(case));
-                }
-            }
-
             StmtKind::While {
                 condition, body, ..
             } => {
@@ -338,12 +276,12 @@ impl<'src> TypeChecker<'src> {
                 self.walk_stmt(body);
             }
 
-            StmtKind::Function { function_decl, .. } => {
-                let ExprKind::Function { body, .. } = &function_decl.kind else {
-                    return;
-                };
-                self.walk_stmt(body);
-            }
+            StmtKind::Function { decl, .. } => match &decl.body {
+                FunctionBody::Block(body) => self.walk_stmt(body),
+                FunctionBody::Expr(_) => {
+                    unreachable!("named function body is always a block")
+                }
+            },
 
             StmtKind::Impl { methods, .. } => {
                 for method in methods {
@@ -419,7 +357,7 @@ impl<'src> TypeChecker<'src> {
                 }
             }
 
-            ExprKind::IfExpr {
+            ExprKind::If {
                 condition,
                 then_branch,
                 else_branch,
@@ -432,17 +370,17 @@ impl<'src> TypeChecker<'src> {
                 }
             }
 
-            ExprKind::MatchExpr { value, cases } => {
+            ExprKind::Match { value, cases } => {
                 self.walk_expr(value);
                 for case in cases {
-                    self.walk_expr(expr_case_body(case));
+                    self.walk_expr(case_body(case));
                 }
             }
 
-            // Lambda: walk its body for unreachable code.
-            ExprKind::Function { body, .. } => {
-                self.walk_stmt(body);
-            }
+            ExprKind::Lambda(decl) => match &decl.body {
+                FunctionBody::Block(body) => self.walk_stmt(body),
+                FunctionBody::Expr(expr) => self.walk_expr(expr),
+            },
 
             ExprKind::Return(inner) => {
                 self.walk_expr(inner);
@@ -542,5 +480,11 @@ impl<'src> TypeChecker<'src> {
             // Leaf nodes — nothing to recurse into.
             ExprKind::Literal(_) | ExprKind::GetVar(_, _) | ExprKind::NoOp => {}
         }
+    }
+}
+
+fn case_body(case: &MatchCase) -> &TypedExpr {
+    match case {
+        MatchCase::Variable { body, .. } | MatchCase::Named { body, .. } => body,
     }
 }

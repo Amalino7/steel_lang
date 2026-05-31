@@ -1,4 +1,4 @@
-use crate::parser::ast::{MatchArm, Stmt};
+use crate::parser::ast::Stmt;
 use crate::parser::error::ParserError;
 use crate::parser::{check_token_type, match_token_type, Parser, TokT};
 
@@ -72,32 +72,6 @@ impl<'src> Parser<'src> {
         Ok(Stmt::While {
             condition,
             body: Box::new(body),
-        })
-    }
-
-    #[allow(dead_code)]
-    fn match_statement(&mut self) -> Result<Stmt<'src>, ParserError<'src>> {
-        let expr = self.expression();
-        let expr = expr?;
-
-        self.consume(TokT::LeftBrace, "Expected '{' after match statement.")?;
-        let mut arms = vec![];
-        while !check_token_type!(self, TokT::RightBrace) {
-            // pattern
-            let pattern = self.pattern()?;
-            // =>
-            self.consume(TokT::Arrow, "Expected '=>' after match pattern.")?;
-            // block
-            let block = self.block()?;
-            arms.push(MatchArm {
-                pattern,
-                body: block,
-            });
-        }
-        self.consume(TokT::RightBrace, "Expected '}' after match statement.")?;
-        Ok(Stmt::Match {
-            value: Box::new(expr),
-            arms,
         })
     }
 

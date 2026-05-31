@@ -2,7 +2,7 @@ use crate::compiler::Compiler;
 use crate::execute_source;
 use crate::parser::Parser;
 use crate::scanner::Scanner;
-use crate::typechecker::core::ast::StmtKind;
+use crate::typechecker::core::ast::{FunctionBody, StmtKind};
 use crate::typechecker::TypeChecker;
 use crate::vm::gc::GarbageCollector;
 use crate::vm::value::Value;
@@ -29,7 +29,7 @@ pub fn assert_global(source: &str, global_index: usize, expected: Value) {
 
     let mut gc = GarbageCollector::new();
     let compiler = Compiler::new("main".to_string(), &mut gc);
-    let function = compiler.compile(0, &typed_ast);
+    let function = compiler.compile(0, &FunctionBody::Block(Box::new(typed_ast)));
 
     let mut vm = VM::new(global_count, &mut gc);
     vm.run(function).expect("VM execution failed");
@@ -65,7 +65,7 @@ pub fn assert_panics_with_prelude(source: &str) {
 
     let mut gc = GarbageCollector::new();
     let compiler = Compiler::new("main".to_string(), &mut gc);
-    let function = compiler.compile(0, &typed_ast);
+    let function = compiler.compile(0, &FunctionBody::Block(Box::new(typed_ast)));
 
     let mut vm = VM::new(global_count, &mut gc);
     vm.set_natives_by_name(&natives, &extern_fns);
@@ -91,7 +91,7 @@ pub fn assert_global_string(source: &str, global_index: usize, expected: &str) {
 
     let mut gc = GarbageCollector::new();
     let compiler = Compiler::new("main".to_string(), &mut gc);
-    let function = compiler.compile(0, &typed_ast);
+    let function = compiler.compile(0, &FunctionBody::Block(Box::new(typed_ast)));
 
     let mut vm = VM::new(global_count, &mut gc);
     vm.run(function).expect("VM execution failed");
@@ -136,7 +136,7 @@ pub fn assert_panics(source: &str) {
 
     let mut gc = GarbageCollector::new();
     let compiler = Compiler::new("main".to_string(), &mut gc);
-    let function = compiler.compile(0, &typed_ast);
+    let function = compiler.compile(0, &FunctionBody::Block(Box::new(typed_ast)));
 
     let mut vm = VM::new(global_count, &mut gc);
     assert!(
