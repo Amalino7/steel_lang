@@ -16,7 +16,7 @@ notify = "6"
 
 [dev-dependencies]
 criterion = { version = "0.8.2", features = ["html_reports"] }
-
+ 
 [[bench]]
 name = "vm_bench"
 harness = false
