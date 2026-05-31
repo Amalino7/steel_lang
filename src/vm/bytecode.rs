@@ -32,16 +32,25 @@ pub enum Opcode {
 
     GreaterString,
     LessString,
+    GreaterEqualString,
+    LessEqualString,
 
     GreaterNumber,
     LessNumber,
+    GreaterEqualNumber,
+    LessEqualNumber,
 
     Nil,
+    True,
+    False,
+    SmallInt,
+
     Pop,
     Reserve,
     Dup,
 
     JumpIfFalse,
+    JumpIfTrue,
     Jump,
     JumpBack,
     JumpIfNil,

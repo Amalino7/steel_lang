@@ -108,6 +108,17 @@ impl<'gc> VM<'gc> {
                     let val = chunk.constants[index];
                     self.stack.push(val);
                 }
+                Opcode::True => {
+                    self.stack.push(Value::Boolean(true));
+                }
+                Opcode::False => {
+                    self.stack.push(Value::Boolean(false));
+                }
+                Opcode::SmallInt => {
+                    let value = chunk.instructions[current_frame.ip];
+                    current_frame.ip += 1;
+                    self.stack.push(Value::Number(value as f64));
+                }
                 Opcode::Return => {
                     let val = self.stack.pop();
                     if self.frames.is_empty() {
@@ -247,6 +258,26 @@ impl<'gc> VM<'gc> {
                         _ => unreachable!("Can only compare numbers"),
                     }
                 }
+                Opcode::GreaterEqualNumber => {
+                    let b = self.stack.pop();
+                    let a = self.stack.pop();
+                    match (a, b) {
+                        (Value::Number(a), Value::Number(b)) => {
+                            self.stack.push(Value::Boolean(a >= b))
+                        }
+                        _ => unreachable!("Can only compare numbers"),
+                    }
+                }
+                Opcode::LessEqualNumber => {
+                    let b = self.stack.pop();
+                    let a = self.stack.pop();
+                    match (a, b) {
+                        (Value::Number(a), Value::Number(b)) => {
+                            self.stack.push(Value::Boolean(a <= b))
+                        }
+                        _ => unreachable!("Can only compare numbers"),
+                    }
+                }
                 Opcode::GreaterString => {
                     let b = self.stack.pop();
                     let a = self.stack.pop();
@@ -263,6 +294,26 @@ impl<'gc> VM<'gc> {
                     match (a, b) {
                         (Value::String(a), Value::String(b)) => {
                             self.stack.push(Value::Boolean(a.as_str() < b.as_str()))
+                        }
+                        _ => unreachable!("Can only compare strings"),
+                    }
+                }
+                Opcode::GreaterEqualString => {
+                    let b = self.stack.pop();
+                    let a = self.stack.pop();
+                    match (a, b) {
+                        (Value::String(a), Value::String(b)) => {
+                            self.stack.push(Value::Boolean(a.as_str() >= b.as_str()))
+                        }
+                        _ => unreachable!("Can only compare strings"),
+                    }
+                }
+                Opcode::LessEqualString => {
+                    let b = self.stack.pop();
+                    let a = self.stack.pop();
+                    match (a, b) {
+                        (Value::String(a), Value::String(b)) => {
+                            self.stack.push(Value::Boolean(a.as_str() <= b.as_str()))
                         }
                         _ => unreachable!("Can only compare strings"),
                     }
@@ -288,6 +339,15 @@ impl<'gc> VM<'gc> {
                     current_frame.ip += 2;
                     let cond = self.stack.get_top();
                     if cond == Value::Boolean(false) {
+                        current_frame.ip += offset;
+                    }
+                }
+                Opcode::JumpIfTrue => {
+                    let offset =
+                        read_16_bytes(&chunk.instructions[current_frame.ip..current_frame.ip + 2]);
+                    current_frame.ip += 2;
+                    let cond = self.stack.get_top();
+                    if cond == Value::Boolean(true) {
                         current_frame.ip += offset;
                     }
                 }

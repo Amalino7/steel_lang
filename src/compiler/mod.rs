@@ -68,8 +68,9 @@ impl<'a> Compiler<'a> {
                 typed_refinements,
             } => {
                 let line = stmt.span.line;
-                self.compile_expr(condition);
-                let then_jump = self.emit_jump(Opcode::JumpIfFalse, line);
+
+                let then_jump = self.emit_condition(condition, line);
+
                 self.emit_op(Opcode::Pop, line);
 
                 self.emit_refinement(&typed_refinements.true_path, line);
@@ -141,9 +142,8 @@ impl<'a> Compiler<'a> {
                 let line = stmt.span.line;
 
                 let loop_start = self.chunk().instructions.len();
-                self.compile_expr(condition);
 
-                let exit_jump = self.emit_jump(Opcode::JumpIfFalse, line);
+                let exit_jump = self.emit_condition(condition, line);
                 self.emit_op(Opcode::Pop, line);
 
                 self.emit_refinement(true_path, line);
@@ -290,6 +290,21 @@ impl<'a> Compiler<'a> {
             }
         }
     }
+
+    fn emit_condition(&mut self, condition: &TypedExpr, line: u32) -> usize {
+        if let ExprKind::Unary {
+            operator: UnaryOp::Not,
+            operand: inner,
+        } = &condition.kind
+        {
+            self.compile_expr(&inner);
+            self.emit_jump(Opcode::JumpIfTrue, line)
+        } else {
+            self.compile_expr(condition);
+            self.emit_jump(Opcode::JumpIfFalse, line)
+        }
+    }
+
     fn emit_set_var(&mut self, var_ctx: &ResolvedVar, line: u32) {
         match var_ctx {
             ResolvedVar::Local(idx) => {
@@ -375,20 +390,16 @@ impl<'a> Compiler<'a> {
                     BinaryOp::GreaterString => self.emit_op(Opcode::GreaterString, line),
                     BinaryOp::GreaterNumber => self.emit_op(Opcode::GreaterNumber, line),
                     BinaryOp::GreaterEqualString => {
-                        self.emit_op(Opcode::LessString, line);
-                        self.emit_op(Opcode::Not, line);
+                        self.emit_op(Opcode::GreaterEqualString, line);
                     }
                     BinaryOp::GreaterEqualNumber => {
-                        self.emit_op(Opcode::LessNumber, line);
-                        self.emit_op(Opcode::Not, line);
+                        self.emit_op(Opcode::GreaterEqualNumber, line);
                     }
                     BinaryOp::LessEqualNumber => {
-                        self.emit_op(Opcode::GreaterNumber, line);
-                        self.emit_op(Opcode::Not, line);
+                        self.emit_op(Opcode::LessEqualNumber, line);
                     }
                     BinaryOp::LessEqualString => {
-                        self.emit_op(Opcode::GreaterString, line);
-                        self.emit_op(Opcode::Not, line);
+                        self.emit_op(Opcode::LessEqualString, line);
                     }
                     BinaryOp::EqualEqualNumber => self.emit_op(Opcode::EqualNumber, line),
                     BinaryOp::EqualEqualString => self.emit_op(Opcode::EqualString, line),
@@ -406,6 +417,10 @@ impl<'a> Compiler<'a> {
                 // target !!
             }
             ExprKind::Literal(literal) => match literal {
+                Literal::Number(n) if n.fract() == 0.0 && (0.0..=255.0).contains(n) => {
+                    self.emit_op(Opcode::SmallInt, line);
+                    self.emit_byte(*n as u8, line);
+                }
                 Literal::Number(n) => self
                     .chunk()
                     .write_constant(Value::Number(*n), line as usize),
@@ -414,10 +429,8 @@ impl<'a> Compiler<'a> {
                     self.chunk()
                         .write_constant(Value::String(str), line as usize)
                 }
-                Literal::Boolean(b) => {
-                    self.chunk()
-                        .write_constant(Value::Boolean(*b), line as usize);
-                }
+                Literal::Boolean(true) => self.emit_op(Opcode::True, line),
+                Literal::Boolean(false) => self.emit_op(Opcode::False, line),
                 Literal::Void => {
                     self.chunk().write_constant(Value::Nil, line as usize);
                 }
@@ -486,10 +499,7 @@ impl<'a> Compiler<'a> {
                 self.compile_expr(left);
                 match operator {
                     LogicalOp::Or => {
-                        // TODO Add jump if true for better performance
-                        let else_jump = self.emit_jump(Opcode::JumpIfFalse, line);
-                        let end_jump = self.emit_jump(Opcode::Jump, line);
-                        self.patch_jump(else_jump);
+                        let end_jump = self.emit_jump(Opcode::JumpIfTrue, line);
                         self.emit_op(Opcode::Pop, line);
                         self.emit_refinement(typed_refinements, line);
                         self.compile_expr(right);

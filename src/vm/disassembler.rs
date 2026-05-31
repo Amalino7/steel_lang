@@ -44,6 +44,12 @@ pub fn disassemble_instruction(
             let val = constants[index];
             println!(" {}", val);
         }
+        Opcode::True => println!("True"),
+        Opcode::False => println!("False"),
+        Opcode::SmallInt => {
+            offset += 1;
+            println!("SmallInt {}", bytecode[offset]);
+        }
         Opcode::Return => println!("Return"),
         Opcode::Halt => println!("Halt"),
         Opcode::Negate => println!("Negate"),
@@ -65,11 +71,23 @@ pub fn disassemble_instruction(
         Opcode::LessString => {
             println!("LessString")
         }
+        Opcode::GreaterEqualString => {
+            println!("GreaterEqualString")
+        }
+        Opcode::LessEqualString => {
+            println!("LessEqualString")
+        }
         Opcode::GreaterNumber => {
             println!("GreaterNumber")
         }
         Opcode::LessNumber => {
             println!("LessNumber")
+        }
+        Opcode::GreaterEqualNumber => {
+            println!("GreaterEqualNumber")
+        }
+        Opcode::LessEqualNumber => {
+            println!("LessEqualNumber")
         }
         Opcode::Pop => {
             println!("Pop")
@@ -78,6 +96,11 @@ pub fn disassemble_instruction(
             offset += 2;
             let jump_offset = read_bytes(&bytecode[(offset - 1)..=offset]);
             println!("JumpIfFalse {} ", jump_offset)
+        }
+        Opcode::JumpIfTrue => {
+            offset += 2;
+            let jump_offset = read_bytes(&bytecode[(offset - 1)..=offset]);
+            println!("JumpIfTrue {} ", jump_offset)
         }
         Opcode::Jump => {
             offset += 2;
