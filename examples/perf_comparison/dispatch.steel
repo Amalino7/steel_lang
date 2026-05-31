@@ -1,0 +1,42 @@
+interface Shape {
+    func area(self): number;
+}
+
+struct Square {
+    side: number,
+}
+
+impl Square : Shape {
+    func area(self): number {
+        return self.side * self.side;
+    }
+}
+
+struct Circle {
+    radius: number,
+}
+
+impl Circle : Shape {
+    func area(self): number {
+        return 3.14159 * self.radius * self.radius;
+    }
+}
+
+func get_area(s: Shape): number {
+    return s.area();
+}
+
+let sq: Shape = Square(side: 10);
+let circ: Shape = Circle(radius: 5);
+
+let i = 0;
+let total = 0;
+while i < 1000000 {
+    if i % 2 == 0 {
+        total = total + get_area(sq);
+    } else {
+        total = total + get_area(circ);
+    }
+    i = i + 1;
+}
+print(total);

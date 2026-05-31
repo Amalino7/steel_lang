@@ -1,0 +1,40 @@
+// ─────────────────────────────────────────────
+//  Steel Language Demo — 03: Enums & Pattern Matching
+//  ADTs · Named-field Variants · Exhaustive Match · Guards
+// ─────────────────────────────────────────────
+
+// ── Algebraic Data Type (enum) ─────────────────
+enum Command {
+    Quit,
+    Move   { x: number, y: number },
+    Say    { message: string },
+    Repeat { times: number, message: string },
+}
+
+impl Command {
+    func handle(self) {
+        match self {
+            .Quit => {
+                println("Goodbye!");
+            }
+            .Move(:x, :y) => {
+                println("Moving to (${x}, ${y})");
+            }
+            // .Say(:message) => {
+            //     println(">> ${message}");
+            // }
+            .Repeat(:times, :message) => {
+                let i = 0;
+                while i < times {
+                    println("[${i + 1}/${times}] ${message}");
+                    i += 1;
+                }
+            }
+        }
+    }
+}
+
+Command.Say(message: "Hello from Steel!").handle();
+Command.Move(x: 3, y: -7).handle();
+Command.Repeat(times: 3, message: "Echo...").handle();
+Command.Quit.handle();

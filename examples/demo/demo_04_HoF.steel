@@ -1,0 +1,15 @@
+
+
+func xEr(factor: number): func(number): number {
+    func inner(num: number): number {
+        return factor * num;
+    }
+    return inner;
+}
+let doubler = xEr(2);
+let tripler = xEr(3);
+
+
+println(doubler(10));
+println(doubler(20));
+println(doubler(tripler(10)));

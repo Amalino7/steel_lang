@@ -94,6 +94,19 @@ impl<'src> TypeChecker<'src> {
                     false_path: vec![],
                 }
             }
+            ExprKind::Logical {
+                left,
+                operator,
+                right,
+                ..
+            } if operator == &LogicalOp::Or => {
+                let refine_left = self.analyze_condition(left);
+                let refine_right = self.analyze_condition(right);
+                BranchRefinements {
+                    true_path: vec![],
+                    false_path: [refine_left.false_path, refine_right.false_path].concat(),
+                }
+            }
             _ => BranchRefinements {
                 true_path: vec![],
                 false_path: vec![],

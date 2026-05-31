@@ -1,0 +1,24 @@
+func collatz_steps(n: number): number {
+    let steps = 0;
+    let curr = n;
+    while curr != 1 {
+        if curr % 2 == 0 {
+            curr = curr / 2;
+        } else {
+            curr = curr * 3 + 1;
+        }
+        steps = steps + 1;
+    }
+    return steps;
+}
+
+let i = 1;
+let max_steps = 0;
+while i < 50000 {
+    let s = collatz_steps(i);
+    if s > max_steps {
+        max_steps = s;
+    }
+    i = i + 1;
+}
+print(max_steps);
