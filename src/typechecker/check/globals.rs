@@ -173,7 +173,9 @@ impl<'src> TypeChecker<'src> {
                         });
                     }
                 }
-                Stmt::ExternFunction { name: func_name, .. } => {
+                Stmt::ExternFunction {
+                    name: func_name, ..
+                } => {
                     let primary_mangled = format!("{}.{}", name.lexeme, func_name.lexeme);
                     let (_, location) = guard
                         .scopes
@@ -356,11 +358,9 @@ impl<'src> TypeChecker<'src> {
                         self.sys.declare_interface(name.lexeme.into(), stmt.span())
                     }
                 }
-                Stmt::Enum { name, generics, .. } => {
-                    if self.redeclaration_check(name).is_ok() {
-                        self.sys
-                            .declare_enum(stmt.span(), name.lexeme.into(), generics);
-                    }
+                Stmt::Enum { name, generics, .. } if self.redeclaration_check(name).is_ok() => {
+                    self.sys
+                        .declare_enum(stmt.span(), name.lexeme.into(), generics);
                 }
                 _ => {}
             }
