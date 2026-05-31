@@ -1,0 +1,21 @@
+struct Vec2 {
+    x: number,
+    y: number,
+}
+impl Vec2 {
+    func new(x: number, y: number): Vec2 {
+        return Vec2(x,y);
+    }
+    func add(self, other: Self): Self {
+        return Vec2(self.x + other.x, self.y + other.y);
+    }
+    func show(self) {
+        println("x = ", self.x," ", "y = ", self.y);
+    }
+}
+func main() {
+    let a = Vec2.new(1,2);
+    let b = Vec2.new(3,4);
+    a.add(b).show();
+}
+main();
