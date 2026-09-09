@@ -75,7 +75,6 @@ impl<'src> TypeChecker<'src> {
         let mut ty_guard = TypeScopeGuard::new_function(self, generics);
         let sig_result = ty_guard.res().resolve_generic_func(sig);
         let sig_ok = sig_result.is_ok();
-        // TODO not like that
         let func = sig_result.recover(
             &mut ty_guard.errors,
             Rc::new(FunctionType {
