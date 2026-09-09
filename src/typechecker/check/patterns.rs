@@ -1,6 +1,6 @@
-use crate::parser::ast::{Binding, Expr, MatchArm, Pattern};
+use crate::parser::ast::{Binding, Expr, ExprMatchArm, Pattern};
 use crate::scanner::Span;
-use crate::typechecker::core::ast::{MatchCase, StmtKind, TypedBinding, TypedExpr, TypedStmt};
+use crate::typechecker::core::ast::{ExprKind, MatchCase, TypedBinding, TypedExpr};
 use crate::typechecker::core::error::TypeRequirement::Structural;
 use crate::typechecker::core::error::{
     Mismatch, MismatchContext, Operand, Recoverable, TypeCheckerError, TypeCheckerWarning,
@@ -19,7 +19,6 @@ struct MatchContext<'src> {
     enum_def: EnumType,
     generic_args: GenericArgs,
     matched_variants: HashSet<&'src str>,
-    typed_cases: Vec<MatchCase>,
     has_fallthrough: bool,
 }
 
@@ -39,11 +38,11 @@ fn check_match_exhaustiveness(ctx: &MatchContext<'_>, span: Span) -> Result<(), 
 }
 
 impl<'src> TypeChecker<'src> {
-    pub(crate) fn check_match_stmt(
+    pub(crate) fn check_match_expr(
         &mut self,
         value: &Expr<'src>,
-        arms: &[MatchArm<'src>],
-    ) -> Result<TypedStmt, TypeCheckerError> {
+        arms: &[ExprMatchArm<'src>],
+    ) -> Result<TypedExpr, TypeCheckerError> {
         let value_typed = self.check_expression(value, &Type::Unknown);
         let Type::Enum(enum_name, generics) = &value_typed.ty else {
             return Err(TypeCheckerError::OperatorConstraint {
@@ -59,25 +58,44 @@ impl<'src> TypeChecker<'src> {
             enum_def: self.sys.get_enum(enum_name).unwrap().clone(),
             generic_args: generics.clone(),
             matched_variants: HashSet::new(),
-            typed_cases: vec![],
             has_fallthrough: false,
         };
 
+        let mut expr_cases: Vec<MatchCase> = vec![];
+        let mut unified_type: Option<Type> = None;
+
         for arm in arms {
-            if let Err(err) = self.handle_match_arm(&mut ctx, &value_typed, arm) {
-                self.report(err);
+            if ctx.has_fallthrough {
+                self.warn(TypeCheckerWarning::UnreachablePattern {
+                    span: arm.body.span(),
+                    message: "Default case must be the last arm.".to_string(),
+                });
+                continue;
+            }
+
+            let arm_result =
+                self.handle_match_arm(&mut ctx, &value_typed, arm, unified_type.as_ref());
+
+            match arm_result {
+                Ok((case, arm_ty)) => {
+                    unified_type = unified_type.or(Some(arm_ty));
+                    expr_cases.push(case);
+                }
+                Err(e) => self.report(e),
             }
         }
 
         check_match_exhaustiveness(&ctx, value_typed.span)?;
 
-        Ok(TypedStmt {
-            kind: StmtKind::Match {
+        let result_type = unified_type.unwrap_or(Type::Void);
+        let span = value.span();
+        Ok(TypedExpr {
+            ty: result_type,
+            kind: ExprKind::Match {
                 value: Box::new(value_typed),
-                cases: ctx.typed_cases,
+                cases: expr_cases,
             },
-            type_info: Type::Void,
-            span: value.span(),
+            span,
         })
     }
 
@@ -85,15 +103,10 @@ impl<'src> TypeChecker<'src> {
         &mut self,
         ctx: &mut MatchContext<'src>,
         value_typed: &TypedExpr,
-        arm: &MatchArm<'src>,
-    ) -> Result<(), TypeCheckerError> {
-        if ctx.has_fallthrough {
-            self.warn(TypeCheckerWarning::UnreachablePattern {
-                span: arm.body.span(),
-                message: "Default case must be the last arm.".to_string(),
-            });
-            return Ok(());
-        }
+        arm: &ExprMatchArm<'src>,
+        expected_ty: Option<&Type>,
+    ) -> Result<(MatchCase, Type), TypeCheckerError> {
+        let hint = expected_ty.unwrap_or(&Type::Unknown);
 
         match &arm.pattern {
             Pattern::Named {
@@ -115,7 +128,7 @@ impl<'src> TypeChecker<'src> {
                     });
                 }
 
-                let (variant_idx, payload_type): (u16, Type) = ctx
+                let (variant_idx, payload_type) = ctx
                     .enum_def
                     .get_variant_from_instance(variant_name.lexeme, &ctx.generic_args)
                     .ok_or_else(|| {
@@ -137,7 +150,6 @@ impl<'src> TypeChecker<'src> {
                         span: arm.body.span(),
                         message: format!("Repeated pattern {}", variant_name.lexeme),
                     });
-                    return Ok(());
                 }
                 ctx.matched_variants.insert(variant_name.lexeme);
 
@@ -158,16 +170,20 @@ impl<'src> TypeChecker<'src> {
                             TypedBinding::Ignored
                         }
                     };
-                    let typed_body = guard.check_stmt(&arm.body);
+                    let typed_body =
+                        guard.coerce_expression(&arm.body, hint, MismatchContext::Generic, None);
                     (typed_binding, typed_body)
                 };
 
-                ctx.typed_cases.push(MatchCase::Named {
-                    variant_idx,
-                    binding: typed_binding,
-                    body: typed_body,
-                });
-                Ok(())
+                let arm_ty = typed_body.ty.clone();
+                Ok((
+                    MatchCase::Named {
+                        variant_idx,
+                        binding: typed_binding,
+                        body: typed_body,
+                    },
+                    arm_ty,
+                ))
             }
 
             Pattern::Variable(name) => {
@@ -179,15 +195,19 @@ impl<'src> TypeChecker<'src> {
                         false,
                     );
                     let typed_binding = result.recover(&mut guard.errors, TypedBinding::Ignored);
-                    let typed_body = guard.check_stmt(&arm.body);
+                    let typed_body =
+                        guard.coerce_expression(&arm.body, hint, MismatchContext::Generic, None);
                     (typed_binding, typed_body)
                 };
                 ctx.has_fallthrough = true;
-                ctx.typed_cases.push(MatchCase::Variable {
-                    binding: typed_binding,
-                    body: typed_body,
-                });
-                Ok(())
+                let arm_ty = typed_body.ty.clone();
+                Ok((
+                    MatchCase::Variable {
+                        binding: typed_binding,
+                        body: typed_body,
+                    },
+                    arm_ty,
+                ))
             }
         }
     }

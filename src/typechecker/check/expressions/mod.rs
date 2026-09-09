@@ -1,5 +1,6 @@
 mod access;
 mod calls;
+mod flow;
 mod misc;
 mod operators;
 pub(crate) mod static_access;
@@ -9,7 +10,9 @@ use crate::compiler::analysis::ResolvedVar::Global;
 use crate::parser::ast::{Expr, Literal, StringPart};
 use crate::scanner::Span;
 use crate::scanner::TokenType;
-use crate::typechecker::core::ast::{ExprKind, TypedExpr, TypedStringPart};
+use crate::typechecker::core::ast::{
+    ExprKind, TypedExpr, TypedStringPart,
+};
 use crate::typechecker::core::error::{
     BindingError, GenericError, Mismatch, MismatchContext, Recoverable, TypeCheckerError,
 };
@@ -276,6 +279,58 @@ impl<'src> TypeChecker<'src> {
             Expr::Error => {
                 // Already reported by parser
                 TypedExpr::new_blank(expr.span())
+            }
+
+            Expr::Block { body, tail, .. } => {
+                self.check_block_expr(body, tail.as_deref(), expected, span)
+            }
+
+            Expr::IfExpr {
+                condition,
+                then_branch,
+                else_branch,
+            } => self.check_if_expr(
+                condition,
+                then_branch,
+                else_branch.as_deref(),
+                expected,
+                span,
+            ),
+
+            Expr::MatchExpr { value, arms } => self
+                .check_match_expr(value, arms)
+                .recover(&mut self.errors, fallback()),
+
+            Expr::Lambda {
+                params,
+                body,
+                return_type,
+                pipe_token,
+            } => self.check_lambda(
+                params,
+                body,
+                return_type.as_ref(),
+                expected,
+                pipe_token.span,
+            ),
+
+            Expr::Return { keyword, value } => {
+                if let Some((func_return_type, func_span)) = self.scopes.return_type() {
+                    let coerced = self.coerce_expression(
+                        value,
+                        &func_return_type,
+                        MismatchContext::Return,
+                        Some(func_span),
+                    );
+                    TypedExpr {
+                        ty: Type::Never,
+                        kind: ExprKind::Return(Box::new(coerced)),
+                        span: keyword.span.merge(value.span()),
+                    }
+                } else {
+                    self.report(TypeCheckerError::InvalidReturnOutsideFunction { span });
+                    fallback()
+                }
             }
         }
     }

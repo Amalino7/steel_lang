@@ -49,6 +49,28 @@ pub enum BinaryOp {
     EqualEqual,
 }
 #[derive(Debug)]
+pub struct FunctionDecl {
+    pub reserved: u8,
+    pub body: FunctionBody,
+    pub captures: Box<[ResolvedVar]>,
+}
+
+#[derive(Debug)]
+pub enum FunctionBody {
+    Block(Box<TypedStmt>),
+    Expr(Box<TypedExpr>),
+}
+
+impl FunctionBody {
+    pub fn span(&self) -> Span {
+        match self {
+            FunctionBody::Block(s) => s.span,
+            FunctionBody::Expr(e) => e.span,
+        }
+    }
+}
+
+#[derive(Debug)]
 pub enum ExprKind {
     Literal(Literal),
     GetVar(ResolvedVar, Symbol),
@@ -153,12 +175,22 @@ pub enum ExprKind {
         arguments: Vec<TypedExpr>,
         safe: bool,
     },
-    Function {
-        reserved: u8,
-        signature: Span,
-        body: Box<TypedStmt>,
-        captures: Box<[ResolvedVar]>,
+    Lambda(FunctionDecl),
+    Block {
+        body: Vec<TypedStmt>,
+        tail: Box<TypedExpr>,
     },
+    If {
+        condition: Box<TypedExpr>,
+        then_branch: Box<TypedExpr>,
+        else_branch: Option<Box<TypedExpr>>,
+        typed_refinements: Box<TypedRefinements>,
+    },
+    Match {
+        value: Box<TypedExpr>,
+        cases: Vec<MatchCase>,
+    },
+    Return(Box<TypedExpr>),
 }
 
 #[derive(Debug)]
@@ -218,7 +250,6 @@ pub enum StmtKind {
         extern_fns: Vec<(Box<str>, u16)>,
     },
     Expression(TypedExpr),
-    Return(TypedExpr),
     Let {
         binding: TypedBinding,
         value: TypedExpr,
@@ -227,25 +258,15 @@ pub enum StmtKind {
         body: Vec<TypedStmt>,
         reserved: u16,
     },
-    If {
-        condition: TypedExpr,
-        then_branch: Box<TypedStmt>,
-        else_branch: Option<Box<TypedStmt>>,
-        typed_refinements: Box<TypedRefinements>,
-    },
-    Match {
-        value: Box<TypedExpr>,
-        cases: Vec<MatchCase>,
-    },
     While {
         condition: TypedExpr,
         body: Box<TypedStmt>,
         true_path: Vec<(ResolvedVar, ResolvedVar)>,
     },
     Function {
-        name: Box<str>, // reduces memory usage by 8 bytes
+        name: Box<str>,
         target: ResolvedVar,
-        function_decl: TypedExpr,
+        decl: FunctionDecl,
     },
     ExternFunction {
         name: Box<str>,
@@ -264,12 +285,12 @@ pub enum TypedBinding {
 pub enum MatchCase {
     Variable {
         binding: TypedBinding,
-        body: TypedStmt,
+        body: TypedExpr,
     },
     Named {
         variant_idx: u16,
         binding: TypedBinding,
-        body: TypedStmt,
+        body: TypedExpr,
     },
 }
 #[derive(Debug)]

@@ -139,6 +139,47 @@ fn test_assign_void() {
 }
 
 #[test]
+fn test_lambda_return_infers_type_from_return_stmt() {
+    // The lambda body always returns via `return`, so the block expr has type Never.
+    // The return type should be inferred from the return statement, not the block type.
+    assert_typechecks(
+        r#"
+        func apply<T>(f: func(T): T, x: T): T {
+            return f(x);
+        }
+        apply(|x: number| { return x + 1; }, 5);
+        "#,
+    );
+}
+
+#[test]
+fn test_lambda_return_with_explicit_annotation() {
+    assert_typechecks(
+        r#"
+        func apply(f: func(number): number, x: number): number {
+            return f(x);
+        }
+        apply(|x: number|: number { return x * 2; }, 3);
+        "#,
+    );
+}
+
+#[test]
+fn test_lambda_return_type_visible_to_caller() {
+    // The lambda returns a `number`. Assigning the result to a `string` must produce
+    // a TypeMismatch — proving the return type was correctly inferred as `number`, not
+    // as `Never` (the pre-fix bug).
+    Tester::new(
+        r#"
+        let f = |x: number| { return x; };
+        let _: string = f(1);
+        "#,
+    )
+    .expect_error(|e| matches!(e, TypeCheckerError::TypeMismatch { .. }))
+    .run();
+}
+
+#[test]
 fn test_multiple_errors_collected() {
     Tester::new(
         r#"
@@ -147,12 +188,7 @@ fn test_multiple_errors_collected() {
             return 10;                // Error 3: Return outside function
             "#,
     )
-    .expect_error(|e| {
-        matches!(
-            e,
-            TypeCheckerError::TypeMismatch { .. }
-        )
-    })
+    .expect_error(|e| matches!(e, TypeCheckerError::TypeMismatch { .. }))
     .expect_error(|e| matches!(e, TypeCheckerError::UndefinedVariable { .. }))
     .expect_error(|e| matches!(e, TypeCheckerError::InvalidReturnOutsideFunction { .. }))
     .run();

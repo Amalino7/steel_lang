@@ -104,6 +104,8 @@ impl<'src> Scanner<'src> {
             '>' if self.matches('=') => self.make_token(TokenType::GreaterEqual),
             '>' => self.make_token(TokenType::Greater),
 
+            '|' => self.make_token(TokenType::Pipe),
+
             '?' => {
                 if self.matches('?') {
                     self.make_token(TokenType::QuestionQuestion)
