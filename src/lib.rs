@@ -12,7 +12,7 @@ use crate::compiler::Compiler;
 use crate::parser::Parser;
 use crate::scanner::Scanner;
 use crate::stdlib::{get_natives, get_prelude};
-use crate::typechecker::core::ast::StmtKind;
+use crate::typechecker::core::ast::{FunctionBody, StmtKind};
 use crate::typechecker::TypeChecker;
 use crate::vm::gc::{GarbageCollector, Gc};
 use crate::vm::value::Function;
@@ -259,17 +259,6 @@ fn run_inner(config: &RunConfig, source: &str) -> RunOutput {
         };
     }
 
-    let mut gc = GarbageCollector::new();
-    let t = std::time::Instant::now();
-    let compiler = Compiler::new("main".to_string(), &mut gc);
-    let func = compiler.compile(0, &typed_ast);
-    timings.compilation = t.elapsed();
-
-    if emit_bytecode {
-        println!("=== Bytecode ===");
-        vm::disassembler::disassemble_chunk(&func.chunk, "main_script");
-        println!("================");
-    }
     let (global_count, extern_fns) = match &typed_ast.kind {
         StmtKind::Global {
             global_count,
@@ -278,6 +267,18 @@ fn run_inner(config: &RunConfig, source: &str) -> RunOutput {
         } => (*global_count, extern_fns.clone()),
         _ => panic!("Global statement expected"),
     };
+
+    let mut gc = GarbageCollector::new();
+    let t = std::time::Instant::now();
+    let compiler = Compiler::new("main".to_string(), &mut gc);
+    let func = compiler.compile(0, &FunctionBody::Block(Box::new(typed_ast)));
+    timings.compilation = t.elapsed();
+
+    if emit_bytecode {
+        println!("=== Bytecode ===");
+        vm::disassembler::disassemble_chunk(&func.chunk, "main_script");
+        println!("================");
+    }
     drop(typechecker);
     let mut vm = VM::new(global_count as usize, &mut gc);
     vm.set_natives_by_name(&natives, &extern_fns);
@@ -351,7 +352,7 @@ impl SteelProgram {
 
         let mut gc = GarbageCollector::new();
         let compiler = Compiler::new("main".to_string(), &mut gc);
-        let func = compiler.compile(0, &typed_ast);
+        let func = compiler.compile(0, &FunctionBody::Block(Box::new(typed_ast)));
 
         SteelProgram {
             func,

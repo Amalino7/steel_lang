@@ -1,0 +1,36 @@
+let square = |x: number| x * x;
+println(square(2));
+println([1, 2, 3]
+.map(square));
+let a = {
+    println(20);
+    if true {
+        println(10)
+    } else {
+        println(20)
+    }
+    10
+};
+let add = |a: number, b: number| {a + b};
+let xer: func(number): func(number):number =
+ |a| |b| a * b;
+let doubler = xer(2);
+let tripler = xer(3);
+println(doubler(5));
+println(tripler(5));
+println(add(1,2));
+println(a);
+
+enum Option<T> {
+    Some(T),
+    None,
+}
+let a = Option.Some(10);
+
+let a = {10;};
+println(a);
+
+while true {
+    let x = if true {10} else {panic("nope")};
+    println(x);
+}

@@ -55,7 +55,7 @@ impl<'gc> VM<'gc> {
             } else {
                 0
             };
-            stack_trace.push(format!("{} (span {})", frame.function.name, line));
+            stack_trace.push(format!("{} (line {})", frame.function.name, line));
         }
         RuntimeError {
             message: message.to_string(),

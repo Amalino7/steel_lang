@@ -1,0 +1,31 @@
+enum Status {
+    Ok,
+    Error(string),
+    Pending,
+}
+
+func handle(s: Status): number {
+    match s {
+        .Ok => { return 1; }
+        .Error(m) => { return 0; }
+        .Pending => { return 2; }
+    }
+}
+
+let s1 = Status.Ok;
+let s2 = Status.Error("fail");
+let s3 = Status.Pending;
+
+let i = 0;
+let total = 0;
+while i < 1000000 {
+    if i % 3 == 0 {
+        total = total + handle(s1);
+    } else if i % 3 == 1 {
+        total = total + handle(s2);
+    } else {
+        total = total + handle(s3);
+    }
+    i = i + 1;
+}
+print(total);

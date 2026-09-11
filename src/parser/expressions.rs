@@ -1,5 +1,5 @@
 use crate::parser::ast::Expr::Tuple;
-use crate::parser::ast::{CallArg, Expr, Literal, StringPart};
+use crate::parser::ast::{CallArg, Expr, Literal, StringPart, TypeAst};
 use crate::parser::error::ParserError;
 use crate::parser::literals::{parse_number, process_escapes, process_raw_string};
 use crate::parser::TokT;
@@ -11,7 +11,6 @@ impl<'src> Parser<'src> {
     pub(crate) fn expression(&mut self) -> Result<Expr<'src>, ParserError<'src>> {
         self.assignment()
     }
-
     fn assignment(&mut self) -> Result<Expr<'src>, ParserError<'src>> {
         let expr = self.null_coalescing()?;
 
@@ -466,6 +465,11 @@ impl<'src> Parser<'src> {
                     expression: Box::new(expr),
                 })
             }
+            TokT::LeftBrace => self.parse_block_expr(),
+            TokT::If => self.parse_if_expr(),
+            TokT::Match => self.parse_match_expr(),
+            TokT::Pipe => self.parse_lambda(),
+            TokT::Return => self.parse_return_expr(),
             _ => Err(self.error_previous(format!(
                 "Expected expression, but found '{}'.",
                 self.previous_token.lexeme
@@ -476,6 +480,44 @@ impl<'src> Parser<'src> {
         Ok(Expr::Literal {
             literal,
             span: self.previous_token.span,
+        })
+    }
+
+    fn parse_lambda(&mut self) -> Result<Expr<'src>, ParserError<'src>> {
+        let pipe_token = self.previous_token.clone();
+        let mut params: Vec<(Token<'src>, TypeAst<'src>)> = vec![];
+
+        if !match_token_type!(self, TokT::Pipe) {
+            // Parse parameter list until closing `|`.
+            while !check_token_type!(self, TokT::Pipe) && !check_token_type!(self, TokT::EOF) {
+                if !match_token_type!(self, TokT::Identifier) {
+                    return Err(self.error_current("Expected parameter name in lambda."));
+                }
+                let name = self.previous_token.clone();
+                let type_ann = if match_token_type!(self, TokT::Colon) {
+                    self.type_block()?
+                } else {
+                    TypeAst::Infer
+                };
+                params.push((name, type_ann));
+                if !match_token_type!(self, TokT::Comma) {
+                    break;
+                }
+            }
+            self.consume(TokT::Pipe, "Expected '|' to close lambda parameters.")?;
+        }
+        let return_type = if match_token_type!(self, TokT::Colon) {
+            Some(self.type_block()?)
+        } else {
+            None
+        };
+
+        let body = self.expression()?;
+        Ok(Expr::Lambda {
+            params,
+            return_type,
+            body: Box::new(body),
+            pipe_token,
         })
     }
 

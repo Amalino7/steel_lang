@@ -35,8 +35,7 @@ impl TypeCheckerWarning {
         config: Config,
     ) -> Report<'a, (&'a str, Range<usize>)> {
         let offset = self.span().start;
-        let mut report =
-            Report::build(ReportKind::Warning, source_id, offset).with_config(config);
+        let mut report = Report::build(ReportKind::Warning, source_id, offset).with_config(config);
 
         match self {
             TypeCheckerWarning::UnusedBinding { name, span } => {
@@ -47,7 +46,9 @@ impl TypeCheckerWarning {
                             .with_message(format!("Binding '{}' is never used", name))
                             .with_color(Color::Yellow),
                     )
-                    .with_help("Consider using '_' to explicitly ignore this value");
+                    .with_help(format!(
+                        "Consider removing it or renaming it to '_' or '_{name}' to explicitly ignore this value"
+                    ));
             }
             TypeCheckerWarning::SafeAccessOnNonOptional { span } => {
                 report = report
@@ -93,14 +94,20 @@ impl TypeCheckerWarning {
                             .with_message("This code will never be executed")
                             .with_color(Color::Yellow),
                     )
-                    .with_help("Code after a return statement is unreachable");
+                    .with_help("Consider removing this code")
+                    .with_note(
+                        "Code after a return/continue/break and certain functions is unreachable",
+                    );
             }
             TypeCheckerWarning::UnreachablePattern { span, message } => {
-                report = report.with_message("Unreachable pattern").with_label(
-                    Label::new((source_id, span.to_range()))
-                        .with_message(message.as_str())
-                        .with_color(Color::Yellow),
-                );
+                report = report
+                    .with_message("Unreachable pattern")
+                    .with_label(
+                        Label::new((source_id, span.to_range()))
+                            .with_message(message.as_str())
+                            .with_color(Color::Yellow),
+                    )
+                    .with_help("Consider removing this pattern");
             }
         }
 

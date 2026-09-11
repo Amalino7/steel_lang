@@ -1,0 +1,26 @@
+// ─────────────────────────────────────────────
+//  Steel Language Demo - 04: Nil Safety
+//  Structures · Nullable Types · Safe Call (?.) · Nil Coalescing (??) · Assertion (!)
+// ─────────────────────────────────────────────
+
+struct User {
+    name:     string,
+    nickname: string?,   // optional — may be nil
+    score:    number?,   // optional — may be nil
+}
+
+impl User {
+    func display_name(self): string {
+        return self.nickname ?? self.name;
+    }
+}
+
+// ── Safe chaining: user?.field returns nil if user is nil
+func greet(user: User?): string {
+    return "Hello, " + (user?.display_name() ?? "Guest") + "!";
+}
+
+let alice = User(name: "Alice", nickname: "Lissy", score: 10);
+let bob = User(name: "Bob", nickname: nil, score: nil);
+println(greet(alice));    // Hello, Lissy!
+println(greet(bob));    // Hello, Bob!

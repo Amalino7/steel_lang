@@ -3,8 +3,8 @@ pub mod analysis;
 use crate::compiler::analysis::ResolvedVar;
 use crate::parser::ast::Literal;
 use crate::typechecker::core::ast::{
-    BinaryOp, ExprKind, LogicalOp, MatchCase, StmtKind, TypedBinding, TypedExpr, TypedStmt,
-    TypedStringPart, UnaryOp,
+    BinaryOp, ExprKind, FunctionBody, LogicalOp, MatchCase, StmtKind, TypedBinding, TypedExpr,
+    TypedStmt, TypedStringPart, UnaryOp,
 };
 use crate::vm::bytecode::{Chunk, Opcode};
 use crate::vm::gc::{GarbageCollector, Gc};
@@ -26,13 +26,22 @@ impl<'a> Compiler<'a> {
         &mut self.function.chunk
     }
 
-    pub fn compile(mut self, reserved: u8, typed_ast: &TypedStmt) -> Gc<Function> {
+    pub fn compile(mut self, reserved: u8, body: &FunctionBody) -> Gc<Function> {
+        let line = match body {
+            FunctionBody::Block(s) => s.span.line,
+            FunctionBody::Expr(e) => e.span.line,
+        };
         if reserved != 0 {
-            self.emit_op(Opcode::Reserve, typed_ast.span.line);
-            self.emit_byte(reserved, typed_ast.span.line);
+            self.emit_op(Opcode::Reserve, line);
+            self.emit_byte(reserved, line);
         }
-        self.compile_stmt(typed_ast);
-
+        match body {
+            FunctionBody::Block(stmt) => self.compile_stmt(stmt),
+            FunctionBody::Expr(expr) => {
+                self.compile_expr(expr);
+                self.emit_op(Opcode::Return, expr.span.line);
+            }
+        }
         self.chunk().write_constant(Value::Nil, 0);
         self.emit_op(Opcode::Return, 0);
         self.gc.alloc(self.function)
@@ -59,78 +68,6 @@ impl<'a> Compiler<'a> {
                 }
                 for stmt in stmts {
                     self.compile_stmt(stmt);
-                }
-            }
-            StmtKind::If {
-                condition,
-                then_branch,
-                else_branch,
-                typed_refinements,
-            } => {
-                let line = stmt.span.line;
-                self.compile_expr(condition);
-                let then_jump = self.emit_jump(Opcode::JumpIfFalse, line);
-                self.emit_op(Opcode::Pop, line);
-
-                self.emit_refinement(&typed_refinements.true_path, line);
-                self.compile_stmt(then_branch);
-
-                let else_jump = self.emit_jump(Opcode::Jump, line);
-                self.patch_jump(then_jump);
-
-                self.emit_op(Opcode::Pop, line);
-
-                if let Some(else_branch) = else_branch {
-                    self.emit_refinement(&typed_refinements.else_path, line);
-                    self.compile_stmt(else_branch);
-                }
-
-                self.patch_jump(else_jump);
-                self.emit_refinement(&typed_refinements.after_path, line);
-            }
-            StmtKind::Match { value, cases } => {
-                self.compile_expr(value);
-
-                let mut end_jumps = Vec::new();
-
-                for case in cases.iter() {
-                    match case {
-                        MatchCase::Variable { binding, body } => {
-                            self.compile_binding(binding, body.span.line);
-                            self.compile_stmt(body);
-                            end_jumps.push(self.emit_jump(Opcode::Jump, stmt.span.line));
-                        }
-                        MatchCase::Named {
-                            variant_idx,
-                            binding,
-                            body,
-                        } => {
-                            // Check if the tag matches the case variant
-                            self.emit_op(Opcode::Dup, stmt.span.line);
-                            self.emit_op(Opcode::CheckEnumTag, stmt.span.line);
-                            self.emit_byte(*variant_idx as u8, stmt.span.line);
-
-                            // Similar to if
-                            let next_case_jump =
-                                self.emit_jump(Opcode::JumpIfFalse, stmt.span.line);
-                            self.emit_op(Opcode::Pop, stmt.span.line);
-
-                            self.emit_op(Opcode::DestructureEnum, stmt.span.line);
-                            self.compile_binding(binding, stmt.span.line);
-
-                            self.compile_stmt(body);
-                            end_jumps.push(self.emit_jump(Opcode::Jump, stmt.span.line));
-
-                            self.patch_jump(next_case_jump);
-                            self.emit_op(Opcode::Pop, stmt.span.line);
-                        }
-                    }
-                }
-
-                // Pop original enum
-                self.emit_op(Opcode::Pop, stmt.span.line);
-                for jump in end_jumps {
-                    self.patch_jump(jump);
                 }
             }
             StmtKind::While {
@@ -167,59 +104,36 @@ impl<'a> Compiler<'a> {
                     self.emit_byte(vtable.len() as u8, stmt.span.line);
                 }
             }
-            StmtKind::Function {
-                target,
-                name,
-                function_decl,
-            } => {
+            StmtKind::Function { target, name, decl } => {
                 let line = stmt.span.line;
                 let func_compiler = Compiler::new(name.to_string(), self.gc);
-
-                let ExprKind::Function {
-                    reserved,
-                    body,
-                    captures,
-                    ..
-                } = &function_decl.kind
-                else {
-                    return;
-                };
-
-                let constant_fn = func_compiler.compile(*reserved, body);
+                let constant_fn = func_compiler.compile(decl.reserved, &decl.body);
                 self.chunk()
                     .write_constant(Value::Function(constant_fn), line as usize);
 
-                // Add captures
-                // Reverse captures to make sure they are in the right order
-                for capture in captures.iter().rev() {
-                    self.emit_var_access(capture, line)
+                for capture in decl.captures.iter().rev() {
+                    self.emit_var_access(capture, line);
                 }
-                if !captures.is_empty() {
+                if !decl.captures.is_empty() {
                     self.emit_op(Opcode::MakeClosure, line);
-                    self.emit_byte(captures.len() as u8, line);
+                    self.emit_byte(decl.captures.len() as u8, line);
                 }
 
                 match target {
                     ResolvedVar::Local(idx) => {
                         self.emit_op(Opcode::SetLocal, stmt.span.line);
                         self.emit_byte(*idx, stmt.span.line);
-
                         self.emit_op(Opcode::Pop, stmt.span.line);
                     }
                     ResolvedVar::Global(idx) => {
                         self.emit_op(Opcode::SetGlobal, line);
                         self.emit_byte(*idx as u8, line);
-
                         self.emit_op(Opcode::Pop, line);
                     }
                     ResolvedVar::Closure(_) => {
                         unreachable!("Closures shouldn't be assigned to")
                     }
                 }
-            }
-            StmtKind::Return(val) => {
-                self.compile_expr(val);
-                self.emit_op(Opcode::Return, stmt.span.line);
             }
             StmtKind::Global {
                 stmts, reserved, ..
@@ -351,9 +265,107 @@ impl<'a> Compiler<'a> {
     fn compile_expr(&mut self, expr: &TypedExpr) {
         let line = expr.span.line;
         match &expr.kind {
-            ExprKind::Function { .. } => {
-                todo!("When lambdas get added")
+            ExprKind::Lambda(decl) => {
+                let func_compiler = Compiler::new("<lambda>".to_string(), self.gc);
+                let constant_fn = func_compiler.compile(decl.reserved, &decl.body);
+                self.chunk()
+                    .write_constant(Value::Function(constant_fn), line as usize);
+
+                for capture in decl.captures.iter().rev() {
+                    self.emit_var_access(capture, line);
+                }
+                if !decl.captures.is_empty() {
+                    self.emit_op(Opcode::MakeClosure, line);
+                    self.emit_byte(decl.captures.len() as u8, line);
+                }
             }
+
+            ExprKind::Block { body, tail } => {
+                for stmt in body {
+                    self.compile_stmt(stmt);
+                }
+                self.compile_expr(tail);
+            }
+
+            ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+                typed_refinements,
+            } => {
+                self.compile_expr(condition);
+                let then_jump = self.emit_jump(Opcode::JumpIfFalse, line);
+                self.emit_op(Opcode::Pop, line);
+
+                self.emit_refinement(&typed_refinements.true_path, line);
+                self.compile_expr(then_branch);
+
+                let else_jump = self.emit_jump(Opcode::Jump, line);
+                self.patch_jump(then_jump);
+                self.emit_op(Opcode::Pop, line);
+
+                if let Some(else_expr) = else_branch {
+                    self.emit_refinement(&typed_refinements.else_path, line);
+                    self.compile_expr(else_expr);
+                } else {
+                    // No else branch -> produce Nil (type is Void).
+                    self.emit_op(Opcode::Nil, line);
+                }
+
+                self.patch_jump(else_jump);
+                self.emit_refinement(&typed_refinements.after_path, line);
+            }
+            ExprKind::Match { value, cases } => {
+                self.compile_expr(value);
+
+                let mut end_jumps: Vec<usize> = Vec::new();
+
+                for case in cases.iter() {
+                    match case {
+                        MatchCase::Variable { binding, body } => {
+                            self.compile_binding(binding, line);
+                            self.compile_expr(body);
+                            end_jumps.push(self.emit_jump(Opcode::Jump, line));
+                        }
+                        MatchCase::Named {
+                            variant_idx,
+                            binding,
+                            body,
+                        } => {
+                            // Check if the tag matches the case variant
+                            self.emit_op(Opcode::Dup, line);
+                            self.emit_op(Opcode::CheckEnumTag, line);
+                            self.emit_byte(*variant_idx as u8, line);
+
+                            // Similar to if
+                            let next_jump = self.emit_jump(Opcode::JumpIfFalse, line);
+                            self.emit_op(Opcode::Pop, line);
+
+                            self.emit_op(Opcode::DestructureEnum, line);
+                            self.compile_binding(binding, line);
+
+                            self.compile_expr(body);
+                            end_jumps.push(self.emit_jump(Opcode::Jump, line));
+
+                            self.patch_jump(next_jump);
+                            self.emit_op(Opcode::Pop, line);
+                        }
+                    }
+                }
+
+                // Pop the original enum value.
+                self.emit_op(Opcode::Pop, line);
+                // Push Nil as placeholder
+                self.emit_op(Opcode::Nil, line);
+                for jump in end_jumps {
+                    self.patch_jump(jump);
+                }
+            }
+            ExprKind::Return(val) => {
+                self.compile_expr(val);
+                self.emit_op(Opcode::Return, line);
+            }
+
             ExprKind::NoOp => {}
             ExprKind::Binary {
                 left,

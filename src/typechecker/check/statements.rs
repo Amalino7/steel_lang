@@ -1,6 +1,6 @@
 use crate::parser::ast::{Stmt, TypeAst};
 use crate::scanner::Token;
-use crate::typechecker::core::ast::{StmtKind, TypedExpr, TypedRefinements, TypedStmt};
+use crate::typechecker::core::ast::{StmtKind, TypedStmt};
 use crate::typechecker::core::error::{MismatchContext, Recoverable, TypeCheckerError};
 use crate::typechecker::core::types::Type;
 use crate::typechecker::scope::guards::ScopeGuard;
@@ -92,72 +92,6 @@ impl<'src> TypeChecker<'src> {
                     span: stmt.span().merge(brace_token.span),
                 }
             }
-            Stmt::If {
-                condition,
-                then_branch,
-                else_branch,
-            } => {
-                let cond_typed = self.check_expression(condition, &Type::Boolean);
-                let cond_typed =
-                    self.coerce_typed(cond_typed, &Type::Boolean, MismatchContext::Condition, None);
-
-                let refinements = self.analyze_condition(&cond_typed);
-                let mut typed_refinements = TypedRefinements {
-                    true_path: vec![],
-                    else_path: vec![],
-                    after_path: vec![],
-                };
-                let mut scope = ScopeGuard::new(self, ScopeKind::Block);
-                for (name, ty) in refinements.true_path.iter() {
-                    if let Some(case) = scope.scopes.refine(name, ty.clone()) {
-                        typed_refinements.true_path.push(case)
-                    }
-                }
-                let then_branch_typed = scope.check_stmt(then_branch);
-                drop(scope);
-
-                let else_branch_typed = if let Some(else_branch) = else_branch {
-                    let mut scope = ScopeGuard::new(self, ScopeKind::Block);
-                    for (name, ty) in refinements.false_path.iter() {
-                        if let Some(case) = scope.scopes.refine(name, ty.clone()) {
-                            typed_refinements.else_path.push(case)
-                        }
-                    }
-                    let stmt = scope.check_stmt(else_branch);
-                    Some(Box::new(stmt))
-                } else {
-                    None
-                };
-
-                // Guard logic
-                if self.stmt_returns(&then_branch_typed).unwrap_or(false) {
-                    for (name, ty) in refinements.false_path {
-                        if let Some(case) = self.scopes.refine(&name, ty.clone()) {
-                            typed_refinements.after_path.push(case)
-                        }
-                    }
-                }
-                if let Some(else_branch_typed) = &else_branch_typed
-                    && self.stmt_returns(else_branch_typed).unwrap_or(false)
-                {
-                    for (name, ty) in refinements.true_path {
-                        if let Some(case) = self.scopes.refine(&name, ty.clone()) {
-                            typed_refinements.after_path.push(case)
-                        }
-                    }
-                }
-
-                TypedStmt {
-                    kind: StmtKind::If {
-                        condition: cond_typed,
-                        then_branch: Box::new(then_branch_typed),
-                        else_branch: else_branch_typed,
-                        typed_refinements: Box::new(typed_refinements),
-                    },
-                    type_info: Type::Void,
-                    span: stmt.span(),
-                }
-            }
             Stmt::While { condition, body } => {
                 let cond_typed = self.check_expression(condition, &Type::Boolean);
                 let cond_typed =
@@ -190,49 +124,26 @@ impl<'src> TypeChecker<'src> {
                 signature,
                 generics,
             } => {
-                let res = self
-                    .check_function(name, signature, body, generics)
-                    .recover(&mut self.errors, TypedExpr::new_blank(stmt.span()));
+                let (fn_decl, fn_type, fn_span) =
+                    self.check_function(name, signature, body, generics);
                 if !self.scopes.is_global() {
-                    let decl = Declaration::function(name.lexeme.into(), res.ty.clone(), name.span);
+                    let decl = Declaration::function(name.lexeme.into(), fn_type, name.span);
                     self.scopes.declare(decl).ok_or_report(&mut self.errors);
                 }
-                let func = self
+                let (_, target) = self
                     .scopes
                     .lookup(name.lexeme)
                     .expect("Function should have been declared!");
                 TypedStmt {
-                    span: res.span,
+                    span: fn_span,
                     type_info: Type::Void,
                     kind: StmtKind::Function {
                         name: name.lexeme.into(),
-                        target: func.1,
-                        function_decl: res,
+                        target,
+                        decl: fn_decl,
                     },
                 }
             }
-            Stmt::Return { value, keyword } => {
-                if let Some((func_return_type, func_span)) = self.scopes.return_type() {
-                    let coerced_return = self.coerce_expression(
-                        value,
-                        &func_return_type,
-                        MismatchContext::Return,
-                        Some(func_span),
-                    );
-
-                    TypedStmt {
-                        span: coerced_return.span.merge(keyword.span),
-                        kind: StmtKind::Return(coerced_return),
-                        type_info: Type::Void,
-                    }
-                } else {
-                    let span = stmt.span();
-                    self.report(TypeCheckerError::InvalidReturnOutsideFunction { span });
-
-                    TypedStmt::new_blank(span)
-                }
-            }
-
             Stmt::ExternFunction { name, .. } => {
                 if self.non_global("extern func", name) {
                     return TypedStmt::new_blank(stmt.span());
@@ -276,9 +187,6 @@ impl<'src> TypeChecker<'src> {
                     type_info: Type::Void,
                 }
             }
-            Stmt::Match { value, arms } => self
-                .check_match_stmt(value, arms)
-                .recover(&mut self.errors, TypedStmt::new_blank(stmt.span())),
         }
     }
     fn non_global(&mut self, kind: &'static str, name: &Token<'src>) -> bool {

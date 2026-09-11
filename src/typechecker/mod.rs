@@ -15,10 +15,10 @@ use system::TypeSystem;
 
 mod check;
 pub mod core;
+mod flow_analysis;
 pub(crate) mod inference;
 mod refinements;
 pub(crate) mod resolver;
-mod return_analysis;
 mod scope;
 mod similarity;
 pub(crate) mod system;
@@ -84,13 +84,13 @@ impl<'src> TypeChecker<'src> {
         }
 
         let global_count = self.scopes.global_size();
-        let reserved = self.scopes.end_scope() as u16;
+        let reserved = self.scopes.max_index() as u16;
 
         let mut extern_fns = collect_extern_fns(&typed_ast);
         // Merge in name→slot pairs for vararg natives registered via register_globals.
         extern_fns.extend(native_slots);
 
-        self.check_returns(&typed_ast);
+        self.check_unreachable(&typed_ast);
         if !self.errors.is_empty() {
             Err(take(&mut self.errors))
         } else {
@@ -111,14 +111,16 @@ impl<'src> TypeChecker<'src> {
     }
 
     /// Registers only natives that carry an explicit type (e.g. vararg functions).
-    /// Returns name→slot pairs so the VM can bind them by name.
+    /// Returns name->slot pairs so the VM can bind them by name.
     fn register_globals(&mut self, natives: &[NativeDef]) -> Vec<(Box<str>, u16)> {
         let mut slots = vec![];
         for native in natives.iter() {
             if let Some(ty) = &native.type_ {
-                let decl =
-                    Declaration::function(native.name.into(), ty.clone(), Span::default());
-                let resolved = self.scopes.declare(decl).expect("Failed to register global");
+                let decl = Declaration::function(native.name.into(), ty.clone(), Span::default());
+                let resolved = self
+                    .scopes
+                    .declare(decl)
+                    .expect("Failed to register global");
                 if let ResolvedVar::Global(idx) = resolved {
                     slots.push((native.name.into(), idx));
                 }

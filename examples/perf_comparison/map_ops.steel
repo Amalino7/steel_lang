@@ -1,0 +1,7 @@
+let m: Map<number, number> = [];
+let i = 0;
+while i < 1000000 {
+    m[i] = i;
+    i = i + 1;
+}
+print(m.len());

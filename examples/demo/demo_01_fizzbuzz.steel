@@ -1,0 +1,24 @@
+// ─────────────────────────────────────────────
+//  Steel Language Demo — 01: Intro
+//  Variables · Type Inference · Loops · Functions · Conditions
+// ─────────────────────────────────────────────
+
+let max_number = 100;
+max_number = "";
+func fizz_buzz(max: number) {
+    let i = 0;
+    while i<=max {  
+        if i % 15 == 0 {
+            println("FizzBuzz");
+        } else if i % 3 == 0 {
+            println("Fizz");
+        } else if i % 5 == 0 {
+            println("Buzz");
+        } else {
+            println(i);
+        }
+        i+=1;
+    }
+}
+
+fizz_buzz(max: max_number);

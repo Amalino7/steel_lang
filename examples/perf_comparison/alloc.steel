@@ -1,0 +1,12 @@
+struct Point {
+    x: number,
+    y: number,
+    z: number,
+}
+
+let i = 0;
+while i < 1000000 {
+    let p = Point(x: i, y: i + 1, z: i + 2);
+    i = i + 1;
+}
+print(i);

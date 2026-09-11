@@ -1,0 +1,20 @@
+struct Stack<T> {
+    inner: List<T>,
+}
+
+func map<Tin, Tout>(stack: Stack<Tin>, mapper: func(Tin): Tout): Stack<Tout> {
+    let i = 0;
+    let out: List<Tout> = [];
+    while i < stack.inner.len() {
+        out.push(mapper(stack.inner[i]));
+        i+=1;
+    }
+    return Stack(inner: out);
+}
+func double(a: number): number {
+    return a * 2;
+}
+let stack = Stack([1,2,3]);
+println(map(stack, double).inner);
+let stack2 = Stack(["Here", "Hello"]);
+println(stack2.inner);

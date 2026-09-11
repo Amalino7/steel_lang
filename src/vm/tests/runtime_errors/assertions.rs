@@ -6,7 +6,7 @@ fn assert_panics_with_natives(source: &str) {
     use crate::scanner::Scanner;
     use crate::stdlib::{get_natives, get_prelude};
     use crate::typechecker::TypeChecker;
-    use crate::typechecker::core::ast::StmtKind;
+    use crate::typechecker::core::ast::{FunctionBody, StmtKind};
     use crate::vm::VM;
     use crate::vm::gc::GarbageCollector;
 
@@ -29,7 +29,7 @@ fn assert_panics_with_natives(source: &str) {
 
     let mut gc = GarbageCollector::new();
     let compiler = Compiler::new("main".to_string(), &mut gc);
-    let function = compiler.compile(0, &typed_ast);
+    let function = compiler.compile(0, &FunctionBody::Block(Box::new(typed_ast)));
 
     let mut vm = VM::new(global_count, &mut gc);
     vm.set_natives_by_name(&natives, &extern_fns);
