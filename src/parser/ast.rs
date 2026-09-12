@@ -271,10 +271,17 @@ pub struct ImportSegment<'src> {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ImportType<'src> {
-    Simple,
-    Alias { alias: Token<'src> },
-    Group { options: Vec<ImportSegment<'src>> },
-    All, //TODO google naming conventions Maybe glob??
+    Simple {
+        terminator: Token<'src>,
+    },
+    Alias {
+        terminator: Token<'src>,
+        alias: Token<'src>,
+    },
+    Group {
+        options: Vec<ImportSegment<'src>>,
+    },
+    Wildcard,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -716,8 +723,9 @@ impl Display for Stmt<'_> {
                         write!(f, "/")?;
                     }
                     match &segment.import_type {
-                        ImportType::Simple => Ok(()),
-                        ImportType::Alias { alias } => {
+                        ImportType::Simple { terminator } => write!(f, "{}", terminator.lexeme),
+                        ImportType::Alias { terminator, alias } => {
+                            write!(f, "{}", terminator.lexeme)?;
                             write!(f, "as {}", alias.lexeme)
                         }
                         ImportType::Group { options } => {
@@ -727,7 +735,7 @@ impl Display for Stmt<'_> {
                             }
                             write!(f, "}}")
                         }
-                        ImportType::All => {
+                        ImportType::Wildcard => {
                             write!(f, "*")
                         }
                     }

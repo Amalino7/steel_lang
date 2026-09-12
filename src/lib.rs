@@ -3,7 +3,7 @@
 pub mod cli;
 pub mod compiler;
 pub mod parser;
-mod resolver;
+pub mod resolver;
 pub mod scanner;
 pub mod stdlib;
 pub mod typechecker;
@@ -13,11 +13,11 @@ use crate::compiler::Compiler;
 use crate::parser::Parser;
 use crate::scanner::Scanner;
 use crate::stdlib::{get_natives, get_prelude};
-use crate::typechecker::core::ast::{FunctionBody, StmtKind};
 use crate::typechecker::TypeChecker;
+use crate::typechecker::core::ast::{FunctionBody, StmtKind};
+use crate::vm::VM;
 use crate::vm::gc::{GarbageCollector, Gc};
 use crate::vm::value::Function;
-use crate::vm::VM;
 use ariadne::{Color, Config, IndexType, Label, Report, ReportKind, Source};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,9 +80,9 @@ pub struct RunConfig<'a> {
     pub debug: bool,
     pub force: bool,
     pub include_prelude: bool,
+    pub ignore_warnings: bool,
     pub color: ColorChoice,
     pub emit: Vec<EmitTarget>,
-    pub ignore_warnings: bool,
     pub error_limit: Option<usize>,
 }
 

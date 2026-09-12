@@ -1,6 +1,6 @@
 use crate::parser::ast::{ImportSegment, ImportStmt, ImportType, Stmt};
 use crate::parser::error::ParserError;
-use crate::parser::{check_token_type, match_token_type, Parser, TokT};
+use crate::parser::{Parser, TokT, check_token_type, match_token_type};
 
 impl<'src> Parser<'src> {
     pub(super) fn declaration(&mut self) -> Result<Stmt<'src>, ParserError<'src>> {
@@ -61,22 +61,28 @@ impl<'src> Parser<'src> {
         }
 
         let import_type = if match_token_type!(self, TokT::LeftBrace) {
-            let mut options = vec![];
-            while !check_token_type!(self, TokT::RightBrace) {
-                options.push(self.import_segment()?);
-                match_token_type!(self, TokT::Comma);
+            if match_token_type!(self, TokT::Star) {
+                self.consume(TokT::RightBrace, "Expected '}' after wildcard import.")?;
+                ImportType::Wildcard
+            } else {
+                let mut options = vec![];
+                while !check_token_type!(self, TokT::RightBrace) {
+                    options.push(self.import_segment()?);
+                    match_token_type!(self, TokT::Comma);
+                }
+                self.consume(TokT::RightBrace, "Expected '}' after group import.")?;
+                ImportType::Group { options }
             }
-            self.consume(TokT::RightBrace, "Expected '}'")?;
-            ImportType::Group { options }
         } else if match_token_type!(self, TokT::As) {
             self.consume(TokT::Identifier, "Expected alias after 'as'.")?;
+            let term = path.pop().unwrap();
             ImportType::Alias {
+                terminator: term,
                 alias: self.previous_token.clone(),
             }
-        } else if match_token_type!(self, TokT::Star) {
-            ImportType::All
         } else {
-            ImportType::Simple
+            let term = path.pop().unwrap();
+            ImportType::Simple { terminator: term }
         };
 
         Ok(ImportSegment { path, import_type })
