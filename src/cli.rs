@@ -117,6 +117,7 @@ fn build_config<'a>(cli: &'a Cli, source: &'a str) -> RunConfig<'a> {
         include_prelude: !cli.no_stdlib,
         color: cli.color.into(),
         emit: cli.emit.iter().copied().map(EmitTarget::from).collect(),
+        ignore_warnings: false,
         error_limit: cli.error_limit,
     }
 }

@@ -11,6 +11,9 @@ use crate::typechecker::TypeChecker;
 impl<'src> TypeChecker<'src> {
     pub(crate) fn check_stmt(&mut self, stmt: &Stmt<'src>) -> TypedStmt {
         match stmt {
+            Stmt::Import(import) => {
+                todo!("Import statement")
+            }
             Stmt::Expression(expr) => {
                 let typed_expr = self.check_expression(expr, &Type::Unknown);
 

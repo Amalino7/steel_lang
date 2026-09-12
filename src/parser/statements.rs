@@ -1,4 +1,4 @@
-use crate::parser::ast::Stmt;
+use crate::parser::ast::{ImportSegment, ImportStmt, ImportType, Stmt};
 use crate::parser::error::ParserError;
 use crate::parser::{check_token_type, match_token_type, Parser, TokT};
 
@@ -10,6 +10,8 @@ impl<'src> Parser<'src> {
             self.enum_declaration()
         } else if match_token_type!(self, TokT::Func) {
             self.func_declaration(false)
+        } else if match_token_type!(self, TokT::Import) {
+            self.import_statement()
         } else if match_token_type!(self, TokT::Struct) {
             self.struct_declaration()
         } else if match_token_type!(self, TokT::Impl) {
@@ -38,6 +40,46 @@ impl<'src> Parser<'src> {
             self.consume(TokT::Semicolon, "Expected ';' after expression.")?;
             Ok(Stmt::Expression(expr))
         }
+    }
+    fn import_statement(&mut self) -> Result<Stmt<'src>, ParserError<'src>> {
+        let import = self.previous_token.clone();
+        let segment = self.import_segment()?;
+        self.consume(TokT::Semicolon, "Expected ';' after import statement")?;
+        Ok(Stmt::Import(ImportStmt {
+            keyword: import,
+            segment,
+        }))
+    }
+
+    fn import_segment(&mut self) -> Result<ImportSegment<'src>, ParserError<'src>> {
+        self.consume(TokT::Identifier, "Expected import name")?;
+        let mut path = vec![];
+        path.push(self.previous_token.clone());
+
+        while match_token_type!(self, TokT::Slash) && match_token_type!(self, TokT::Identifier) {
+            path.push(self.previous_token.clone());
+        }
+
+        let import_type = if match_token_type!(self, TokT::LeftBrace) {
+            let mut options = vec![];
+            while !check_token_type!(self, TokT::RightBrace) {
+                options.push(self.import_segment()?);
+                match_token_type!(self, TokT::Comma);
+            }
+            self.consume(TokT::RightBrace, "Expected '}'")?;
+            ImportType::Group { options }
+        } else if match_token_type!(self, TokT::As) {
+            self.consume(TokT::Identifier, "Expected alias after 'as'.")?;
+            ImportType::Alias {
+                alias: self.previous_token.clone(),
+            }
+        } else if match_token_type!(self, TokT::Star) {
+            ImportType::All
+        } else {
+            ImportType::Simple
+        };
+
+        Ok(ImportSegment { path, import_type })
     }
 
     pub(super) fn block(&mut self) -> Result<Stmt<'src>, ParserError<'src>> {

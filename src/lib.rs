@@ -3,6 +3,7 @@
 pub mod cli;
 pub mod compiler;
 pub mod parser;
+mod resolver;
 pub mod scanner;
 pub mod stdlib;
 pub mod typechecker;
@@ -81,6 +82,7 @@ pub struct RunConfig<'a> {
     pub include_prelude: bool,
     pub color: ColorChoice,
     pub emit: Vec<EmitTarget>,
+    pub ignore_warnings: bool,
     pub error_limit: Option<usize>,
 }
 
@@ -238,11 +240,13 @@ fn run_inner(config: &RunConfig, source: &str) -> RunOutput {
 
     let (typed_ast, warnings) = analysis.unwrap();
 
-    for warning in &warnings {
-        warning
-            .create_report(config.file_name, ariadne_config)
-            .print((config.file_name, Source::from(source)))
-            .unwrap();
+    if !config.ignore_warnings {
+        for warning in &warnings {
+            warning
+                .create_report(config.file_name, ariadne_config)
+                .print((config.file_name, Source::from(source)))
+                .unwrap();
+        }
     }
 
     if emit_types {
@@ -309,6 +313,7 @@ pub fn execute_source(source: &str, debug: bool, mode: Mode, force: bool) -> Run
         mode,
         debug,
         force,
+        ignore_warnings: true,
         include_prelude: true,
         color: ColorChoice::Auto,
         emit: vec![],

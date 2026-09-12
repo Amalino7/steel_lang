@@ -34,7 +34,6 @@ pub enum TypeAst<'src> {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Expr<'src> {
-    #[allow(dead_code)]
     Error,
     Unary {
         operator: Token<'src>,
@@ -245,6 +244,7 @@ pub enum Stmt<'src> {
         methods: Vec<Stmt<'src>>,
         generics: Vec<Token<'src>>,
     },
+    Import(ImportStmt<'src>),
     Interface {
         name: Token<'src>,
         methods: Vec<MethodSig<'src>>,
@@ -255,6 +255,26 @@ pub enum Stmt<'src> {
         variants: Vec<(Token<'src>, VariantType<'src>)>,
         generics: Vec<Token<'src>>,
     },
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ImportStmt<'src> {
+    pub keyword: Token<'src>,
+    pub segment: ImportSegment<'src>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ImportSegment<'src> {
+    pub path: Vec<Token<'src>>,
+    pub import_type: ImportType<'src>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ImportType<'src> {
+    Simple,
+    Alias { alias: Token<'src> },
+    Group { options: Vec<ImportSegment<'src>> },
+    All, //TODO google naming conventions Maybe glob??
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -689,6 +709,35 @@ impl Display for Stmt<'_> {
                 }
                 write!(f, "}}")
             }
+            Stmt::Import(import) => {
+                fn print_segment(f: &mut Formatter<'_>, segment: &ImportSegment) -> fmt::Result {
+                    for path in segment.path.iter() {
+                        write!(f, "{}", path.lexeme)?;
+                        write!(f, "/")?;
+                    }
+                    match &segment.import_type {
+                        ImportType::Simple => Ok(()),
+                        ImportType::Alias { alias } => {
+                            write!(f, "as {}", alias.lexeme)
+                        }
+                        ImportType::Group { options } => {
+                            write!(f, "{{")?;
+                            for option in options {
+                                print_segment(f, &option)?;
+                            }
+                            write!(f, "}}")
+                        }
+                        ImportType::All => {
+                            write!(f, "*")
+                        }
+                    }
+                }
+                write!(f, "import ")?;
+
+                print_segment(f, &import.segment)?;
+
+                write!(f, ";")
+            }
         }
     }
 }
@@ -807,6 +856,14 @@ impl Stmt<'_> {
                 .last()
                 .map(|last| name.span.merge(last.name.span))
                 .unwrap_or(name.span),
+            Stmt::Import(import) => import.keyword.span.merge(
+                import
+                    .segment
+                    .path
+                    .last()
+                    .map(|last| last.span)
+                    .unwrap_or(import.keyword.span),
+            ),
             Stmt::Enum { name, variants, .. } => variants
                 .last()
                 .map(|(variant, _)| name.span.merge(variant.span))

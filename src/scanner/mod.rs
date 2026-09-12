@@ -371,5 +371,8 @@ fn keywords() -> HashMap<&'static str, TokenType> {
         ("nil", TokenType::Nil),
         ("enum", TokenType::Enum),
         ("match", TokenType::Match),
+        ("import", TokenType::Import),
+        ("public", TokenType::Public),
+        ("as", TokenType::As),
     ])
 }
