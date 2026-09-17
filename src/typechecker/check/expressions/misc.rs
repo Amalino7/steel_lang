@@ -1,5 +1,6 @@
 use crate::parser::ast::Expr;
 use crate::scanner::Token;
+use crate::typechecker::TypeChecker;
 use crate::typechecker::core::ast::{ExprKind, LogicalOp, TypedExpr, UnaryOp};
 use crate::typechecker::core::error::{
     GenericError, Mismatch, MismatchContext, Operand, TypeCheckerError, TypeCheckerWarning,
@@ -7,7 +8,6 @@ use crate::typechecker::core::error::{
 };
 use crate::typechecker::core::types::Type;
 use crate::typechecker::system::make_substitution_map;
-use crate::typechecker::TypeChecker;
 use std::rc::Rc;
 
 impl<'src> TypeChecker<'src> {
@@ -61,7 +61,7 @@ impl<'src> TypeChecker<'src> {
                 callee_typed.span = expr.span();
                 callee_typed
             }
-            Type::Metatype(type_name, generics) => {
+            Type::Metatype(type_id, generics) => {
                 if !generics.is_empty() {
                     report_err(
                         self,
@@ -69,7 +69,7 @@ impl<'src> TypeChecker<'src> {
                     );
                     return callee_typed;
                 }
-                let actual_generic_count = self.sys.get_generic_count_by_name(type_name);
+                let actual_generic_count = self.sys.get_generic_count_by_name(*type_id);
                 if generic_args.len() != actual_generic_count {
                     report_err(
                         self,
@@ -81,7 +81,7 @@ impl<'src> TypeChecker<'src> {
                     );
                     callee_typed
                 } else {
-                    callee_typed.ty = Type::Metatype(type_name.clone(), Rc::from(generic_args));
+                    callee_typed.ty = Type::Metatype(*type_id, Rc::from(generic_args));
                     callee_typed.span = expr.span();
                     callee_typed
                 }
@@ -100,7 +100,7 @@ impl<'src> TypeChecker<'src> {
         type_name: &Token<'src>,
     ) -> TypedExpr {
         let target = self.check_expression(expression, &Type::Unknown);
-        let Type::Enum(enum_name, _) = &target.ty else {
+        let Type::Enum(enum_id, _) = &target.ty else {
             self.report(TypeCheckerError::InvalidIsUsage {
                 span: type_name.span,
                 message: "Is can only be used on enum types.",
@@ -111,10 +111,7 @@ impl<'src> TypeChecker<'src> {
                 span: expr.span(),
             };
         };
-        let enum_def = self
-            .sys
-            .get_enum(enum_name.as_ref())
-            .expect("Invalid enum Type return!");
+        let enum_def = self.sys.get_enum(*enum_id);
 
         let Some(&variant_idx) = enum_def.variants.get(type_name.lexeme) else {
             self.report(TypeCheckerError::InvalidIsUsage {
@@ -174,10 +171,11 @@ impl<'src> TypeChecker<'src> {
         let span = expr.span();
         let expr_ty = typed_expr.ty.clone();
 
-        if let Type::Enum(name, instance) = &expr_ty
-            && name.as_ref() == "Result"
+        if let Type::Enum(id, instance) = &expr_ty
+            && self.sys.get_enum(*id).name.as_ref() == "Result"
+        // TODO rethink custom result logic
         {
-            let enum_def = self.sys.get_enum(name.as_ref()).unwrap();
+            let enum_def = self.sys.get_enum(*id);
             let (_, ok_type) = enum_def
                 .get_variant_from_instance("Ok", instance)
                 .expect("Result type missing");
@@ -192,7 +190,7 @@ impl<'src> TypeChecker<'src> {
                 return TypedExpr::new_blank(span);
             };
 
-            let provided_err = Type::Enum(name.clone(), vec![Type::Never, err_type].into());
+            let provided_err = Type::Enum(*id, vec![Type::Never, err_type].into());
 
             if let Err(err) = self.infer_ctx.unify_types(&func_return_type, &provided_err) {
                 self.report(TypeCheckerError::TypeMismatch {
@@ -316,11 +314,11 @@ impl<'src> TypeChecker<'src> {
         expected: &Type,
     ) -> TypedExpr {
         let key_ty = expected
-            .map_key()
+            .map_key(&self.sys)
             .cloned()
             .unwrap_or_else(|| self.infer_ctx.new_type_var());
         let val_ty = expected
-            .map_value()
+            .map_value(&self.sys)
             .cloned()
             .unwrap_or_else(|| self.infer_ctx.new_type_var());
 
@@ -334,7 +332,7 @@ impl<'src> TypeChecker<'src> {
             typed_pairs.push((typed_key, typed_val));
         }
 
-        let final_ty = Type::new_map(key_ty, val_ty);
+        let final_ty = Type::new_map(key_ty, val_ty, &self.sys);
         let inferred = self.infer_ctx.substitute(&final_ty);
 
         TypedExpr {
@@ -352,12 +350,12 @@ impl<'src> TypeChecker<'src> {
         expected: &Type,
     ) -> TypedExpr {
         // Empty `[]` can be used as an empty map literal when the expected type is Map.
-        if elements.is_empty() && expected.map_key().is_some() {
+        if elements.is_empty() && expected.map_key(&self.sys).is_some() {
             return self.check_map(expr, &[], expected);
         }
 
         let inner_ty = expected
-            .list_element()
+            .list_element(&self.sys)
             .cloned()
             .unwrap_or_else(|| self.infer_ctx.new_type_var());
 
@@ -369,7 +367,7 @@ impl<'src> TypeChecker<'src> {
             typed_elements.push(typed);
         }
 
-        let final_ty = Type::new_list(inner_ty);
+        let final_ty = Type::new_list(inner_ty, &self.sys);
 
         let inferred = self.infer_ctx.substitute(&final_ty);
 

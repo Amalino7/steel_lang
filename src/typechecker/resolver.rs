@@ -1,10 +1,10 @@
 use crate::parser::ast::{FunctionSig, TypeAst};
 use crate::scanner::{Span, Token};
+use crate::typechecker::Symbol;
 use crate::typechecker::core::error::{GenericError, TypeCheckerError};
-use crate::typechecker::core::types::{FunctionType, TupleType, Type};
+use crate::typechecker::core::types::{FunctionType, NameTypeId, TupleType, Type};
 use crate::typechecker::scope::types::TypeScopeManager;
 use crate::typechecker::system::{TypeBlueprint, TypeSystem};
-use crate::typechecker::Symbol;
 use std::rc::Rc;
 pub struct TypeResolver<'a> {
     sys: &'a TypeSystem,
@@ -64,46 +64,38 @@ impl<'a> TypeResolver<'a> {
         generics: Vec<Type>,
         source: Span,
     ) -> Result<Type, TypeCheckerError> {
-        let blueprint =
-            self.sys
-                .get_blueprint(name)
-                .ok_or_else(|| TypeCheckerError::UndefinedType {
-                    name: name.to_string(),
-                    span: source,
-                    message: "Could not find type with that name.",
-                })?;
+        let id = self.scope_manager.lookup_type(name).ok_or_else(|| {
+            TypeCheckerError::UndefinedType {
+                name: name.to_string(),
+                span: source,
+                message: "Could not find type with that name.",
+            }
+        })?;
+
+        let blueprint = self.sys.get_blueprint(id);
 
         match blueprint {
-            TypeBlueprint::Primitive(p) => {
+            TypeBlueprint::Primitive(ty) => {
                 check_generic_arity(name, 0, generics.len(), source)?;
-                Ok(p)
+                Ok(ty)
             }
-            TypeBlueprint::Struct {
-                name: symbol,
-                arity,
-            } => {
+            TypeBlueprint::Struct { id, arity } => {
                 check_generic_arity(name, arity, generics.len(), source)?;
-                Ok(Type::Struct(symbol, Rc::from(generics)))
+                Ok(Type::Struct(id, Rc::from(generics)))
             }
-            TypeBlueprint::Enum {
-                name: symbol,
-                arity,
-            } => {
+            TypeBlueprint::Enum { id, arity } => {
                 check_generic_arity(name, arity, generics.len(), source)?;
-                Ok(Type::Enum(symbol, Rc::from(generics)))
+                Ok(Type::Enum(id, Rc::from(generics)))
             }
-            TypeBlueprint::Interface { name: symbol } => {
+            TypeBlueprint::Interface { id } => {
                 check_generic_arity(name, 0, generics.len(), source)?;
-                Ok(Type::Interface(symbol))
+                Ok(Type::Interface(id))
             }
         }
     }
 
-    pub fn get_owned_name(&self, name: &str) -> Option<Symbol> {
-        if let Some(generic) = self.scope_manager.is_generic(name) {
-            return Some(generic);
-        }
-        self.sys.resolve_symbol(name)
+    pub fn get_type_id(&self, name: &str) -> Option<NameTypeId> {
+        self.scope_manager.lookup_type(name)
     }
 
     pub fn resolve_tuple(&self, params: &[TypeAst<'_>]) -> Result<Type, TypeCheckerError> {

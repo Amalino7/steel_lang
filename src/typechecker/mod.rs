@@ -51,9 +51,13 @@ impl<'src> TypeChecker<'src> {
     }
 
     pub fn new_with_natives(natives: &'src [NativeDef]) -> Self {
+        let sys = TypeSystem::new();
+        let mut ty_manager = TypeScopeManager::new();
+        ty_manager.declare_global("List".into(), sys.view_builtins().list_id.into());
+        ty_manager.declare_global("Map".into(), sys.view_builtins().map_id.into());
         TypeChecker {
-            type_scopes: TypeScopeManager::new(),
-            sys: TypeSystem::new(),
+            type_scopes: ty_manager,
+            sys,
             scopes: ScopeManager::new(),
             natives,
             errors: vec![],
@@ -72,12 +76,12 @@ impl<'src> TypeChecker<'src> {
         let native_slots = self.register_globals(self.natives);
 
         // first types like structs and interfaces are declared
-        self.declare_global_types(ast);
-        // then global functions are declared and interfaces defined
+        let tasks = self.declare_global_types(ast);
+        // define types, fields of structs and enums are defined and interface reqs
+        self.define_types(tasks);
+
+        // then global functions are declared
         self.declare_global_functions(ast);
-        // finally, fields of structs and enums are defined
-        self.define_global_structs(ast);
-        self.define_enum_variants(ast);
 
         for stmt in ast.iter() {
             typed_ast.push(self.check_stmt(stmt));

@@ -1,6 +1,6 @@
-use crate::typechecker::core::types::{FunctionType, GenericArgs, TupleType, Type};
-use crate::typechecker::system::make_substitution_map;
 use crate::typechecker::Symbol;
+use crate::typechecker::core::types::{FunctionType, GenericArgs, NameTypeId, TupleType, Type};
+use crate::typechecker::system::make_substitution_map;
 use std::collections::HashMap;
 use std::fmt;
 
@@ -228,9 +228,10 @@ impl InferenceContext {
                 expected: expected.clone(),
                 found: provided.clone(),
             }),
-            (Type::Struct(exp_name, exp_args), Type::Struct(prov_name, prov_args)) => {
-                self.unify_complex(exp_name, exp_args, prov_name, prov_args, variance, mismatch)
-            }
+            (Type::Struct(exp_name, exp_args), Type::Struct(prov_name, prov_args)) => self
+                .unify_complex(
+                    *exp_name, exp_args, *prov_name, prov_args, variance, mismatch,
+                ),
             (Type::Interface(exp_name), Type::Interface(prov_name)) => {
                 if exp_name == prov_name {
                     Ok(())
@@ -238,9 +239,10 @@ impl InferenceContext {
                     Err(mismatch(UnificationErrorKind::TypeMismatch))
                 }
             }
-            (Type::Enum(exp_name, exp_args), Type::Enum(prov_name, prov_args)) => {
-                self.unify_complex(exp_name, exp_args, prov_name, prov_args, variance, mismatch)
-            }
+            (Type::Enum(exp_name, exp_args), Type::Enum(prov_name, prov_args)) => self
+                .unify_complex(
+                    *exp_name, exp_args, *prov_name, prov_args, variance, mismatch,
+                ),
             (Type::GenericParam(exp_name), Type::GenericParam(prov_name)) => {
                 if exp_name == prov_name {
                     Ok(())
@@ -255,14 +257,14 @@ impl InferenceContext {
 
     fn unify_complex(
         &mut self,
-        expected_name: &Symbol,
+        expected_name: impl Into<NameTypeId>,
         expected_args: &[Type],
-        provided_name: &Symbol,
+        provided_name: impl Into<NameTypeId>,
         provided_args: &[Type],
         _variance: Variance,
         mismatch: impl FnOnce(UnificationErrorKind) -> UnificationError,
     ) -> Result<(), UnificationError> {
-        if expected_name != provided_name {
+        if expected_name.into() != provided_name.into() {
             return Err(mismatch(UnificationErrorKind::TypeMismatch));
         }
 
@@ -477,6 +479,7 @@ impl From<UnificationError> for String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::typechecker::core::types::StructId;
 
     #[test]
     fn test_occurs_check() {
@@ -485,7 +488,7 @@ mod tests {
         let Type::Infer(id) = var else { panic!() };
 
         // Try to unify T = List<T> (should fail)
-        let list_of_var = Type::new_list(Type::Infer(id));
+        let list_of_var = Type::Struct(StructId(0), GenericArgs::from([Type::Infer(id)]));
         let result = ctx.unify_types(&var, &list_of_var);
         assert!(result.is_err());
         assert!(matches!(

@@ -1,12 +1,13 @@
 use crate::scanner::Span;
-use crate::typechecker::core::types::{GenericArgs, Type};
-use crate::typechecker::inference::InferenceContext;
-use crate::typechecker::system::{make_substitution_map, TypeSystem};
 use crate::typechecker::Symbol;
+use crate::typechecker::core::types::{EnumId, GenericArgs, InterfaceId, StructId, Type};
+use crate::typechecker::inference::InferenceContext;
+use crate::typechecker::system::{TypeSystem, make_substitution_map};
 use std::collections::HashMap;
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct StructType {
+    pub id: StructId,
     pub name: Symbol,
     pub origin: Span,
     pub fields: HashMap<Symbol, usize>,
@@ -16,6 +17,7 @@ pub struct StructType {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct InterfaceType {
+    pub id: InterfaceId,
     pub name: Symbol,
     pub methods: HashMap<String, (usize, Type)>,
     pub origin: Span,
@@ -23,6 +25,7 @@ pub struct InterfaceType {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct EnumType {
+    pub id: EnumId,
     pub name: Symbol,
     pub origin: Span,
     pub variants: HashMap<Symbol, usize>,
@@ -45,8 +48,9 @@ impl EnumType {
         self.generic_params.len()
     }
 
-    pub fn new(name: Symbol, origin: Span, generic_params: Vec<Symbol>) -> Self {
+    pub fn new(id: EnumId, name: Symbol, origin: Span, generic_params: Vec<Symbol>) -> Self {
         Self {
+            id,
             name,
             origin,
             variants: HashMap::new(),
@@ -114,8 +118,8 @@ impl EnumType {
                     (name, final_ty)
                 })
                 .collect(),
-            Type::Struct(struct_name, _) => {
-                let struct_def = sys.get_struct(struct_name).unwrap();
+            Type::Struct(struct_id, _) => {
+                let struct_def = sys.get_struct(*struct_id);
                 struct_def
                     .ordered_fields
                     .iter()
@@ -129,7 +133,7 @@ impl EnumType {
                 vec![("_".into(), other.clone().generic_to_concrete(&map))]
             }
         };
-        let self_type = Type::Enum(self.name.clone(), instance);
+        let self_type = Type::Enum(self.id, instance);
         Some(TypeConstructor {
             constructed_type: self_type,
             resolved_args: params,
@@ -145,8 +149,9 @@ impl StructType {
         self.generic_params.len()
     }
 
-    pub fn new(name: Symbol, origin: Span, generic_params: Vec<Symbol>) -> Self {
+    pub fn new(id: StructId, name: Symbol, origin: Span, generic_params: Vec<Symbol>) -> Self {
         Self {
+            id,
             name,
             origin,
             fields: HashMap::new(),
@@ -184,7 +189,7 @@ impl StructType {
             })
             .collect();
 
-        let self_type = Type::Struct(self.name.clone(), type_args);
+        let self_type = Type::Struct(self.id, type_args);
 
         TypeConstructor {
             constructed_type: self_type,

@@ -21,7 +21,7 @@ impl Display for Type {
             Type::Error => write!(f, "Error"),
             Type::Infer(n) => write!(f, "?{}", n),
             Type::Metatype(name, generic_args) => {
-                write!(f, "{}", name)?;
+                write!(f, "{:?}", name)?;
                 print_generics(generic_args, f)
             }
             Type::GenericParam(name) => write!(f, "{}", name),
@@ -46,12 +46,12 @@ impl Display for Type {
             Type::Unknown => write!(f, "?"),
             Type::Any => write!(f, "any"),
             Type::Struct(name, generic_args) => {
-                write!(f, "{}", name,)?;
+                write!(f, "{:?}", name,)?;
                 print_generics(generic_args, f)
             }
-            Type::Interface(name) => write!(f, "{}", name),
+            Type::Interface(name) => write!(f, "{:?}", name), // TODO proper diagnostics
             Type::Enum(name, generic_args) => {
-                write!(f, "{}", name,)?;
+                write!(f, "{:?}", name,)?;
                 print_generics(generic_args, f)
             }
             Type::Optional(inner) => write!(f, "{}?", inner),

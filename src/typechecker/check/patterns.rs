@@ -6,11 +6,11 @@ use crate::typechecker::core::error::{
     Mismatch, MismatchContext, Operand, Recoverable, TypeCheckerError, TypeCheckerWarning,
 };
 use crate::typechecker::core::types::type_defs::EnumType;
-use crate::typechecker::core::types::{GenericArgs, TupleType, Type};
+use crate::typechecker::core::types::{GenericArgs, StructId, TupleType, Type};
 use crate::typechecker::scope::guards::ScopeGuard;
 use crate::typechecker::scope::manager::ScopeKind;
 use crate::typechecker::scope::variables::Declaration;
-use crate::typechecker::{similarity, TypeChecker};
+use crate::typechecker::{TypeChecker, similarity};
 use std::collections::HashSet;
 use std::rc::Rc;
 
@@ -44,7 +44,7 @@ impl<'src> TypeChecker<'src> {
         arms: &[ExprMatchArm<'src>],
     ) -> Result<TypedExpr, TypeCheckerError> {
         let value_typed = self.check_expression(value, &Type::Unknown);
-        let Type::Enum(enum_name, generics) = &value_typed.ty else {
+        let Type::Enum(enum_id, generics) = &value_typed.ty else {
             return Err(TypeCheckerError::OperatorConstraint {
                 operator: "match",
                 operand: Operand::Unary,
@@ -55,7 +55,7 @@ impl<'src> TypeChecker<'src> {
         };
 
         let mut ctx = MatchContext {
-            enum_def: self.sys.get_enum(enum_name).unwrap().clone(),
+            enum_def: self.sys.get_enum(*enum_id).clone(),
             generic_args: generics.clone(),
             matched_variants: HashSet::new(),
             has_fallthrough: false,
@@ -119,7 +119,7 @@ impl<'src> TypeChecker<'src> {
                 {
                     return Err(TypeCheckerError::TypeMismatch {
                         mismatch: Mismatch::simple(
-                            Type::Enum(ctx.enum_def.name.clone(), vec![].into()),
+                            Type::Enum(ctx.enum_def.id, vec![].into()),
                             value_typed.ty.clone(),
                         ),
                         context: MismatchContext::Generic,
@@ -220,10 +220,10 @@ impl<'src> TypeChecker<'src> {
     ) -> Result<TypedBinding, TypeCheckerError> {
         match binding {
             Binding::Struct { name, fields } => {
-                let Type::Struct(struct_name, generics) = type_to_match else {
+                let Type::Struct(struct_id, generics) = type_to_match else {
                     return Err(TypeCheckerError::TypeMismatch {
                         mismatch: Mismatch::simple(
-                            Type::Struct("Any".into(), vec![].into()),
+                            Type::Struct(StructId(0), vec![].into()), // TODO error report
                             type_to_match.clone(),
                         ),
                         context: MismatchContext::Generic,
@@ -234,7 +234,10 @@ impl<'src> TypeChecker<'src> {
 
                 // Matches plain structs ("StructName") and variant payload structs stored
                 // as "EnumName.VariantName" in the type system.
-                let name_matches = struct_name.as_ref() == name.lexeme
+
+                let struct_name = self.sys.get_struct(*struct_id).name.as_ref();
+                // TODO refactor resolution logic to match name to id
+                let name_matches = struct_name == name.lexeme
                     || struct_name
                         .rsplit_once('.')
                         .is_some_and(|(_, variant)| variant == name.lexeme);
@@ -242,7 +245,7 @@ impl<'src> TypeChecker<'src> {
                 if !name_matches {
                     return Err(TypeCheckerError::TypeMismatch {
                         mismatch: Mismatch::simple(
-                            Type::Struct(name.lexeme.into(), vec![].into()),
+                            Type::Struct(*struct_id, vec![].into()),
                             type_to_match.clone(),
                         ),
                         context: MismatchContext::Generic,
@@ -251,13 +254,7 @@ impl<'src> TypeChecker<'src> {
                     });
                 }
 
-                let struct_def = self.sys.get_struct(struct_name.as_ref()).ok_or_else(|| {
-                    TypeCheckerError::UndefinedType {
-                        name: name.lexeme.to_string(),
-                        span: binding.span(),
-                        message: "Struct with that name wasn't found.",
-                    }
-                })?;
+                let struct_def = self.sys.get_struct(*struct_id);
 
                 let mut resolved: Vec<(usize, Type, &Binding)> = Vec::with_capacity(fields.len());
                 for (field_name, field_binding) in fields {

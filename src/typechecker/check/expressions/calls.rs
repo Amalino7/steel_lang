@@ -4,7 +4,7 @@ use crate::typechecker::core::ast::{ExprKind, TypedExpr};
 use crate::typechecker::core::error::{
     CallError, CallParamError, CallParamKind, GenericError, MismatchContext, TypeCheckerError,
 };
-use crate::typechecker::core::types::{GenericArgs, Type};
+use crate::typechecker::core::types::{EnumId, GenericArgs, NameTypeId, StructId, Type};
 use crate::typechecker::system::make_substitution_map;
 use crate::typechecker::{Symbol, TypeChecker};
 use std::collections::HashMap;
@@ -34,23 +34,25 @@ impl<'src> TypeChecker<'src> {
                 .unwrap_optional_safe(safe, callee_typed.span, &mut self.warnings);
 
         // Handle Struct constructor
-        if let Type::Metatype(name, generics) = &lookup_type
-            && self.sys.get_struct(name).is_some()
-        {
-            return self.struct_constructor(name, generics, arguments, callee.span(), expr.span());
-        }
-
-        if let Type::Metatype(name, generics) = &lookup_type
-            && self.sys.get_enum(name).is_some()
-        {
-            return self.enum_constructor(
-                name,
-                generics,
-                arguments,
-                callee_typed,
-                callee.span(),
-                expr.span(),
-            );
+        if let Type::Metatype(id, generics) = &lookup_type {
+            if let NameTypeId::Struct(id) = id {
+                return self.struct_constructor(
+                    id,
+                    generics,
+                    arguments,
+                    callee.span(),
+                    expr.span(),
+                );
+            } else if let NameTypeId::Enum(id) = id {
+                return self.enum_constructor(
+                    *id,
+                    generics,
+                    arguments,
+                    callee_typed,
+                    callee.span(),
+                    expr.span(),
+                );
+            }
         }
 
         // Check for Normal Function Call
@@ -127,16 +129,13 @@ impl<'src> TypeChecker<'src> {
 
     fn struct_constructor(
         &mut self,
-        name: &Symbol,
+        id: &StructId,
         generics: &[Type],
         arguments: &Vec<CallArg<'src>>,
         callee_span: Span,
         expr_span: Span,
     ) -> Result<TypedExpr, TypeCheckerError> {
-        let struct_def = self
-            .sys
-            .get_struct(name)
-            .expect("Struct should have been checked earlier.");
+        let struct_def = self.sys.get_struct(*id);
         let constructor = struct_def.get_constructor(generics, &mut self.infer_ctx);
 
         let owned_name = struct_def.name.clone();
@@ -163,17 +162,15 @@ impl<'src> TypeChecker<'src> {
 
     fn enum_constructor(
         &mut self,
-        name: &Symbol,
+        id: EnumId,
         generics: &GenericArgs,
         arguments: &Vec<CallArg<'src>>,
         callee_typed: TypedExpr,
         callee_span: Span,
         expr_span: Span,
     ) -> Result<TypedExpr, TypeCheckerError> {
-        let enum_def = self
-            .sys
-            .get_enum(name)
-            .expect("Enum should have been checked earlier.");
+        let enum_def = self.sys.get_enum(id);
+
         let ExprKind::EnumInit {
             enum_name,
             variant_idx,
@@ -205,9 +202,9 @@ impl<'src> TypeChecker<'src> {
                 },
                 span,
             },
-            Type::Struct(struct_name, ..) => TypedExpr {
+            Type::Struct(struct_id, ..) => TypedExpr {
                 kind: ExprKind::StructInit {
-                    name: struct_name.to_string().into(),
+                    name: self.sys.get_struct(*struct_id).name.to_string().into(),
                     args: bound_args,
                 },
                 ty: old_value.ty.clone(),
