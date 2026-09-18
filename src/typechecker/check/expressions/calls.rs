@@ -4,7 +4,9 @@ use crate::typechecker::core::ast::{ExprKind, TypedExpr};
 use crate::typechecker::core::error::{
     CallError, CallParamError, CallParamKind, GenericError, MismatchContext, TypeCheckerError,
 };
-use crate::typechecker::core::types::{EnumId, GenericArgs, NameTypeId, StructId, Type};
+use crate::typechecker::core::types::{
+    EnumId, GenericArgs, GenericTypeId, NameTypeId, StructId, Type,
+};
 use crate::typechecker::system::make_substitution_map;
 use crate::typechecker::{Symbol, TypeChecker};
 use std::collections::HashMap;
@@ -58,7 +60,7 @@ impl<'src> TypeChecker<'src> {
         // Check for Normal Function Call
         if let Type::Function(func) = &lookup_type {
             let fresh_generics = self.infer_ctx.fresh_args(&func.type_params, &[]);
-            let map: HashMap<Symbol, Type> =
+            let map: HashMap<GenericTypeId, Type> =
                 make_substitution_map(&func.type_params, &fresh_generics);
 
             let Type::Function(func) = Type::Function(func.clone()).generic_to_concrete(&map)
@@ -94,7 +96,7 @@ impl<'src> TypeChecker<'src> {
             for fresh in fresh_generics.iter() {
                 let resolved = self.infer_ctx.substitute(fresh);
                 if !resolved.is_concrete() {
-                    let uninferred_generics = self.infer_ctx.uninferred_names(&resolved);
+                    let uninferred_generics = self.infer_ctx.uninferred_names(&resolved, &self.sys);
                     return Err(TypeCheckerError::Generic(GenericError::CannotInfer {
                         span: expr.span(),
                         uninferred_generics,
@@ -136,7 +138,7 @@ impl<'src> TypeChecker<'src> {
         expr_span: Span,
     ) -> Result<TypedExpr, TypeCheckerError> {
         let struct_def = self.sys.get_struct(*id);
-        let constructor = struct_def.get_constructor(generics, &mut self.infer_ctx);
+        let constructor = struct_def.get_constructor(generics, &mut self.infer_ctx, &self.sys);
 
         let owned_name = struct_def.name.clone();
         let definition_span = struct_def.origin;

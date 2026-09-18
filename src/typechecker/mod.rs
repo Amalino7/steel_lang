@@ -81,7 +81,9 @@ impl<'src> TypeChecker<'src> {
         self.define_types(tasks);
 
         // then global functions are declared
-        self.declare_global_functions(ast);
+        let global_functions = self.declare_global_functions(ast, &mut typed_ast);
+
+        self.define_global_functions(global_functions, &mut typed_ast);
 
         for stmt in ast.iter() {
             typed_ast.push(self.check_stmt(stmt));
@@ -149,23 +151,12 @@ impl<'src> TypeChecker<'src> {
 fn collect_extern_fns(stmts: &[TypedStmt]) -> Vec<(Box<str>, u16)> {
     let mut result = vec![];
     for stmt in stmts {
-        match &stmt.kind {
-            StmtKind::ExternFunction {
-                name,
-                target: ResolvedVar::Global(idx),
-            } => result.push((name.clone(), *idx)),
-            StmtKind::Impl { methods, .. } => {
-                for method in methods.iter() {
-                    if let StmtKind::ExternFunction {
-                        name,
-                        target: ResolvedVar::Global(idx),
-                    } = &method.kind
-                    {
-                        result.push((name.clone(), *idx));
-                    }
-                }
-            }
-            _ => {}
+        if let StmtKind::ExternFunction {
+            name,
+            target: ResolvedVar::Global(idx),
+        } = &stmt.kind
+        {
+            result.push((name.clone(), *idx))
         }
     }
     result

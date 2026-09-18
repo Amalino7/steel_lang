@@ -9,6 +9,7 @@ debug_stack_execution = []
 debug_gc = []
 stress_gc = []
 
+# TODO update deps
 [dependencies]
 ariadne = "0.4.1"
 clap = { version = "4", features = ["derive"] }

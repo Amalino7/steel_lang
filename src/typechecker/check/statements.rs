@@ -1,17 +1,19 @@
+use crate::compiler::analysis::ResolvedVar;
 use crate::parser::ast::{Stmt, TypeAst};
 use crate::scanner::Token;
+use crate::typechecker::TypeChecker;
 use crate::typechecker::core::ast::{StmtKind, TypedStmt};
 use crate::typechecker::core::error::{MismatchContext, Recoverable, TypeCheckerError};
-use crate::typechecker::core::types::Type;
-use crate::typechecker::scope::guards::ScopeGuard;
+use crate::typechecker::core::types::{FunctionType, Type};
+use crate::typechecker::scope::guards::{ScopeGuard, TypeScopeGuard};
 use crate::typechecker::scope::manager::ScopeKind;
 use crate::typechecker::scope::variables::Declaration;
-use crate::typechecker::TypeChecker;
+use std::rc::Rc;
 
 impl<'src> TypeChecker<'src> {
     pub(crate) fn check_stmt(&mut self, stmt: &Stmt<'src>) -> TypedStmt {
         match stmt {
-            Stmt::Import(import) => {
+            Stmt::Import(_) => {
                 todo!("Import statement")
             }
             Stmt::Expression(expr) => {
@@ -78,7 +80,7 @@ impl<'src> TypeChecker<'src> {
                 if self.non_global("impl", &name.0) {
                     return TypedStmt::new_blank(stmt.span());
                 }
-                self.define_impl(impl_block, interfaces, name, methods, generics)
+                self.define_impl(impl_block, interfaces, &name.0)
             }
             Stmt::Block { body, brace_token } => {
                 let mut scope = ScopeGuard::new(self, ScopeKind::Block);
@@ -127,24 +129,40 @@ impl<'src> TypeChecker<'src> {
                 signature,
                 generics,
             } => {
-                let (fn_decl, fn_type, fn_span) =
-                    self.check_function(name, signature, body, generics);
                 if !self.scopes.is_global() {
+                    let mut guard = TypeScopeGuard::new_function(self, generics);
+
+                    let func_ty = guard.res().resolve_generic_func(signature).recover(
+                        &mut guard.errors,
+                        Rc::new(FunctionType {
+                            is_vararg: false,
+                            params: vec![],
+                            return_type: Type::Error,
+                            type_params: vec![],
+                        }),
+                    );
+
+                    let (fn_decl, fn_type, fn_span) =
+                        guard.check_function(name, signature, body, func_ty);
                     let decl = Declaration::function(name.lexeme.into(), fn_type, name.span);
-                    self.scopes.declare(decl).ok_or_report(&mut self.errors);
-                }
-                let (_, target) = self
-                    .scopes
-                    .lookup(name.lexeme)
-                    .expect("Function should have been declared!");
-                TypedStmt {
-                    span: fn_span,
-                    type_info: Type::Void,
-                    kind: StmtKind::Function {
-                        name: name.lexeme.into(),
-                        target,
-                        decl: fn_decl,
-                    },
+
+                    let target = guard
+                        .scopes
+                        .declare(decl)
+                        .ok_or_report(&mut guard.errors)
+                        .unwrap_or(ResolvedVar::Global(0));
+
+                    TypedStmt {
+                        span: fn_span,
+                        type_info: Type::Void,
+                        kind: StmtKind::Function {
+                            name: name.lexeme.into(),
+                            target,
+                            decl: fn_decl,
+                        },
+                    }
+                } else {
+                    TypedStmt::new_blank(name.span)
                 }
             }
             Stmt::ExternFunction { name, .. } => {

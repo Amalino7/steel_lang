@@ -1,10 +1,11 @@
 use crate::scanner::{Span, Token};
-use crate::typechecker::core::types::type_defs::{EnumType, InterfaceType, StructType};
+use crate::typechecker::core::types::type_defs::{
+    EnumType, GenericType, InterfaceType, StructType,
+};
 use crate::typechecker::core::types::{
     EnumId, GenericTypeId, InterfaceId, NameTypeId, PrimitiveTypeId, Type,
 };
 use crate::typechecker::core::types::{StructId, Symbol};
-use crate::typechecker::resolver::convert_generics;
 use std::collections::HashMap;
 
 /// Metadata about a method declared inside an impl block.
@@ -19,7 +20,7 @@ pub struct TypeSystem {
     structs: HashMap<StructId, StructType>,
     interfaces: HashMap<InterfaceId, InterfaceType>,
     enums: HashMap<EnumId, EnumType>,
-    generics: HashMap<GenericTypeId, (Span, Symbol)>,
+    generics: HashMap<GenericTypeId, GenericType>,
 
     builtins: BuiltinTypes,
 
@@ -35,48 +36,81 @@ pub enum TypeBlueprint {
     Struct { id: StructId, arity: usize },
     Enum { id: EnumId, arity: usize },
     Interface { id: InterfaceId },
+    Generic { id: GenericTypeId },
     Primitive(Type),
 }
 
 impl TypeSystem {
     pub fn new() -> Self {
-        let (structs, builtins) = Self::built_in_structs();
+        let (structs, builtins, generics) = Self::built_in_structs();
         Self {
             structs,
             builtins,
-            generics: HashMap::new(),
+            generics,
             interfaces: HashMap::new(),
             impls: HashMap::new(),
             enums: HashMap::new(),
             methods: HashMap::new(),
         }
     }
-    fn built_in_structs() -> (HashMap<StructId, StructType>, BuiltinTypes) {
+    fn built_in_structs() -> (
+        HashMap<StructId, StructType>,
+        BuiltinTypes,
+        HashMap<GenericTypeId, GenericType>,
+    ) {
+        // TODO rethink builtins
         let mut structs = HashMap::new();
+        let mut generics = HashMap::new();
         let list_id = StructId(structs.len());
+
+        let val_id = GenericTypeId(generics.len());
+        generics.insert(
+            val_id,
+            GenericType {
+                id: val_id,
+                name: "Val".into(),
+                origin: Default::default(),
+            },
+        );
+
         structs.insert(
             list_id,
-            StructType::new(list_id, "List".into(), Span::default(), vec!["Val".into()]),
+            StructType::new(list_id, "List".into(), Span::default(), vec![val_id]),
         );
+
+        let key_id = GenericTypeId(generics.len());
+        generics.insert(
+            key_id,
+            GenericType {
+                id: key_id,
+                name: "Key".into(),
+                origin: Default::default(),
+            },
+        );
+        let val_id = GenericTypeId(generics.len());
+        generics.insert(
+            val_id,
+            GenericType {
+                id: val_id,
+                name: "Val".into(),
+                origin: Default::default(),
+            },
+        );
+
         let map_id = StructId(structs.len());
         structs.insert(
             map_id,
-            StructType::new(
-                map_id,
-                "Map".into(),
-                Span::default(),
-                vec!["Key".into(), "Val".into()],
-            ),
+            StructType::new(map_id, "Map".into(), Span::default(), vec![key_id, val_id]),
         );
         let builtin = BuiltinTypes { list_id, map_id };
-        (structs, builtin)
+        (structs, builtin, generics)
     }
     pub fn get_vtable_idx(&self, type_id: NameTypeId, iface_id: InterfaceId) -> Option<u32> {
         self.impls.get(&(type_id, iface_id)).copied()
     }
 
     /// Returns the names of the generic type parameters declared for a named type.
-    pub fn get_generic_param_names(&self, name: NameTypeId) -> Vec<Symbol> {
+    pub fn get_generic_param_names(&self, name: NameTypeId) -> Vec<GenericTypeId> {
         match name {
             NameTypeId::Struct(s) => self.get_struct(s).generic_params().to_vec(),
             NameTypeId::Enum(e) => self.get_enum(e).generic_params().to_vec(),
@@ -85,13 +119,13 @@ impl TypeSystem {
     }
 
     /// Builds a substitution map from a named type and its concrete type arguments.
-    pub fn make_generics_map(&self, id: NameTypeId, args: &[Type]) -> HashMap<Symbol, Type> {
+    pub fn make_generics_map(&self, id: NameTypeId, args: &[Type]) -> HashMap<GenericTypeId, Type> {
         let params = self.get_generic_param_names(id);
         make_substitution_map(&params, args)
     }
 
     /// Builds a substitution map from a concrete [`Type`].
-    pub fn get_generics_map(&self, ty: &Type) -> HashMap<Symbol, Type> {
+    pub fn get_generics_map(&self, ty: &Type) -> HashMap<GenericTypeId, Type> {
         // TODO maybe excessive
         let type_id: Option<NameTypeId> = match *ty {
             Type::Struct(id, _) => Some(id.into()),
@@ -112,20 +146,18 @@ impl TypeSystem {
         generic_params: &[Token],
     ) -> StructId {
         let id = StructId(self.structs.len());
-        self.structs.insert(
-            id,
-            StructType::new(id, name, origin, convert_generics(generic_params)),
-        );
+        let ids = self.declare_ids(generic_params);
+        self.structs
+            .insert(id, StructType::new(id, name, origin, ids));
         id
     }
 
     #[must_use]
     pub fn declare_enum(&mut self, origin: Span, name: Symbol, generic_params: &[Token]) -> EnumId {
+        let ids = self.declare_ids(generic_params);
+
         let id = EnumId(self.enums.len());
-        self.enums.insert(
-            id,
-            EnumType::new(id, name, origin, convert_generics(generic_params)),
-        );
+        self.enums.insert(id, EnumType::new(id, name, origin, ids));
         id
     }
 
@@ -142,6 +174,20 @@ impl TypeSystem {
             },
         );
         id
+    }
+
+    #[must_use]
+    pub fn declare_generic(&mut self, name: Symbol, origin: Span) -> GenericTypeId {
+        let id = GenericTypeId(self.generics.len());
+        self.generics.insert(id, GenericType { id, origin, name });
+        id
+    }
+
+    pub fn declare_ids(&mut self, generic_params: &[Token<'_>]) -> Vec<GenericTypeId> {
+        generic_params
+            .into_iter()
+            .map(|generic| self.declare_generic(generic.lexeme.into(), generic.span))
+            .collect()
     }
 
     pub fn define_struct(&mut self, id: StructId, fields_map: HashMap<Symbol, (usize, Type)>) {
@@ -205,7 +251,7 @@ impl TypeSystem {
         self.enums.get(&id).expect("Invalid Id issued!")
     }
 
-    pub fn get_generic(&self, id: GenericTypeId) -> &(Span, Symbol) {
+    pub fn get_generic(&self, id: GenericTypeId) -> &GenericType {
         self.generics.get(&id).expect("Invalid Id issued!")
     }
 
@@ -220,9 +266,7 @@ impl TypeSystem {
                 arity: self.get_enum(id).generic_count(),
             },
             NameTypeId::Interface(id) => TypeBlueprint::Interface { id },
-            NameTypeId::Generic(_) => {
-                todo!()
-            }
+            NameTypeId::Generic(id) => TypeBlueprint::Generic { id },
             NameTypeId::Primitive(id) => {
                 let ty = match id {
                     PrimitiveTypeId::Number => Type::Number,
@@ -263,7 +307,7 @@ impl TypeSystem {
             }
             NameTypeId::Enum(id) => Some(self.get_enum(id).origin),
             NameTypeId::Interface(id) => Some(self.get_interface(id).origin),
-            NameTypeId::Generic(id) => Some(self.get_generic(id).0),
+            NameTypeId::Generic(id) => Some(self.get_generic(id).origin),
             NameTypeId::Primitive(_) => None,
         }
     }
@@ -273,7 +317,7 @@ impl TypeSystem {
             NameTypeId::Struct(id) => self.get_struct(id).name.clone(),
             NameTypeId::Enum(id) => self.get_enum(id).name.clone(),
             NameTypeId::Interface(id) => self.get_interface(id).name.clone(),
-            NameTypeId::Generic(id) => self.get_generic(id).1.clone(),
+            NameTypeId::Generic(id) => self.get_generic(id).name.clone(),
             NameTypeId::Primitive(id) => match id {
                 PrimitiveTypeId::Number => "number".into(),
                 PrimitiveTypeId::String => "string".into(),
@@ -303,7 +347,10 @@ pub struct MethodId(usize);
 
 /// Converts the given generic type parameters and concrete type arguments into a substitution map.
 /// Used when there is a known concrete instance
-pub fn make_substitution_map(params: &[Symbol], args: &[Type]) -> HashMap<Symbol, Type> {
+pub fn make_substitution_map(
+    params: &[GenericTypeId],
+    args: &[Type],
+) -> HashMap<GenericTypeId, Type> {
     debug_assert_eq!(params.len(), args.len());
     params
         .iter()

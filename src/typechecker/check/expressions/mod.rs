@@ -390,7 +390,7 @@ impl<'src> TypeChecker<'src> {
         match self.coerce(typed, expected) {
             Ok(coerced) => {
                 if !coerced.ty.is_concrete() {
-                    let uninferred = self.infer_ctx.uninferred_names(&coerced.ty);
+                    let uninferred = self.infer_ctx.uninferred_names(&coerced.ty, &self.sys);
                     self.report(TypeCheckerError::Generic(GenericError::CannotInfer {
                         span,
                         uninferred_generics: uninferred,

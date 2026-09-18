@@ -2,11 +2,12 @@ use crate::scanner::{Span, Token};
 use crate::typechecker::core::error::{
     DuplicateDefinition, DuplicateKind, TypeCheckerError, TypeCheckerWarning,
 };
-use crate::typechecker::core::types::Type;
-use crate::typechecker::resolver::convert_generics;
+use crate::typechecker::core::types::{GenericTypeId, Type};
 use crate::typechecker::scope::manager::ScopeKind;
 use crate::typechecker::scope::types::{TypeScopeError, TypeScopeKind};
-use crate::typechecker::TypeChecker;
+use crate::typechecker::system::TypeSystem;
+use crate::typechecker::{Symbol, TypeChecker};
+use std::collections::HashMap;
 
 pub struct ScopeGuard<'a, 'src> {
     checker: &'a mut TypeChecker<'src>,
@@ -36,29 +37,58 @@ impl<'a, 'src> std::ops::DerefMut for TypeScopeGuard<'a, 'src> {
 }
 
 impl<'a, 'src> TypeScopeGuard<'a, 'src> {
-    pub fn new_type_params(checker: &'a mut TypeChecker<'src>, generics: &[Token<'src>]) -> Self {
-        let res = checker.type_scopes.begin_type_scope(
-            convert_generics(generics),
-            None,
-            TypeScopeKind::Type,
-        );
+    pub fn new_type_params(
+        checker: &'a mut TypeChecker<'src>,
+        generics: &[Token<'src>],
+        ids: &[GenericTypeId],
+    ) -> Self {
+        let generic_map = Self::create_generic_map(&checker.sys, ids);
+
+        let res = checker
+            .type_scopes
+            .begin_type_scope(generic_map, None, TypeScopeKind::Type);
+
         check_duplicate_generics(&mut checker.errors, generics, res);
         Self { checker }
     }
     pub fn new_function(checker: &'a mut TypeChecker<'src>, generics: &[Token<'src>]) -> Self {
-        let res = checker.type_scopes.begin_type_scope(
-            convert_generics(generics),
-            None,
-            TypeScopeKind::Function,
-        );
+        let ids = checker.sys.declare_ids(generics);
+        let generic_map = Self::create_generic_map(&checker.sys, &ids);
+
+        let res = checker
+            .type_scopes
+            .begin_type_scope(generic_map, None, TypeScopeKind::Function);
         check_duplicate_generics(&mut checker.errors, generics, res);
         TypeScopeGuard { checker }
     }
-    pub fn new_impl(checker: &'a mut TypeChecker<'src>, self_ty: Type) -> Self {
-        let _ = checker
+
+    pub fn old_function(checker: &'a mut TypeChecker<'src>, generics: &[GenericTypeId]) -> Self {
+        let generic_map = Self::create_generic_map(&checker.sys, generics);
+
+        let res = checker
             .type_scopes
-            .begin_type_scope(vec![], Some(self_ty), TypeScopeKind::Impl);
+            .begin_type_scope(generic_map, None, TypeScopeKind::Function);
         TypeScopeGuard { checker }
+    }
+
+    pub fn new_impl(checker: &'a mut TypeChecker<'src>, self_ty: Type) -> Self {
+        let _ = checker.type_scopes.begin_type_scope(
+            HashMap::new(),
+            Some(self_ty),
+            TypeScopeKind::Impl,
+        );
+        TypeScopeGuard { checker }
+    }
+    fn create_generic_map(
+        sys: &TypeSystem,
+        generic_ids: &[GenericTypeId],
+    ) -> HashMap<Symbol, GenericTypeId> {
+        let mut map = HashMap::new();
+        for &id in generic_ids {
+            let name = sys.get_generic(id).name.clone();
+            map.insert(name, id);
+        }
+        map
     }
 }
 fn check_duplicate_generics(

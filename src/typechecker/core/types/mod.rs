@@ -14,7 +14,7 @@ pub struct FunctionType {
     pub is_vararg: bool,
     pub params: Vec<(Symbol, Type)>,
     pub return_type: Type,
-    pub type_params: Vec<Symbol>,
+    pub type_params: Vec<GenericTypeId>,
 }
 
 impl FunctionType {
@@ -66,7 +66,7 @@ pub enum Type {
     Unknown,
     Function(Rc<FunctionType>),
     Tuple(Rc<TupleType>),
-    GenericParam(Symbol),
+    GenericParam(GenericTypeId),
 
     Metatype(NameTypeId, GenericArgs),
 
@@ -203,7 +203,7 @@ impl Type {
     pub fn transform(
         &self,
         f: &impl Fn(Type) -> Type,
-        u: &impl Fn(&[Symbol]) -> Vec<Symbol>,
+        u: &impl Fn(&[GenericTypeId]) -> Vec<GenericTypeId>,
     ) -> Type {
         let transformed = match self {
             Type::Nil
@@ -309,7 +309,7 @@ impl Type {
     pub fn new_general_function(
         params: Vec<(Symbol, Type)>,
         return_type: Type,
-        type_params: Vec<Symbol>,
+        type_params: Vec<GenericTypeId>,
         is_vararg: bool,
     ) -> Self {
         Type::Function(Rc::new(FunctionType {
@@ -323,7 +323,7 @@ impl Type {
     pub fn new_function(
         params: Vec<(Symbol, Type)>,
         return_type: Type,
-        type_params: Vec<Symbol>,
+        type_params: Vec<GenericTypeId>,
     ) -> Type {
         Type::Function(Rc::new(FunctionType {
             is_vararg: false,
@@ -365,7 +365,7 @@ impl Type {
         }
     }
 
-    pub fn generic_to_concrete(&self, map: &HashMap<Symbol, Type>) -> Type {
+    pub fn generic_to_concrete(&self, map: &HashMap<GenericTypeId, Type>) -> Type {
         self.transform(
             &|ty| match ty {
                 Type::GenericParam(ref sym) => match map.get(sym) {

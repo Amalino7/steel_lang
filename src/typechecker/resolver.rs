@@ -2,7 +2,7 @@ use crate::parser::ast::{FunctionSig, TypeAst};
 use crate::scanner::{Span, Token};
 use crate::typechecker::Symbol;
 use crate::typechecker::core::error::{GenericError, TypeCheckerError};
-use crate::typechecker::core::types::{FunctionType, NameTypeId, TupleType, Type};
+use crate::typechecker::core::types::{FunctionType, GenericTypeId, NameTypeId, TupleType, Type};
 use crate::typechecker::scope::types::TypeScopeManager;
 use crate::typechecker::system::{TypeBlueprint, TypeSystem};
 use std::rc::Rc;
@@ -49,10 +49,6 @@ impl<'a> TypeResolver<'a> {
                 .cloned()
                 .ok_or(TypeCheckerError::SelfOutsideOfImpl { span: token.span });
         }
-        if let Some(name) = self.scope_manager.is_generic(name) {
-            check_generic_arity(&name, 0, generics.len(), span)?;
-            return Ok(Type::GenericParam(name.clone()));
-        }
         let resolved_generics = self.resolve_many(generics)?;
 
         self.instantiate(name, resolved_generics, span)
@@ -91,6 +87,10 @@ impl<'a> TypeResolver<'a> {
                 check_generic_arity(name, 0, generics.len(), source)?;
                 Ok(Type::Interface(id))
             }
+            TypeBlueprint::Generic { id } => {
+                check_generic_arity(name, 0, generics.len(), source)?;
+                Ok(Type::GenericParam(id))
+            }
         }
     }
 
@@ -119,7 +119,7 @@ impl<'a> TypeResolver<'a> {
     fn resolve_func(
         &self,
         signature: &FunctionSig<'_>,
-        active_generics: Vec<Symbol>,
+        active_generics: Vec<GenericTypeId>,
     ) -> Result<Rc<FunctionType>, TypeCheckerError> {
         let params = signature
             .params

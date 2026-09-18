@@ -90,11 +90,7 @@ impl<'a> Compiler<'a> {
                 self.patch_jump(exit_jump);
                 self.emit_op(Opcode::Pop, body.span.line);
             }
-            StmtKind::Impl { methods, vtables } => {
-                for method in methods {
-                    self.compile_stmt(method);
-                }
-
+            StmtKind::Impl { vtables } => {
                 for vtable in vtables.iter() {
                     for method_loc in vtable.iter().rev() {
                         self.emit_var_access(method_loc, stmt.span.line);

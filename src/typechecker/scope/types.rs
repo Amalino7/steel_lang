@@ -1,5 +1,5 @@
 use crate::typechecker::Symbol;
-use crate::typechecker::core::types::{NameTypeId, PrimitiveTypeId, Type};
+use crate::typechecker::core::types::{GenericTypeId, NameTypeId, PrimitiveTypeId, Type};
 use crate::typechecker::system::MethodId;
 use std::collections::HashMap;
 
@@ -12,7 +12,7 @@ pub enum TypeScopeKind {
 
 struct TypeScope {
     kind: TypeScopeKind,
-    generics: Vec<Symbol>,
+    generics: HashMap<Symbol, GenericTypeId>,
     self_type: Option<Type>,
 }
 
@@ -33,16 +33,17 @@ impl TypeScopeManager {
     }
     pub fn begin_type_scope(
         &mut self,
-        generics: Vec<Symbol>,
+        generics: HashMap<Symbol, GenericTypeId>,
         self_type: Option<Type>,
         kind: TypeScopeKind,
     ) -> Result<(), Vec<TypeScopeError>> {
         let mut errors: Vec<TypeScopeError> = Vec::new();
         for (idx, generic) in generics.iter().enumerate() {
-            if self.is_generic(generic.as_ref()).is_some() {
-                errors.push((generic.clone(), idx));
+            if self.is_generic(generic.0).is_some() {
+                errors.push((generic.0.clone(), idx));
             }
         }
+
         self.scopes.push(TypeScope {
             generics,
             self_type,
@@ -61,19 +62,22 @@ impl TypeScopeManager {
 
     pub fn is_generic(&self, name: &str) -> Option<Symbol> {
         for scope in self.scopes.iter().rev() {
-            for g in &scope.generics {
-                if g.as_ref() == name {
-                    return Some(g.clone());
-                }
+            if let Some((name, _)) = scope.generics.get_key_value(name) {
+                return Some(name.clone());
             }
         }
         None
     }
 
-    pub fn active_generics(&self) -> Vec<Symbol> {
+    pub fn active_generics(&self) -> Vec<GenericTypeId> {
         let mut generics = vec![];
         for scope in self.scopes.iter().rev() {
-            let mut new_generics = scope.generics.clone();
+            let mut new_generics = scope
+                .generics
+                .values()
+                .copied()
+                .collect::<Vec<GenericTypeId>>();
+
             new_generics.extend(generics);
             generics = new_generics;
             if scope.kind == TypeScopeKind::Function {
@@ -93,6 +97,11 @@ impl TypeScopeManager {
     }
     pub fn lookup_type(&self, name: &str) -> Option<NameTypeId> {
         // TODO Wire more logic
+        for scope in self.scopes.iter().rev() {
+            if let Some(id) = scope.generics.get(name) {
+                return Some((*id).into());
+            }
+        }
         self.globals.get(name).cloned()
     }
 

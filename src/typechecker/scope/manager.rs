@@ -1,11 +1,11 @@
 use crate::compiler::analysis::ResolvedVar;
 use crate::scanner::Span;
+use crate::typechecker::Symbol;
 use crate::typechecker::core::error::{BindingError, TypeCheckerError};
 use crate::typechecker::core::types::Type;
 use crate::typechecker::scope::variables::{
     Declaration, DeclarationKind, Mutability, VariableContext,
 };
-use crate::typechecker::Symbol;
 use std::cmp::PartialEq;
 use std::collections::HashMap;
 

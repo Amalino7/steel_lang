@@ -1,12 +1,14 @@
 use crate::typechecker::Symbol;
-use crate::typechecker::core::types::{FunctionType, GenericArgs, NameTypeId, TupleType, Type};
-use crate::typechecker::system::make_substitution_map;
+use crate::typechecker::core::types::{
+    FunctionType, GenericArgs, GenericTypeId, NameTypeId, TupleType, Type,
+};
+use crate::typechecker::system::{TypeSystem, make_substitution_map};
 use std::collections::HashMap;
 use std::fmt;
 
 pub struct InferenceContext {
     substitutions: HashMap<u32, Type>,
-    debug_names: HashMap<u32, Symbol>,
+    debug_names: HashMap<u32, GenericTypeId>,
     next_id: u32,
 }
 impl Default for InferenceContext {
@@ -51,7 +53,7 @@ impl InferenceContext {
     /// Like [`new_type_var`] but records `name` as the human-readable origin of this
     /// inference variable (e.g. the generic parameter name `"T"`).
     /// The name is used when building [`CannotInferType`] error messages.
-    pub fn new_named_type_var(&mut self, name: Symbol) -> Type {
+    pub fn new_named_type_var(&mut self, name: GenericTypeId) -> Type {
         let id = self.next_id;
         self.next_id += 1;
         self.debug_names.insert(id, name);
@@ -61,44 +63,44 @@ impl InferenceContext {
     /// Collect the human-readable names of every unresolved inference variable
     /// reachable inside `ty`.  Variables that have no recorded name are rendered
     /// as `"?<id>"` so they are never silently dropped.
-    pub fn uninferred_names(&self, ty: &Type) -> Vec<String> {
+    pub fn uninferred_names(&self, ty: &Type, sys: &TypeSystem) -> Vec<String> {
         let mut names: Vec<String> = Vec::new();
-        self.collect_uninferred(ty, &mut names);
+        self.collect_uninferred(ty, &mut names, sys);
         names.sort();
         names.dedup();
         names
     }
 
-    fn collect_uninferred(&self, ty: &Type, names: &mut Vec<String>) {
+    fn collect_uninferred(&self, ty: &Type, names: &mut Vec<String>, sys: &TypeSystem) {
         match ty {
             Type::Infer(id) => {
                 if self.is_resolved(*id) {
                     let resolved = self.resolve(*id).unwrap().clone();
-                    self.collect_uninferred(&resolved, names);
+                    self.collect_uninferred(&resolved, names, sys);
                 } else {
                     let name = self
                         .debug_names
                         .get(id)
-                        .map(|s| s.to_string())
+                        .map(|&s| sys.get_name(s.into()).to_string())
                         .unwrap_or_else(|| format!("?{}", id));
                     names.push(name);
                 }
             }
-            Type::Optional(inner) => self.collect_uninferred(inner, names),
+            Type::Optional(inner) => self.collect_uninferred(inner, names, sys),
             Type::Tuple(tt) => {
                 for t in tt.types.iter() {
-                    self.collect_uninferred(t, names);
+                    self.collect_uninferred(t, names, sys);
                 }
             }
             Type::Function(ft) => {
                 for (_, t) in ft.params.iter() {
-                    self.collect_uninferred(t, names);
+                    self.collect_uninferred(t, names, sys);
                 }
-                self.collect_uninferred(&ft.return_type, names);
+                self.collect_uninferred(&ft.return_type, names, sys);
             }
             Type::Struct(_, args) | Type::Enum(_, args) => {
                 for t in args.iter() {
-                    self.collect_uninferred(t, names);
+                    self.collect_uninferred(t, names, sys);
                 }
             }
             _ => {}
@@ -106,7 +108,7 @@ impl InferenceContext {
     }
 
     /// Should be used when new type arguments can be partially provided and the rest has to use new infer holes.
-    pub fn fresh_args(&mut self, params: &[Symbol], provided: &[Type]) -> GenericArgs {
+    pub fn fresh_args(&mut self, params: &[GenericTypeId], provided: &[Type]) -> GenericArgs {
         let is_correct = params.len() == provided.len() || provided.is_empty();
         debug_assert!(
             is_correct,
@@ -115,11 +117,11 @@ impl InferenceContext {
         params
             .iter()
             .enumerate()
-            .map(|(i, name)| {
+            .map(|(i, id)| {
                 provided
                     .get(i)
                     .cloned()
-                    .unwrap_or_else(|| self.new_named_type_var(name.clone()))
+                    .unwrap_or_else(|| self.new_named_type_var(*id))
             })
             .collect()
     }

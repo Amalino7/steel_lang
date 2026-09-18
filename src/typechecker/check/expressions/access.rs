@@ -330,7 +330,7 @@ impl<'src> TypeChecker<'src> {
         let definition_span = ctx.span;
         let method_type = ctx.type_info.clone();
         let Type::Function(func) = &method_type else {
-            unreachable!("Method should be of type function")
+            unreachable!("Method should be of type function {}", method_type)
         };
 
         if func.is_static() {
@@ -341,7 +341,7 @@ impl<'src> TypeChecker<'src> {
         }
         let impl_count: Option<usize> = self
             .type_scopes
-            .lookup_method(&type_name, &method_token.lexeme)
+            .lookup_method(&type_name, method_token.lexeme)
             .map(|id| self.sys.get_method_info(*id).impl_generic_count);
 
         let result_type = if let Some(impl_count) = impl_count {

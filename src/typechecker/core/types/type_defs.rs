@@ -1,6 +1,8 @@
 use crate::scanner::Span;
 use crate::typechecker::Symbol;
-use crate::typechecker::core::types::{EnumId, GenericArgs, InterfaceId, StructId, Type};
+use crate::typechecker::core::types::{
+    EnumId, GenericArgs, GenericTypeId, InterfaceId, StructId, Type,
+};
 use crate::typechecker::inference::InferenceContext;
 use crate::typechecker::system::{TypeSystem, make_substitution_map};
 use std::collections::HashMap;
@@ -12,7 +14,7 @@ pub struct StructType {
     pub origin: Span,
     pub fields: HashMap<Symbol, usize>,
     ordered_fields: Vec<(Symbol, Type)>,
-    generic_params: Vec<Symbol>,
+    generic_params: Vec<GenericTypeId>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -30,7 +32,14 @@ pub struct EnumType {
     pub origin: Span,
     pub variants: HashMap<Symbol, usize>,
     ordered_variants: Vec<(Symbol, Type)>, // Void, one arg, tuple, struct
-    generic_params: Vec<Symbol>,
+    generic_params: Vec<GenericTypeId>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct GenericType {
+    pub id: GenericTypeId,
+    pub name: Symbol,
+    pub origin: Span,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -40,7 +49,7 @@ pub struct TypeConstructor {
 }
 
 impl EnumType {
-    pub fn generic_params(&self) -> &[Symbol] {
+    pub fn generic_params(&self) -> &[GenericTypeId] {
         &self.generic_params
     }
 
@@ -48,7 +57,7 @@ impl EnumType {
         self.generic_params.len()
     }
 
-    pub fn new(id: EnumId, name: Symbol, origin: Span, generic_params: Vec<Symbol>) -> Self {
+    pub fn new(id: EnumId, name: Symbol, origin: Span, generic_params: Vec<GenericTypeId>) -> Self {
         Self {
             id,
             name,
@@ -141,7 +150,7 @@ impl EnumType {
     }
 }
 impl StructType {
-    pub fn generic_params(&self) -> &[Symbol] {
+    pub fn generic_params(&self) -> &[GenericTypeId] {
         &self.generic_params
     }
 
@@ -149,7 +158,12 @@ impl StructType {
         self.generic_params.len()
     }
 
-    pub fn new(id: StructId, name: Symbol, origin: Span, generic_params: Vec<Symbol>) -> Self {
+    pub fn new(
+        id: StructId,
+        name: Symbol,
+        origin: Span,
+        generic_params: Vec<GenericTypeId>,
+    ) -> Self {
         Self {
             id,
             name,
@@ -177,6 +191,7 @@ impl StructType {
         &self,
         instance: &[Type],
         ctx: &mut InferenceContext,
+        sys: &TypeSystem,
     ) -> TypeConstructor {
         let type_args = ctx.fresh_args(&self.generic_params, instance);
         let map = make_substitution_map(&self.generic_params, &type_args);

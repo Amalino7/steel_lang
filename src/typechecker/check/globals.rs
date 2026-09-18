@@ -1,29 +1,37 @@
 use crate::compiler::analysis::ResolvedVar;
-use crate::parser::ast::{Stmt, TypeAst, VariantType};
+use crate::parser::ast::{FunctionSig, Stmt, TypeAst, VariantType};
 use crate::scanner::{Span, Token};
 use crate::typechecker::core::ast::{StmtKind, TypedStmt};
 use crate::typechecker::core::error::{
     DuplicateDefinition, DuplicateKind, Mismatch, Recoverable, TypeCheckerError,
 };
-use crate::typechecker::core::types::{EnumId, InterfaceId, NameTypeId, StructId, Type};
+use crate::typechecker::core::types::{
+    EnumId, FunctionType, InterfaceId, NameTypeId, StructId, Type,
+};
 use crate::typechecker::scope::guards::TypeScopeGuard;
 use crate::typechecker::scope::variables::Declaration;
 use crate::typechecker::system::ImplMethod;
 use crate::typechecker::{Symbol, TypeChecker};
 use std::collections::HashMap;
 use std::iter::repeat_n;
+use std::rc::Rc;
 
 impl<'src> TypeChecker<'src> {
-    pub(crate) fn declare_global_functions(&mut self, ast: &[Stmt<'src>]) {
+    pub(crate) fn declare_global_functions<'a>(
+        &mut self,
+        ast: &'a [Stmt<'src>],
+        typed_ast: &mut Vec<TypedStmt>,
+    ) -> Vec<(
+        &'a Token<'src>,
+        &'a FunctionSig<'src>,
+        &'a Stmt<'src>,
+        Rc<FunctionType>,
+        ResolvedVar,
+    )> {
+        let mut func_types = vec![];
         for stmt in ast.iter() {
             match stmt {
-                Stmt::Function {
-                    name,
-                    generics,
-                    signature,
-                    ..
-                }
-                | Stmt::ExternFunction {
+                Stmt::ExternFunction {
                     name,
                     generics,
                     signature,
@@ -33,7 +41,31 @@ impl<'src> TypeChecker<'src> {
                         .res()
                         .resolve_generic_func(signature)
                         .map(Type::Function);
+
                     guard.declare_function(name.lexeme.into(), name.span, func_ty, false);
+                }
+                Stmt::Function {
+                    name,
+                    generics,
+                    signature,
+                    body,
+                } => {
+                    let mut guard = TypeScopeGuard::new_function(self, generics);
+                    let func_ty = guard
+                        .res()
+                        .resolve_generic_func(signature)
+                        .map(Type::Function);
+
+                    let location = guard.declare_function(
+                        name.lexeme.into(),
+                        name.span,
+                        func_ty.clone(),
+                        false,
+                    );
+
+                    if let Ok(Type::Function(ty)) = &func_ty {
+                        func_types.push((name, signature, body.as_ref(), ty.clone(), location));
+                    }
                 }
                 Stmt::Impl {
                     interfaces,
@@ -42,7 +74,11 @@ impl<'src> TypeChecker<'src> {
                     generics,
                 } => {
                     let impl_gen_count = generics.len();
-                    let mut partial_guard = TypeScopeGuard::new_type_params(self, generics);
+                    let generic_ids = self.sys.declare_ids(generics);
+
+                    let mut partial_guard =
+                        TypeScopeGuard::new_type_params(self, generics, &generic_ids);
+
                     let self_ty = partial_guard
                         .res()
                         .resolve_named(&name.0, &name.1)
@@ -77,7 +113,10 @@ impl<'src> TypeChecker<'src> {
                             } => (name, signature, generics),
                             _ => unreachable!(),
                         };
-                        let mut inner_guard = TypeScopeGuard::new_type_params(&mut guard, generics);
+                        let generic_ids = guard.sys.declare_ids(generics);
+
+                        let mut inner_guard =
+                            TypeScopeGuard::new_type_params(&mut guard, generics, &generic_ids);
                         let func_ty = inner_guard
                             .res()
                             .resolve_generic_func(signature)
@@ -85,12 +124,27 @@ impl<'src> TypeChecker<'src> {
                         let mangled_name: Symbol =
                             format!("{}.{}", name.0.lexeme, func_name.lexeme).into();
 
-                        inner_guard.declare_function(
+                        let location = inner_guard.declare_function(
                             mangled_name.clone(),
                             func_name.span,
-                            func_ty,
+                            func_ty.clone(),
                             true,
                         );
+
+                        if let Ok(Type::Function(ty)) = &func_ty
+                            && let Stmt::Function { body, .. } = method
+                        {
+                            func_types.push((func_name, signature, body, ty.clone(), location));
+                        } else if let Stmt::ExternFunction { .. } = method {
+                            typed_ast.push(TypedStmt {
+                                kind: StmtKind::ExternFunction {
+                                    name: mangled_name.to_string().into(),
+                                    target: location,
+                                },
+                                span: func_name.span,
+                                type_info: Type::Nil,
+                            });
+                        }
 
                         // Register impl metadata so method-access can freshen and unify correctly.
                         let self_type = inner_guard
@@ -117,76 +171,19 @@ impl<'src> TypeChecker<'src> {
                 _ => {}
             }
         }
+        func_types
     }
 
     pub(crate) fn define_impl(
         &mut self,
         impl_block: &Stmt<'src>,
         interfaces: &[Token],
-        (name, target_generics): &(Token, Vec<TypeAst>),
-        methods: &[Stmt<'src>],
-        generics: &[Token<'src>],
+        type_name: &Token,
     ) -> TypedStmt {
-        let mut typed_methods = vec![];
-        let mut outer_guard = TypeScopeGuard::new_type_params(self, generics);
-        let self_ty = outer_guard
-            .res()
-            .resolve_named(name, target_generics)
-            .recover(&mut outer_guard.errors, Type::Error);
-        let mut guard = TypeScopeGuard::new_impl(&mut outer_guard, self_ty);
-        // define methods
-        for method in methods {
-            match method {
-                Stmt::Function {
-                    name: func_name,
-                    body,
-                    signature,
-                    generics,
-                } => {
-                    let primary_mangled = format!("{}.{}", name.lexeme, func_name.lexeme);
-                    let (fn_decl, _, _) =
-                        guard.check_function(func_name, signature, body, generics);
-                    let (_, location) = guard
-                        .scopes
-                        .lookup(&primary_mangled)
-                        .expect("Function was added");
-                    typed_methods.push(TypedStmt {
-                        kind: StmtKind::Function {
-                            name: primary_mangled.into_boxed_str(),
-                            target: location,
-                            decl: fn_decl,
-                        },
-                        span: Default::default(),
-                        type_info: Type::Nil,
-                    });
-                }
-                Stmt::ExternFunction {
-                    name: func_name, ..
-                } => {
-                    let primary_mangled = format!("{}.{}", name.lexeme, func_name.lexeme);
-                    let (_, location) = guard
-                        .scopes
-                        .lookup(&primary_mangled)
-                        .expect("Extern method was added");
-                    typed_methods.push(TypedStmt {
-                        kind: StmtKind::ExternFunction {
-                            name: primary_mangled.into_boxed_str(),
-                            target: location,
-                        },
-                        span: Default::default(),
-                        type_info: Type::Nil,
-                    });
-                }
-                _ => unreachable!(),
-            }
-        }
-        drop(guard);
-        drop(outer_guard);
-        // generate vtables
         let mut vtables = vec![];
         for interface in interfaces {
             if let Some(vtable) =
-                self.check_interface_vtable(name.lexeme, interface, impl_block.span())
+                self.check_interface_vtable(type_name.lexeme, interface, impl_block.span())
             {
                 vtables.push(vtable);
             }
@@ -194,11 +191,36 @@ impl<'src> TypeChecker<'src> {
 
         TypedStmt {
             kind: StmtKind::Impl {
-                methods: typed_methods.into(),
                 vtables: vtables.into(),
             },
             span: impl_block.span(),
             type_info: Type::Void,
+        }
+    }
+
+    pub(crate) fn define_global_functions<'a>(
+        &mut self,
+        funcs: Vec<(
+            &'a Token<'src>,
+            &'a FunctionSig<'src>,
+            &'a Stmt<'src>,
+            Rc<FunctionType>,
+            ResolvedVar,
+        )>,
+        typed_ast: &mut Vec<TypedStmt>,
+    ) {
+        for (name, sig, body, ty, target) in funcs {
+            let mut guard = TypeScopeGuard::old_function(self, &ty.type_params);
+            let (decl, _, fn_span) = guard.check_function(name, sig, body, ty);
+            typed_ast.push(TypedStmt {
+                span: fn_span,
+                type_info: Type::Void,
+                kind: StmtKind::Function {
+                    name: name.lexeme.into(),
+                    target,
+                    decl,
+                },
+            })
         }
     }
 
@@ -208,13 +230,16 @@ impl<'src> TypeChecker<'src> {
         span: Span,
         func_type: Result<Type, TypeCheckerError>,
         is_method: bool,
-    ) {
+    ) -> ResolvedVar {
         let func_type = func_type.recover(&mut self.errors, Type::Error);
         let decl = match is_method {
             true => Declaration::method(name, func_type, span),
             false => Declaration::global_function(name, func_type, span),
         };
-        self.scopes.declare(decl).ok_or_report(&mut self.errors);
+        self.scopes
+            .declare(decl)
+            .ok_or_report(&mut self.errors)
+            .unwrap_or(ResolvedVar::Global(0)) // TODO rethink
     }
 
     fn check_interface_vtable(
@@ -287,24 +312,20 @@ impl<'src> TypeChecker<'src> {
         for stmt in ast.iter() {
             match stmt {
                 Stmt::Struct { name, generics, .. } => {
-                    if self.redeclaration_check(name).is_ok() {
-                        let id = self
-                            .sys
-                            .declare_struct(stmt.span(), name.lexeme.into(), generics);
-                        self.type_scopes
-                            .declare_global(name.lexeme.into(), id.into());
+                    let id = self
+                        .sys
+                        .declare_struct(stmt.span(), name.lexeme.into(), generics);
+                    self.type_scopes
+                        .declare_global(name.lexeme.into(), id.into());
 
-                        tasks.push((id.into(), stmt))
-                    }
+                    tasks.push((id.into(), stmt))
                 }
                 Stmt::Interface { name, .. } => {
-                    if self.redeclaration_check(name).is_ok() {
-                        let id = self.sys.declare_interface(name.lexeme.into(), stmt.span());
-                        self.type_scopes
-                            .declare_global(name.lexeme.into(), id.into());
+                    let id = self.sys.declare_interface(name.lexeme.into(), stmt.span());
+                    self.type_scopes
+                        .declare_global(name.lexeme.into(), id.into());
 
-                        tasks.push((id.into(), stmt))
-                    }
+                    tasks.push((id.into(), stmt))
                 }
                 Stmt::Enum { name, generics, .. } if self.redeclaration_check(name).is_ok() => {
                     let id = self
@@ -371,7 +392,9 @@ impl<'src> TypeChecker<'src> {
             generics,
         } = stmt
         {
-            let mut guard = TypeScopeGuard::new_type_params(self, generics);
+            let generic_ids = self.sys.get_generic_param_names(id.into());
+
+            let mut guard = TypeScopeGuard::new_type_params(self, generics, &generic_ids);
             let mut guard = TypeScopeGuard::new_impl(&mut guard, Type::Never);
             let mut method_map: HashMap<String, (usize, Type)> = HashMap::new();
             for (i, sig) in methods.iter().enumerate() {
@@ -394,7 +417,9 @@ impl<'src> TypeChecker<'src> {
             generics,
         } = stmt
         {
-            let mut guard = TypeScopeGuard::new_type_params(self, generics);
+            let generic_ids = self.sys.get_generic_param_names(id.into());
+
+            let mut guard = TypeScopeGuard::new_type_params(self, generics, &generic_ids);
             let field_types = guard.define_struct_fields(fields);
             guard.sys.define_struct(id, field_types);
         }
@@ -407,7 +432,9 @@ impl<'src> TypeChecker<'src> {
             generics,
         } = stmt
         {
-            let mut guard = TypeScopeGuard::new_type_params(self, generics);
+            let generic_ids = self.sys.get_generic_param_names(id.into());
+
+            let mut guard = TypeScopeGuard::new_type_params(self, generics, &generic_ids);
             let mut typed_variants: HashMap<Symbol, (usize, Type)> = HashMap::new();
             let mut seen_variants: HashMap<Symbol, Span> = HashMap::new();
             let mut valid_idx = 0usize;

@@ -92,7 +92,7 @@ impl<'src> TypeChecker<'src> {
 
         let impl_meta = self
             .type_scopes
-            .lookup_method(&name, &method_name.lexeme)
+            .lookup_method(&name, method_name.lexeme)
             .map(|id| {
                 let impl_info = self.sys.get_method_info(*id);
                 (impl_info.self_type.clone(), impl_info.impl_generic_count)
@@ -114,6 +114,7 @@ impl<'src> TypeChecker<'src> {
                     TypeBlueprint::Struct { id, .. } => Type::Struct(id, generics.clone()),
                     TypeBlueprint::Enum { id, .. } => Type::Enum(id, generics.clone()),
                     TypeBlueprint::Interface { id, .. } => Type::Interface(id),
+                    TypeBlueprint::Generic { id } => Type::GenericParam(id),
                     TypeBlueprint::Primitive(inner) => inner,
                 };
 

@@ -24,7 +24,7 @@ impl Display for Type {
                 write!(f, "{:?}", name)?;
                 print_generics(generic_args, f)
             }
-            Type::GenericParam(name) => write!(f, "{}", name),
+            Type::GenericParam(id) => write!(f, "{:?}", id),
             Type::Number => write!(f, "number"),
             Type::Boolean => write!(f, "boolean"),
             Type::String => write!(f, "string"),

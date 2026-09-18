@@ -1,8 +1,8 @@
 use crate::compiler::analysis::ResolvedVar;
 use crate::parser::ast::Literal;
 use crate::scanner::Span;
-use crate::typechecker::core::types::Type;
 use crate::typechecker::Symbol;
+use crate::typechecker::core::types::Type;
 
 #[derive(Debug)]
 pub struct TypedExpr {
@@ -238,7 +238,6 @@ pub struct TypedStmt {
 pub enum StmtKind {
     Blank,
     Impl {
-        methods: Box<[TypedStmt]>, // optimizes memory layout
         vtables: Box<[Vec<ResolvedVar>]>,
     }, // Might add meta-information later
     StructDecl {},
