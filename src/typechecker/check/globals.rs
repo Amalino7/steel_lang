@@ -121,25 +121,28 @@ impl<'src> TypeChecker<'src> {
                             .res()
                             .resolve_generic_func(signature)
                             .map(Type::Function);
-                        let mangled_name: Symbol =
-                            format!("{}.{}", name.0.lexeme, func_name.lexeme).into();
 
-                        let location = inner_guard.declare_function(
-                            mangled_name.clone(),
-                            func_name.span,
-                            func_ty.clone(),
-                            true,
-                        );
+                        let location =
+                            ResolvedVar::Global(inner_guard.id_generator.next().get() as u16);
 
                         if let Ok(Type::Function(ty)) = &func_ty
                             && let Stmt::Function { body, .. } = method
                         {
-                            func_types.push((func_name, signature, body, ty.clone(), location));
+                            func_types.push((
+                                func_name,
+                                signature,
+                                body,
+                                ty.clone(),
+                                location.clone(),
+                            ));
                         } else if let Stmt::ExternFunction { .. } = method {
+                            let mangled_name: Symbol =
+                                format!("{}.{}", name.0.lexeme, func_name.lexeme).into();
+
                             typed_ast.push(TypedStmt {
                                 kind: StmtKind::ExternFunction {
                                     name: mangled_name.to_string().into(),
-                                    target: location,
+                                    target: location.clone(),
                                 },
                                 span: func_name.span,
                                 type_info: Type::Nil,
@@ -153,9 +156,14 @@ impl<'src> TypeChecker<'src> {
                             .cloned()
                             .unwrap_or(Type::Error);
 
+                        let func_type = func_ty.recover(&mut inner_guard.errors, Type::Error);
+
                         let method_id = inner_guard.sys.register_method(ImplMethod {
                             impl_generic_count: impl_gen_count,
+                            func_type,
+                            origin: func_name.span,
                             self_type,
+                            location,
                         });
 
                         let type_name_id =
@@ -261,31 +269,30 @@ impl<'src> TypeChecker<'src> {
         let mut missing_methods = vec![];
 
         for (method_name, (location, method_type)) in interface_type.methods.iter() {
-            let impl_method_name = format!("{}.{}", type_name, method_name);
-
-            if let Some((resolved_type, method_location)) = self.scopes.lookup(&impl_method_name) {
-                if let Err(err) = self
-                    .infer_ctx
-                    .unify_types(method_type, &resolved_type.type_info)
-                {
-                    let full_err = TypeCheckerError::InterfaceMethodTypeMismatch {
-                        method_name: method_name.clone(),
-                        interface: interface.lexeme.to_string(),
-                        type_mismatch: Mismatch::enriched(
-                            method_type,
-                            &resolved_type.type_info,
-                            err,
-                            &self.infer_ctx,
-                        ),
-                        span: resolved_type.span,
-                        interface_origin: interface_type.origin,
-                    };
-                    self.report(full_err);
-                } else {
-                    vtable[*location] = method_location;
-                }
-            } else {
+            let Some(method_id) = self.type_scopes.lookup_method(type_name, method_name) else {
                 missing_methods.push(method_name.clone());
+                continue;
+            };
+            let method_info = self.sys.get_method_info(*method_id);
+            if let Err(err) = self
+                .infer_ctx
+                .unify_types(method_type, &method_info.func_type)
+            {
+                let full_err = TypeCheckerError::InterfaceMethodTypeMismatch {
+                    method_name: method_name.clone(),
+                    interface: interface.lexeme.to_string(),
+                    type_mismatch: Mismatch::enriched(
+                        method_type,
+                        &method_info.func_type,
+                        err,
+                        &self.infer_ctx,
+                    ),
+                    span: method_info.origin,
+                    interface_origin: interface_type.origin,
+                };
+                self.report(full_err);
+            } else {
+                vtable[*location] = method_info.location.clone();
             }
         }
 
@@ -327,7 +334,7 @@ impl<'src> TypeChecker<'src> {
 
                     tasks.push((id.into(), stmt))
                 }
-                Stmt::Enum { name, generics, .. } if self.redeclaration_check(name).is_ok() => {
+                Stmt::Enum { name, generics, .. } => {
                     let id = self
                         .sys
                         .declare_enum(stmt.span(), name.lexeme.into(), generics);
@@ -356,33 +363,6 @@ impl<'src> TypeChecker<'src> {
                 _ => {}
             }
         }
-    }
-
-    fn redeclaration_check(&mut self, name: &Token<'src>) -> Result<(), ()> {
-        // todo!()
-        Ok(())
-        // let primitive_error = TypeCheckerError::PrimitiveTypeShadowing {
-        //     name: name.lexeme.to_string(),
-        //     span: name.span,
-        // };
-        // if self.type_scopes.get_primitive(name.lexeme).is_some() {
-        //     self.report(primitive_error);
-        //     Err(())
-        // } else if let Some(original) = self.sys.get_origin(name.lexeme) {
-        //     if original == Span::default() {
-        //         self.report(primitive_error);
-        //     } else {
-        //         self.report(TypeCheckerError::Duplicate(DuplicateDefinition {
-        //             kind: DuplicateKind::Type,
-        //             name: name.lexeme.to_string(),
-        //             span: name.span,
-        //             original,
-        //         }));
-        //     }
-        //     Err(())
-        // } else {
-        //     Ok(())
-        // }
     }
 
     fn define_interface(&mut self, id: InterfaceId, stmt: &Stmt<'src>) {

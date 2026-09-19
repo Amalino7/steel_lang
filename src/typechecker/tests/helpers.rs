@@ -2,7 +2,8 @@ pub(super) use self::TypeCheckerTest as Tester;
 use crate::parser::Parser;
 use crate::scanner::Scanner;
 pub(super) use crate::typechecker::core::error::{TypeCheckerError, TypeCheckerWarning};
-use crate::typechecker::TypeChecker;
+use crate::typechecker::system::TypeSystem;
+use crate::typechecker::{GlobalIdGenerator, TypeChecker};
 
 pub(super) struct TypeCheckerTest<'src> {
     source: &'src str,
@@ -34,7 +35,9 @@ impl<'src> TypeCheckerTest<'src> {
         let scanner = Scanner::new(self.source);
         let mut parser = Parser::new(scanner);
         let mut ast = parser.parse().expect("Parser failed");
-        let mut checker = TypeChecker::new();
+        let mut sys = TypeSystem::new();
+        let id_generator = GlobalIdGenerator::new();
+        let mut checker = TypeChecker::new(&[], &mut sys, &id_generator);
 
         match checker.check(ast.as_mut_slice()) {
             Ok((_, warnings)) => {

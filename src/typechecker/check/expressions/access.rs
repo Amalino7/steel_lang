@@ -300,20 +300,20 @@ impl<'src> TypeChecker<'src> {
 
         let type_name = self.sys.get_name(type_id);
 
-        // Type.method
-        let mangled_name = format!("{}.{}", type_name, method_token.lexeme);
+        let lookup_result = self
+            .type_scopes
+            .lookup_method(&type_name, method_token.lexeme);
 
-        let lookup_result = self.scopes.lookup(&mangled_name);
-        let Some((ctx, resolved_var)) = lookup_result else {
-            let mut candidates: Vec<String> = self.scopes.get_methods_for_type(&type_name);
+        let Some(method_id) = lookup_result else {
+            let mut candidates = self.type_scopes.get_methods_for_type(type_id);
             // Add field names if this is a struct type
             if let NameTypeId::Struct(id) = type_id {
-                candidates.extend(self.sys.get_struct(id).fields.keys().map(|s| s.to_string()));
+                candidates.extend(self.sys.get_struct(id).fields.keys().map(|s| s.clone()));
             }
 
             let suggestions = similarity::find_similar(
                 method_token.lexeme,
-                candidates.iter().map(|s| s.as_str()),
+                candidates.iter().map(|s| s.as_ref()),
                 3,
             );
             let type_origin = self.sys.get_origin(type_id);
@@ -327,8 +327,14 @@ impl<'src> TypeChecker<'src> {
                 },
             )));
         };
-        let definition_span = ctx.span;
-        let method_type = ctx.type_info.clone();
+
+        let method_info = self.sys.get_method_info(*method_id);
+
+        let definition_span = method_info.origin;
+        let method_type = method_info.func_type.clone();
+        let location = method_info.location.clone();
+        let impl_count = method_info.impl_generic_count;
+
         let Type::Function(func) = &method_type else {
             unreachable!("Method should be of type function {}", method_type)
         };
@@ -339,37 +345,27 @@ impl<'src> TypeChecker<'src> {
                 span: method_token.span,
             });
         }
-        let impl_count: Option<usize> = self
-            .type_scopes
-            .lookup_method(&type_name, method_token.lexeme)
-            .map(|id| self.sys.get_method_info(*id).impl_generic_count);
 
-        let result_type = if let Some(impl_count) = impl_count {
-            let impl_params = &func.type_params[0..impl_count];
-            let fresh_generics = self.infer_ctx.fresh_args(impl_params, &[]);
-            let impl_map = make_substitution_map(impl_params, &fresh_generics);
+        let impl_params = &func.type_params[0..impl_count];
+        let fresh_generics = self.infer_ctx.fresh_args(impl_params, &[]);
+        let impl_map = make_substitution_map(impl_params, &fresh_generics);
 
-            let method_with_fresh = method_type.generic_to_concrete(&impl_map);
+        let method_with_fresh = method_type.generic_to_concrete(&impl_map);
 
-            let Type::Function(fresh_func) = &method_with_fresh else {
-                unreachable!()
-            };
-            let self_param_ty = fresh_func.params[0].1.clone();
-            self.infer_ctx
-                .unify_types(&self_param_ty, &obj_type)
-                .map_err(|unif_err| TypeCheckerError::TypeMismatch {
-                    mismatch: Box::new(Mismatch::from(unif_err)),
-                    context: MismatchContext::Generic,
-                    primary_span: method_token.span,
-                    defined_at: None,
-                })?;
-
-            self.infer_ctx.substitute(&method_with_fresh)
-        } else {
-            // Fallback: direct generic-name substitution (non-impl methods).
-            let generics_map = self.sys.get_generics_map(&obj_type);
-            method_type.generic_to_concrete(&generics_map)
+        let Type::Function(fresh_func) = &method_with_fresh else {
+            unreachable!()
         };
+        let self_param_ty = fresh_func.params[0].1.clone();
+        self.infer_ctx
+            .unify_types(&self_param_ty, &obj_type)
+            .map_err(|unif_err| TypeCheckerError::TypeMismatch {
+                mismatch: Box::new(Mismatch::from(unif_err)),
+                context: MismatchContext::Generic,
+                primary_span: method_token.span,
+                defined_at: None,
+            })?;
+
+        let result_type = self.infer_ctx.substitute(&method_with_fresh);
 
         // Remove the self parameter from the resolved method type.
         let mut method_ty = if let Type::Function(mut func) = result_type {
@@ -389,7 +385,7 @@ impl<'src> TypeChecker<'src> {
             span: object_expr.span.merge(method_token.span),
             kind: ExprKind::MethodGet {
                 object: Box::new(object_expr),
-                method: resolved_var,
+                method: location,
                 origin: definition_span,
                 safe,
             },

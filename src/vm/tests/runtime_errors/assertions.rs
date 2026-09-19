@@ -1,3 +1,6 @@
+use crate::typechecker::GlobalIdGenerator;
+use crate::typechecker::system::TypeSystem;
+
 /// Helper that runs source with native functions (panic, assert, print)
 /// and verifies a runtime error occurs.
 fn assert_panics_with_natives(source: &str) {
@@ -15,7 +18,9 @@ fn assert_panics_with_natives(source: &str) {
     let scanner = Scanner::new(&full_source);
     let mut parser = Parser::new(scanner);
     let ast = parser.parse().expect("Failed to parse");
-    let mut typechecker = TypeChecker::new_with_natives(&natives);
+    let mut sys = TypeSystem::new();
+    let id_generator = GlobalIdGenerator::new();
+    let mut typechecker = TypeChecker::new(&natives, &mut sys, &id_generator);
     let (typed_ast, _) = typechecker.check(&ast).expect("Failed to typecheck");
 
     let (global_count, extern_fns) = match &typed_ast.kind {

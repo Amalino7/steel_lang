@@ -2,6 +2,7 @@
 
 pub mod cli;
 pub mod compiler;
+mod diagnostics;
 pub mod parser;
 pub mod resolver;
 pub mod scanner;
@@ -13,8 +14,9 @@ use crate::compiler::Compiler;
 use crate::parser::Parser;
 use crate::scanner::Scanner;
 use crate::stdlib::{get_natives, get_prelude};
-use crate::typechecker::TypeChecker;
 use crate::typechecker::core::ast::{FunctionBody, StmtKind};
+use crate::typechecker::system::TypeSystem;
+use crate::typechecker::{GlobalIdGenerator, TypeChecker};
 use crate::vm::VM;
 use crate::vm::gc::{GarbageCollector, Gc};
 use crate::vm::value::Function;
@@ -216,7 +218,9 @@ fn run_inner(config: &RunConfig, source: &str) -> RunOutput {
     }
 
     let natives = get_natives();
-    let mut typechecker = TypeChecker::new_with_natives(&natives);
+    let mut sys = TypeSystem::new();
+    let id_generator = GlobalIdGenerator::new();
+    let mut typechecker = TypeChecker::new(&natives, &mut sys, &id_generator);
 
     let t = std::time::Instant::now();
     let analysis = typechecker.check(&ast);
@@ -341,7 +345,9 @@ impl SteelProgram {
         let ast = parser.parse().expect("SteelProgram: parse failed");
 
         let natives = get_natives();
-        let mut typechecker = TypeChecker::new_with_natives(&natives);
+        let mut sys = TypeSystem::new();
+        let id_generator = GlobalIdGenerator::new();
+        let mut typechecker = TypeChecker::new(&natives, &mut sys, &id_generator);
         let (typed_ast, _warnings) = typechecker
             .check(&ast)
             .expect("SteelProgram: type-check failed");

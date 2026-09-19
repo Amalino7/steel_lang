@@ -64,13 +64,13 @@ impl<'src> TypeChecker<'src> {
         generics: &GenericArgs,
     ) -> Result<TypedExpr, TypeCheckerError> {
         let name = self.sys.get_name(type_id);
-        let mangled_name = format!("{}.{}", name, method_name.lexeme);
+        let method_id = self.type_scopes.lookup_method(&name, method_name.lexeme);
 
-        let methods = self.scopes.get_methods_for_type(&name);
-        let method = self.scopes.lookup(mangled_name.as_str());
-        let method = method.ok_or_else(|| {
+        let method_id = method_id.ok_or_else(|| {
+            let methods = self.type_scopes.get_methods_for_type(type_id);
             let suggestions =
-                similarity::find_similar(method_name.lexeme, methods.iter().map(|s| s.as_str()), 3);
+                similarity::find_similar(method_name.lexeme, methods.iter().map(|s| s.as_ref()), 3);
+
             let type_origin = self.sys.get_origin(type_id);
             let found = Type::Metatype(type_id, generics.clone());
             TypeCheckerError::UndefinedMethod(Box::new(UndefinedMethodError {
@@ -82,64 +82,49 @@ impl<'src> TypeChecker<'src> {
             }))
         })?;
 
-        let (ctx, resolved_var) = method;
-        let method_type = ctx.type_info.clone();
-        let ctx_name = ctx.name.clone();
+        let method_info = self.sys.get_method_info(*method_id);
+        let method_type = method_info.func_type.clone();
+        let self_type = method_info.self_type.clone();
+        let impl_count = method_info.impl_generic_count;
+        let location = method_info.location.clone();
 
         let Type::Function(func) = &method_type else {
             unreachable!("Method should be of type function")
         };
 
-        let impl_meta = self
-            .type_scopes
-            .lookup_method(&name, method_name.lexeme)
-            .map(|id| {
-                let impl_info = self.sys.get_method_info(*id);
-                (impl_info.self_type.clone(), impl_info.impl_generic_count)
-            });
+        let impl_params = &func.type_params[0..impl_count];
+        let fresh_generics = self.infer_ctx.fresh_args(impl_params, &[]);
+        let impl_map = make_substitution_map(impl_params, &fresh_generics);
 
-        let ty = if let Some((self_type, impl_count)) = impl_meta {
-            let impl_params = &func.type_params[0..impl_count];
-            let fresh_generics = self.infer_ctx.fresh_args(impl_params, &[]);
-            let impl_map = make_substitution_map(impl_params, &fresh_generics);
+        let method_with_fresh = method_type.generic_to_concrete(&impl_map);
 
-            let method_with_fresh = method_type.generic_to_concrete(&impl_map);
+        // If explicit type arguments were provided (e.g. Result.<number, number>.make)
+        if !generics.is_empty() {
+            let fresh_self = self_type.generic_to_concrete(&impl_map);
+            let blueprint = self.sys.get_blueprint(type_id); // TODO consider instantiate?
 
-            // If explicit type arguments were provided (e.g. Result.<number, number>.make)
-            if !generics.is_empty() {
-                let fresh_self = self_type.generic_to_concrete(&impl_map);
-                let blueprint = self.sys.get_blueprint(type_id); // TODO consider instantiate?
+            let concrete_type = match blueprint {
+                TypeBlueprint::Struct { id, .. } => Type::Struct(id, generics.clone()),
+                TypeBlueprint::Enum { id, .. } => Type::Enum(id, generics.clone()),
+                TypeBlueprint::Interface { id, .. } => Type::Interface(id),
+                TypeBlueprint::Generic { id } => Type::GenericParam(id),
+                TypeBlueprint::Primitive(inner) => inner,
+            };
 
-                let concrete_type = match blueprint {
-                    TypeBlueprint::Struct { id, .. } => Type::Struct(id, generics.clone()),
-                    TypeBlueprint::Enum { id, .. } => Type::Enum(id, generics.clone()),
-                    TypeBlueprint::Interface { id, .. } => Type::Interface(id),
-                    TypeBlueprint::Generic { id } => Type::GenericParam(id),
-                    TypeBlueprint::Primitive(inner) => inner,
-                };
-
-                self.infer_ctx
-                    .unify_types(&fresh_self, &concrete_type)
-                    .map_err(|unif_err| TypeCheckerError::TypeMismatch {
-                        mismatch: Box::new(Mismatch::from(unif_err)),
-                        context: MismatchContext::Generic,
-                        primary_span: method_name.span,
-                        defined_at: None,
-                    })?;
-            }
-            self.infer_ctx.substitute(&method_with_fresh)
-        } else {
-            // Fallback: direct generic-name substitution.
-            let params = self.sys.get_generic_param_names(type_id);
-            let fresh_generics = self.infer_ctx.fresh_args(&params, generics);
-
-            let map = make_substitution_map(&params, &fresh_generics);
-            method_type.generic_to_concrete(&map)
-        };
+            self.infer_ctx
+                .unify_types(&fresh_self, &concrete_type)
+                .map_err(|unif_err| TypeCheckerError::TypeMismatch {
+                    mismatch: Box::new(Mismatch::from(unif_err)),
+                    context: MismatchContext::Generic,
+                    primary_span: method_name.span,
+                    defined_at: None,
+                })?;
+        }
+        let ty = self.infer_ctx.substitute(&method_with_fresh);
 
         Ok(TypedExpr {
             ty,
-            kind: ExprKind::GetVar(resolved_var, ctx_name),
+            kind: ExprKind::GetVar(location, method_name.lexeme.into()),
             span: method_name.span,
         })
     }

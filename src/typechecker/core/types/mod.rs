@@ -176,10 +176,7 @@ impl Type {
             Type::Void => PrimitiveTypeId::Void.into(),
             Type::Never => PrimitiveTypeId::Never.into(),
             Type::Any => PrimitiveTypeId::Any.into(),
-
-            Type::GenericParam(_) => {
-                todo!()
-            }
+            &Type::GenericParam(id) => id.into(),
             &Type::Struct(id, _) => id.into(),
             &Type::Interface(id) => id.into(),
             &Type::Enum(id, _) => id.into(),

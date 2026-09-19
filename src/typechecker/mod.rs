@@ -16,6 +16,7 @@ use system::TypeSystem;
 mod check;
 pub mod core;
 mod flow_analysis;
+pub mod id_issuer;
 pub(crate) mod inference;
 mod refinements;
 pub(crate) mod resolver;
@@ -25,55 +26,50 @@ pub(crate) mod system;
 #[cfg(test)]
 mod tests;
 
+pub use crate::typechecker::id_issuer::{GlobalId, GlobalIdGenerator};
 pub use core::types::Symbol;
 
-pub struct TypeChecker<'src> {
-    sys: TypeSystem,
-    scopes: ScopeManager,
+pub struct TypeChecker<'ctx> {
+    sys: &'ctx mut TypeSystem,
+    scopes: ScopeManager<'ctx>,
+    id_generator: &'ctx GlobalIdGenerator,
     type_scopes: TypeScopeManager,
-    natives: &'src [NativeDef],
+    natives: &'ctx [NativeDef],
     errors: Vec<TypeCheckerError>,
     warnings: Vec<TypeCheckerWarning>,
     infer_ctx: InferenceContext,
 }
 
-impl<'src> Default for TypeChecker<'src> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<'src> TypeChecker<'src> {
-    // This is used for testing purposes only.
-    #[allow(dead_code)]
-    pub fn new() -> Self {
-        Self::new_with_natives(&[])
-    }
-
-    pub fn new_with_natives(natives: &'src [NativeDef]) -> Self {
-        let sys = TypeSystem::new();
+impl<'ctx> TypeChecker<'ctx> {
+    pub fn new(
+        natives: &'ctx [NativeDef],
+        sys: &'ctx mut TypeSystem,
+        id_generator: &'ctx GlobalIdGenerator,
+    ) -> Self {
         let mut ty_manager = TypeScopeManager::new();
         ty_manager.declare_global("List".into(), sys.view_builtins().list_id.into());
         ty_manager.declare_global("Map".into(), sys.view_builtins().map_id.into());
+
         TypeChecker {
             type_scopes: ty_manager,
             sys,
-            scopes: ScopeManager::new(),
+            scopes: ScopeManager::new(&id_generator),
             natives,
             errors: vec![],
             warnings: vec![],
             infer_ctx: InferenceContext::new(),
+            id_generator,
         }
     }
 
     pub fn check(
         &mut self,
-        ast: &[Stmt<'src>],
+        ast: &[Stmt<'ctx>],
     ) -> Result<(TypedStmt, Vec<TypeCheckerWarning>), Vec<TypeCheckerError>> {
         self.scopes.begin_scope(ScopeKind::Global);
         let mut typed_ast = vec![];
 
-        let native_slots = self.register_globals(self.natives);
+        let native_slots = self.register_globals();
 
         // first types like structs and interfaces are declared
         let tasks = self.declare_global_types(ast);
@@ -118,9 +114,9 @@ impl<'src> TypeChecker<'src> {
 
     /// Registers only natives that carry an explicit type (e.g. vararg functions).
     /// Returns name->slot pairs so the VM can bind them by name.
-    fn register_globals(&mut self, natives: &[NativeDef]) -> Vec<(Box<str>, u16)> {
+    fn register_globals(&mut self) -> Vec<(Box<str>, u16)> {
         let mut slots = vec![];
-        for native in natives.iter() {
+        for native in self.natives.iter() {
             if let Some(ty) = &native.type_ {
                 let decl = Declaration::function(native.name.into(), ty.clone(), Span::default());
                 let resolved = self

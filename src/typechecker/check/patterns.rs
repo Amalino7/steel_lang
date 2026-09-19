@@ -234,9 +234,7 @@ impl<'src> TypeChecker<'src> {
 
                 // Matches plain structs ("StructName") and variant payload structs stored
                 // as "EnumName.VariantName" in the type system.
-
                 let struct_name = self.sys.get_struct(*struct_id).name.as_ref();
-                // TODO refactor resolution logic to match name to id
                 let name_matches = struct_name == name.lexeme
                     || struct_name
                         .rsplit_once('.')

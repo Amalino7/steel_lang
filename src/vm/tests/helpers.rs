@@ -1,13 +1,14 @@
+use crate::Mode;
 use crate::compiler::Compiler;
 use crate::execute_source;
 use crate::parser::Parser;
 use crate::scanner::Scanner;
 use crate::typechecker::core::ast::{FunctionBody, StmtKind};
-use crate::typechecker::TypeChecker;
+use crate::typechecker::system::TypeSystem;
+use crate::typechecker::{GlobalIdGenerator, TypeChecker};
+use crate::vm::VM;
 use crate::vm::gc::GarbageCollector;
 use crate::vm::value::Value;
-use crate::vm::VM;
-use crate::Mode;
 
 /// Execute source and verify it runs successfully
 pub fn assert_runs(source: &str) {
@@ -18,7 +19,9 @@ pub fn assert_runs(source: &str) {
 pub fn assert_global(source: &str, global_index: usize, expected: Value) {
     let scanner = Scanner::new(source);
     let mut parser = Parser::new(scanner);
-    let mut typechecker = TypeChecker::new();
+    let mut sys = TypeSystem::new();
+    let id_generator = GlobalIdGenerator::new();
+    let mut typechecker = TypeChecker::new(&[], &mut sys, &id_generator);
     let ast = parser.parse().expect("Failed to parse");
     let (typed_ast, _) = typechecker.check(&ast).expect("Failed to typecheck");
 
@@ -51,7 +54,9 @@ pub fn assert_panics_with_prelude(source: &str) {
     let scanner = Scanner::new(&full_source);
     let mut parser = Parser::new(scanner);
     let ast = parser.parse().expect("Failed to parse");
-    let mut typechecker = TypeChecker::new_with_natives(&natives);
+    let mut sys = TypeSystem::new();
+    let id_generator = GlobalIdGenerator::new();
+    let mut typechecker = TypeChecker::new(&natives, &mut sys, &id_generator);
     let (typed_ast, _) = typechecker.check(&ast).expect("Failed to typecheck");
 
     let (global_count, extern_fns) = match &typed_ast.kind {
@@ -80,7 +85,10 @@ pub fn assert_panics_with_prelude(source: &str) {
 pub fn assert_global_string(source: &str, global_index: usize, expected: &str) {
     let scanner = Scanner::new(source);
     let mut parser = Parser::new(scanner);
-    let mut typechecker = TypeChecker::new();
+
+    let mut sys = TypeSystem::new();
+    let id_generator = GlobalIdGenerator::new();
+    let mut typechecker = TypeChecker::new(&[], &mut sys, &id_generator);
     let ast = parser.parse().expect("Failed to parse");
     let (typed_ast, _) = typechecker.check(&ast).expect("Failed to typecheck");
 
@@ -125,7 +133,9 @@ pub fn assert_parse_fails(source: &str) {
 pub fn assert_panics(source: &str) {
     let scanner = Scanner::new(source);
     let mut parser = Parser::new(scanner);
-    let mut typechecker = TypeChecker::new();
+    let mut sys = TypeSystem::new();
+    let id_generator = GlobalIdGenerator::new();
+    let mut typechecker = TypeChecker::new(&[], &mut sys, &id_generator);
     let ast = parser.parse().expect("Failed to parse");
     let (typed_ast, _) = typechecker.check(&ast).expect("Failed to typecheck");
 

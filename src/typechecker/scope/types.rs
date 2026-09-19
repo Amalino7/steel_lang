@@ -96,7 +96,6 @@ impl TypeScopeManager {
         self.globals.insert(name, id);
     }
     pub fn lookup_type(&self, name: &str) -> Option<NameTypeId> {
-        // TODO Wire more logic
         for scope in self.scopes.iter().rev() {
             if let Some(id) = scope.generics.get(name) {
                 return Some((*id).into());
@@ -112,6 +111,18 @@ impl TypeScopeManager {
 
     pub fn declare_method(&mut self, ty_id: NameTypeId, method_name: Symbol, method_id: MethodId) {
         self.method_map.insert((ty_id, method_name), method_id);
+    }
+
+    /// Get all method names for a given type (for suggestions)
+    pub fn get_methods_for_type(&self, type_name: NameTypeId) -> Vec<Symbol> {
+        let mut methods = Vec::new();
+        for ((ty_id, name), _) in self.method_map.iter() {
+            if *ty_id == type_name {
+                methods.push(name.clone());
+            }
+        }
+
+        methods
     }
 
     fn primitives() -> HashMap<Symbol, NameTypeId> {

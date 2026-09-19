@@ -3,6 +3,7 @@ use crate::scanner::Span;
 use crate::typechecker::Symbol;
 use crate::typechecker::core::error::{BindingError, TypeCheckerError};
 use crate::typechecker::core::types::Type;
+use crate::typechecker::id_issuer::GlobalIdGenerator;
 use crate::typechecker::scope::variables::{
     Declaration, DeclarationKind, Mutability, VariableContext,
 };
@@ -36,14 +37,16 @@ impl FunctionContext {
     }
 }
 
-pub struct ScopeManager {
+pub struct ScopeManager<'ctx> {
     scopes: Vec<Scope>,
     functions: Vec<FunctionContext>,
+    id_generator: &'ctx GlobalIdGenerator,
 }
 
-impl ScopeManager {
-    pub fn new() -> Self {
+impl<'ctx> ScopeManager<'ctx> {
+    pub fn new(id_generator: &'ctx GlobalIdGenerator) -> Self {
         Self {
+            id_generator,
             scopes: vec![],
             functions: vec![],
         }
@@ -97,7 +100,7 @@ impl ScopeManager {
     }
 
     pub fn global_size(&self) -> u32 {
-        self.scopes[0].last_index as u32
+        self.id_generator.count() as u32
     }
 
     pub fn is_global(&self) -> bool {
@@ -106,6 +109,30 @@ impl ScopeManager {
 
     pub fn max_index(&self) -> usize {
         self.scopes.last().map(|s| s.max_index).unwrap_or(0)
+    }
+
+    pub fn declare_existing(
+        &mut self,
+        decl: Declaration,
+        global_id: usize,
+    ) -> Result<(), TypeCheckerError> {
+        let scope = &mut self.scopes[0];
+        if let Some(prev) = scope.variables.get(&decl.name)
+            && prev.mutability == Mutability::Unique
+        {
+            return Err(TypeCheckerError::Binding(BindingError::Redeclaration {
+                name: decl.name.to_string(),
+                span: decl.span,
+                original: prev.span,
+                original_kind: prev.kind,
+            }));
+        }
+
+        scope.variables.insert(
+            decl.name.clone(),
+            VariableContext::from_declaration(global_id, decl),
+        );
+        Ok(())
     }
 
     pub fn declare(&mut self, decl: Declaration) -> Result<ResolvedVar, TypeCheckerError> {
@@ -122,20 +149,23 @@ impl ScopeManager {
             }));
         }
 
-        scope.variables.insert(
-            decl.name.clone(),
-            VariableContext::from_declaration(scope.last_index, decl),
-        );
-
-        let resolved = match scope.kind {
-            ScopeKind::Global => ResolvedVar::Global(scope.last_index as u16),
-            _ => ResolvedVar::Local(scope.last_index as u8),
+        let (index, resolved) = match scope.kind {
+            ScopeKind::Global => {
+                let id = self.id_generator.next().get();
+                (id, ResolvedVar::Global(id as u16))
+            }
+            _ => {
+                let idx = scope.last_index;
+                scope.last_index += 1;
+                scope.max_index = scope.max_index.max(scope.last_index);
+                (idx, ResolvedVar::Local(idx as u8))
+            }
         };
 
-        scope.last_index += 1;
-        if ScopeKind::Global != scope.kind {
-            scope.max_index = scope.max_index.max(scope.last_index);
-        }
+        scope.variables.insert(
+            decl.name.clone(),
+            VariableContext::from_declaration(index, decl),
+        );
 
         Ok(resolved)
     }
@@ -297,21 +327,39 @@ impl ScopeManager {
             .map(|ctx| (ctx.name.to_string(), ctx.span))
             .collect()
     }
+}
 
-    /// Get all method names for a given type (for suggestions)
-    /// Methods are stored as "TypeName.method_name" in the scope
-    pub fn get_methods_for_type(&self, type_name: &str) -> Vec<String> {
-        let prefix = format!("{}.", type_name);
-        let mut methods = Vec::new();
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-        for scope in self.scopes.iter().rev() {
-            for var_name in scope.variables.keys() {
-                if let Some(method_name) = var_name.as_ref().strip_prefix(&prefix) {
-                    methods.push(method_name.to_string());
-                }
-            }
-        }
+    #[test]
+    fn test_scope_manager_uses_global_id_generator() {
+        let generator = GlobalIdGenerator::new();
+        let mut scope_manager = ScopeManager::new(&generator);
 
-        methods
+        scope_manager.begin_scope(ScopeKind::Global);
+
+        let decl1 = Declaration::mutable("x".into(), Type::Number, Span::default());
+        let res1 = scope_manager.declare(decl1).unwrap();
+        assert_eq!(res1, ResolvedVar::Global(0));
+
+        let decl2 = Declaration::mutable("y".into(), Type::Number, Span::default());
+        let res2 = scope_manager.declare(decl2).unwrap();
+        assert_eq!(res2, ResolvedVar::Global(1));
+
+        assert_eq!(scope_manager.global_size(), 2);
+        assert_eq!(generator.count(), 2);
+
+        // Generating an ID externally advances the sequence
+        let id2 = generator.next();
+        assert_eq!(id2.get(), 2);
+
+        let decl3 = Declaration::mutable("z".into(), Type::Number, Span::default());
+        let res3 = scope_manager.declare(decl3).unwrap();
+        assert_eq!(res3, ResolvedVar::Global(3));
+
+        assert_eq!(scope_manager.global_size(), 4);
+        assert_eq!(generator.count(), 4);
     }
 }

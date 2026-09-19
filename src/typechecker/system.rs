@@ -1,3 +1,4 @@
+use crate::compiler::analysis::ResolvedVar;
 use crate::scanner::{Span, Token};
 use crate::typechecker::core::types::type_defs::{
     EnumType, GenericType, InterfaceType, StructType,
@@ -14,6 +15,9 @@ pub struct ImplMethod {
     /// the impl-block generics (rather than from the method's own generics).
     pub impl_generic_count: usize,
     pub self_type: Type,
+    pub func_type: Type,
+    pub location: ResolvedVar,
+    pub origin: Span,
 }
 
 pub struct TypeSystem {
