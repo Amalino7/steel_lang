@@ -26,6 +26,19 @@ impl<'a> Compiler<'a> {
         &mut self.function.chunk
     }
 
+    pub fn compile_many(mut self, modules: Vec<Gc<Function>>) -> Gc<Function> {
+        for module in modules {
+            self.chunk().write_constant(Value::Function(module), 0);
+            self.emit_op(Opcode::Call, 0);
+            self.emit_byte(0, 0);
+            self.emit_op(Opcode::Pop, 0);
+        }
+
+        self.chunk().write_constant(Value::Nil, 0);
+        self.emit_op(Opcode::Return, 0);
+        self.gc.alloc(self.function)
+    }
+
     pub fn compile(mut self, reserved: u8, body: &FunctionBody) -> Gc<Function> {
         let line = match body {
             FunctionBody::Block(s) => s.span.line,
@@ -131,13 +144,7 @@ impl<'a> Compiler<'a> {
                     }
                 }
             }
-            StmtKind::Global {
-                stmts, reserved, ..
-            } => {
-                if *reserved != 0 {
-                    self.emit_op(Opcode::Reserve, stmt.span.line);
-                    self.emit_byte(*reserved as u8, stmt.span.line);
-                }
+            StmtKind::Global { stmts, .. } => {
                 for s in stmts {
                     match &s.kind {
                         StmtKind::Function { .. } => self.compile_stmt(s),

@@ -36,7 +36,7 @@ impl Diverges {
 }
 
 /// Check for diverging code
-impl<'src> TypeChecker<'src> {
+impl<'ctx> TypeChecker<'ctx> {
     pub(crate) fn stmt_diverges(&self, stmt: &TypedStmt) -> Diverges {
         match &stmt.kind {
             StmtKind::Expression(expr) => self.expr_diverges(expr),

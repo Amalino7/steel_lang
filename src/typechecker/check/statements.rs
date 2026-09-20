@@ -13,9 +13,7 @@ use std::rc::Rc;
 impl<'src> TypeChecker<'src> {
     pub(crate) fn check_stmt(&mut self, stmt: &Stmt<'src>) -> TypedStmt {
         match stmt {
-            Stmt::Import(_) => {
-                todo!("Import statement")
-            }
+            Stmt::Import(import) => TypedStmt::new_blank(import.keyword.span),
             Stmt::Expression(expr) => {
                 let typed_expr = self.check_expression(expr, &Type::Unknown);
 

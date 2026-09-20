@@ -6,7 +6,6 @@ use crate::typechecker::scope::types::TypeScopeManager;
 use crate::typechecker::scope::variables::Declaration;
 use core::ast::{StmtKind, TypedStmt};
 use core::error::{TypeCheckerError, TypeCheckerWarning};
-use core::types::Type;
 use inference::InferenceContext;
 use resolver::TypeResolver;
 use scope::manager::{ScopeKind, ScopeManager};
@@ -15,17 +14,21 @@ use system::TypeSystem;
 
 mod check;
 pub mod core;
+mod exports;
 mod flow_analysis;
 pub mod id_issuer;
 pub(crate) mod inference;
 mod refinements;
 pub(crate) mod resolver;
-mod scope;
+pub(crate) mod scope;
 mod similarity;
 pub(crate) mod system;
 #[cfg(test)]
 mod tests;
 
+use crate::resolver::{Exports, ModuleGraph};
+use crate::typechecker::core::ast::FunctionBody;
+use crate::typechecker::core::types::Type;
 pub use crate::typechecker::id_issuer::{GlobalId, GlobalIdGenerator};
 pub use core::types::Symbol;
 
@@ -33,6 +36,7 @@ pub struct TypeChecker<'ctx> {
     sys: &'ctx mut TypeSystem,
     scopes: ScopeManager<'ctx>,
     id_generator: &'ctx GlobalIdGenerator,
+    module_graph: &'ctx ModuleGraph,
     type_scopes: TypeScopeManager,
     natives: &'ctx [NativeDef],
     errors: Vec<TypeCheckerError>,
@@ -40,37 +44,58 @@ pub struct TypeChecker<'ctx> {
     infer_ctx: InferenceContext,
 }
 
+#[derive(Debug)]
+pub struct TypedFile {
+    pub exports: Exports,
+    pub reserved: u16,
+    pub file_ast: FunctionBody,
+    pub extern_fns: Vec<(Box<str>, u16)>,
+}
+
 impl<'ctx> TypeChecker<'ctx> {
     pub fn new(
         natives: &'ctx [NativeDef],
         sys: &'ctx mut TypeSystem,
         id_generator: &'ctx GlobalIdGenerator,
+        module_graph: &'ctx ModuleGraph,
     ) -> Self {
         let mut ty_manager = TypeScopeManager::new();
-        ty_manager.declare_global("List".into(), sys.view_builtins().list_id.into());
-        ty_manager.declare_global("Map".into(), sys.view_builtins().map_id.into());
+        ty_manager
+            .declare_global("List".into(), sys.view_builtins().list_id.into())
+            .expect("Map Should be empty!");
+        ty_manager
+            .declare_global("Map".into(), sys.view_builtins().map_id.into())
+            .expect("Map Should be empty!");
 
         TypeChecker {
             type_scopes: ty_manager,
             sys,
-            scopes: ScopeManager::new(&id_generator),
+            scopes: ScopeManager::new(id_generator),
             natives,
             errors: vec![],
             warnings: vec![],
             infer_ctx: InferenceContext::new(),
             id_generator,
+            module_graph,
         }
     }
 
     pub fn check(
         &mut self,
         ast: &[Stmt<'ctx>],
-    ) -> Result<(TypedStmt, Vec<TypeCheckerWarning>), Vec<TypeCheckerError>> {
+        exports: Option<&Exports>,
+    ) -> Result<(TypedFile, Vec<TypeCheckerWarning>), Vec<TypeCheckerError>> {
         self.scopes.begin_scope(ScopeKind::Global);
+
+        if let Some(exports) = exports {
+            self.import_all(exports);
+        }
+
         let mut typed_ast = vec![];
 
         let native_slots = self.register_globals();
 
+        self.imports(ast);
         // first types like structs and interfaces are declared
         let tasks = self.declare_global_types(ast);
         // define types, fields of structs and enums are defined and interface reqs
@@ -85,7 +110,6 @@ impl<'ctx> TypeChecker<'ctx> {
             typed_ast.push(self.check_stmt(stmt));
         }
 
-        let global_count = self.scopes.global_size();
         let reserved = self.scopes.max_index() as u16;
 
         let mut extern_fns = collect_extern_fns(&typed_ast);
@@ -93,19 +117,27 @@ impl<'ctx> TypeChecker<'ctx> {
         extern_fns.extend(native_slots);
 
         self.check_unreachable(&typed_ast);
+
+        let exports = self.get_exports();
+
         if !self.errors.is_empty() {
             Err(take(&mut self.errors))
         } else {
             Ok((
-                TypedStmt {
-                    kind: StmtKind::Global {
-                        global_count,
-                        stmts: typed_ast,
-                        reserved,
-                        extern_fns,
-                    },
-                    span: Span::default(),
-                    type_info: Type::Void,
+                TypedFile {
+                    exports,
+                    reserved,
+                    file_ast: FunctionBody::Block(Box::new(TypedStmt {
+                        span: typed_ast
+                            .first()
+                            .map(|s| s.span)
+                            .unwrap_or(Span::default())
+                            .merge(typed_ast.last().map(|s| s.span).unwrap_or(Span::default())),
+
+                        kind: StmtKind::Global { stmts: typed_ast },
+                        type_info: Type::Void,
+                    })),
+                    extern_fns,
                 },
                 take(&mut self.warnings),
             ))
@@ -132,7 +164,7 @@ impl<'ctx> TypeChecker<'ctx> {
     }
 
     fn res(&self) -> TypeResolver<'_> {
-        TypeResolver::new(&self.sys, &self.type_scopes)
+        TypeResolver::new(self.sys, &self.type_scopes)
     }
 
     pub(crate) fn report(&mut self, err: TypeCheckerError) {

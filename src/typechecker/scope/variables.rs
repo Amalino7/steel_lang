@@ -1,9 +1,9 @@
 use crate::compiler::analysis::ResolvedVar;
 use crate::scanner::Span;
-use crate::typechecker::core::types::Type;
 use crate::typechecker::Symbol;
+use crate::typechecker::core::types::Type;
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct VariableContext {
     pub(crate) type_info: Type,
     pub(crate) name: Symbol,

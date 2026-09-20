@@ -189,7 +189,7 @@ impl TypeSystem {
 
     pub fn declare_ids(&mut self, generic_params: &[Token<'_>]) -> Vec<GenericTypeId> {
         generic_params
-            .into_iter()
+            .iter()
             .map(|generic| self.declare_generic(generic.lexeme.into(), generic.span))
             .collect()
     }
@@ -359,6 +359,6 @@ pub fn make_substitution_map(
     params
         .iter()
         .enumerate()
-        .map(|(idx, s)| (s.clone(), args[idx].clone()))
+        .map(|(idx, s)| (*s, args[idx].clone()))
         .collect()
 }

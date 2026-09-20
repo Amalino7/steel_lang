@@ -1,6 +1,5 @@
 use crate::parser::ast::{FunctionSig, TypeAst};
 use crate::scanner::{Span, Token};
-use crate::typechecker::Symbol;
 use crate::typechecker::core::error::{GenericError, TypeCheckerError};
 use crate::typechecker::core::types::{FunctionType, GenericTypeId, NameTypeId, TupleType, Type};
 use crate::typechecker::scope::types::TypeScopeManager;
@@ -153,8 +152,4 @@ fn check_generic_arity(
     } else {
         Ok(())
     }
-}
-
-pub fn convert_generics(generics: &[Token<'_>]) -> Vec<Symbol> {
-    generics.iter().map(|g| g.lexeme.into()).collect()
 }

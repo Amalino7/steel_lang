@@ -1,4 +1,5 @@
-use crate::{run, ColorChoice, EmitTarget, Mode, RunConfig};
+use crate::resolver::new_pipeline::pipeline;
+use crate::{ColorChoice, EmitTarget, Mode, RunConfig, run};
 use clap::{Parser, ValueEnum};
 use std::fs;
 use std::path::Path;
@@ -47,7 +48,7 @@ pub struct Cli {
     watch: bool,
 }
 
-#[derive(ValueEnum, Clone)]
+#[derive(ValueEnum, Clone, PartialEq)]
 enum CliMode {
     /// Scan, parse, type-check, compile and run
     Run,
@@ -55,6 +56,8 @@ enum CliMode {
     Parse,
     /// Scan, parse and type-check only
     Check,
+    /// New, experimental, multi-file support
+    New,
 }
 
 impl From<CliMode> for Mode {
@@ -63,6 +66,7 @@ impl From<CliMode> for Mode {
             CliMode::Run => Mode::Run,
             CliMode::Parse => Mode::Parse,
             CliMode::Check => Mode::Check,
+            CliMode::New => Mode::Run,
         }
     }
 }
@@ -174,7 +178,10 @@ pub fn read_source(path: &str) -> String {
 
 pub fn handle_input() {
     let cli = Cli::parse();
-    if cli.watch {
+
+    if cli.mode == CliMode::New {
+        pipeline(cli.file.as_ref())
+    } else if cli.watch {
         watch_loop(&cli);
     } else {
         let source = read_source(&cli.file);

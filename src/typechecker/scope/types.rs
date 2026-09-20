@@ -91,10 +91,16 @@ impl TypeScopeManager {
         self.scopes.iter().rev().find_map(|s| s.self_type.as_ref())
     }
 
-    pub fn declare_global(&mut self, name: Symbol, id: NameTypeId) {
-        // TODO naming conflicts
-        self.globals.insert(name, id);
+    pub fn declare_global(&mut self, name: Symbol, id: NameTypeId) -> Result<(), NameTypeId> {
+        if let Some(old_id) = self.globals.insert(name, id)
+            && old_id != id
+        {
+            Err(old_id)
+        } else {
+            Ok(())
+        }
     }
+
     pub fn lookup_type(&self, name: &str) -> Option<NameTypeId> {
         for scope in self.scopes.iter().rev() {
             if let Some(id) = scope.generics.get(name) {
@@ -104,13 +110,24 @@ impl TypeScopeManager {
         self.globals.get(name).cloned()
     }
 
-    pub fn lookup_method(&self, ty_name: &str, method_name: &str) -> Option<&MethodId> {
-        let ty_id = self.globals.get(ty_name)?;
-        self.method_map.get(&(*ty_id, method_name.into()))
+    pub fn lookup_method(&self, ty_id: NameTypeId, method_name: &str) -> Option<&MethodId> {
+        self.method_map.get(&(ty_id, method_name.into()))
     }
 
-    pub fn declare_method(&mut self, ty_id: NameTypeId, method_name: Symbol, method_id: MethodId) {
-        self.method_map.insert((ty_id, method_name), method_id);
+    pub fn declare_method(
+        &mut self,
+        ty_id: NameTypeId,
+        method_name: Symbol,
+        method_id: MethodId,
+    ) -> Result<(), MethodId> {
+        let old = self.method_map.insert((ty_id, method_name), method_id);
+        if let Some(old_id) = old
+            && old_id != method_id
+        {
+            Err(method_id)
+        } else {
+            Ok(())
+        }
     }
 
     /// Get all method names for a given type (for suggestions)
@@ -123,6 +140,14 @@ impl TypeScopeManager {
         }
 
         methods
+    }
+
+    pub fn export_types(&mut self) -> HashMap<Symbol, NameTypeId> {
+        std::mem::take(&mut self.globals)
+    }
+
+    pub fn export_methods(&mut self) -> HashMap<(NameTypeId, Symbol), MethodId> {
+        std::mem::take(&mut self.method_map)
     }
 
     fn primitives() -> HashMap<Symbol, NameTypeId> {

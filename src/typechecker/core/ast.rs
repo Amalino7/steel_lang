@@ -243,10 +243,7 @@ pub enum StmtKind {
     StructDecl {},
     EnumDecl {},
     Global {
-        global_count: u32,
         stmts: Vec<TypedStmt>,
-        reserved: u16,
-        extern_fns: Vec<(Box<str>, u16)>,
     },
     Expression(TypedExpr),
     Let {

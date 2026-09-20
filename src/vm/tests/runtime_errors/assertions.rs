@@ -1,3 +1,4 @@
+use crate::resolver::ModuleGraph;
 use crate::typechecker::GlobalIdGenerator;
 use crate::typechecker::system::TypeSystem;
 
@@ -9,7 +10,6 @@ fn assert_panics_with_natives(source: &str) {
     use crate::scanner::Scanner;
     use crate::stdlib::{get_natives, get_prelude};
     use crate::typechecker::TypeChecker;
-    use crate::typechecker::core::ast::{FunctionBody, StmtKind};
     use crate::vm::VM;
     use crate::vm::gc::GarbageCollector;
 
@@ -20,24 +20,16 @@ fn assert_panics_with_natives(source: &str) {
     let ast = parser.parse().expect("Failed to parse");
     let mut sys = TypeSystem::new();
     let id_generator = GlobalIdGenerator::new();
-    let mut typechecker = TypeChecker::new(&natives, &mut sys, &id_generator);
-    let (typed_ast, _) = typechecker.check(&ast).expect("Failed to typecheck");
-
-    let (global_count, extern_fns) = match &typed_ast.kind {
-        StmtKind::Global {
-            global_count,
-            extern_fns,
-            ..
-        } => (*global_count as usize, extern_fns.clone()),
-        _ => (0, vec![]),
-    };
+    let module_graph = ModuleGraph::new();
+    let mut typechecker = TypeChecker::new(&natives, &mut sys, &id_generator, &module_graph);
+    let (typed_ast, _) = typechecker.check(&ast, None).expect("Failed to typecheck");
 
     let mut gc = GarbageCollector::new();
     let compiler = Compiler::new("main".to_string(), &mut gc);
-    let function = compiler.compile(0, &FunctionBody::Block(Box::new(typed_ast)));
+    let function = compiler.compile(typed_ast.reserved as u8, &typed_ast.file_ast);
 
-    let mut vm = VM::new(global_count, &mut gc);
-    vm.set_natives_by_name(&natives, &extern_fns);
+    let mut vm = VM::new(id_generator.count(), &mut gc);
+    vm.set_natives_by_name(&natives, &typed_ast.extern_fns);
 
     assert!(
         vm.run(function).is_err(),

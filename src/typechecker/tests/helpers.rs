@@ -1,5 +1,6 @@
 pub(super) use self::TypeCheckerTest as Tester;
 use crate::parser::Parser;
+use crate::resolver::ModuleGraph;
 use crate::scanner::Scanner;
 pub(super) use crate::typechecker::core::error::{TypeCheckerError, TypeCheckerWarning};
 use crate::typechecker::system::TypeSystem;
@@ -37,9 +38,11 @@ impl<'src> TypeCheckerTest<'src> {
         let mut ast = parser.parse().expect("Parser failed");
         let mut sys = TypeSystem::new();
         let id_generator = GlobalIdGenerator::new();
-        let mut checker = TypeChecker::new(&[], &mut sys, &id_generator);
 
-        match checker.check(ast.as_mut_slice()) {
+        let module_graph = ModuleGraph::new();
+        let mut checker = TypeChecker::new(&[], &mut sys, &id_generator, &module_graph);
+
+        match checker.check(ast.as_mut_slice(), None) {
             Ok((_, warnings)) => {
                 self.verify_errors(Vec::new());
                 self.verify_warnings(warnings);

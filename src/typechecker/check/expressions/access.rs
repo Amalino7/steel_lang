@@ -221,7 +221,7 @@ impl<'src> TypeChecker<'src> {
                 .ty
                 .unwrap_optional_safe(safe, member_token.span, &mut self.warnings);
 
-        if let Ok((idx, field_type)) = resolve_member_type(&actual_ty, member_token, &self.sys) {
+        if let Ok((idx, field_type)) = resolve_member_type(&actual_ty, member_token, self.sys) {
             let mut expr = TypedExpr {
                 ty: field_type,
                 span: object_typed.span.merge(member_token.span),
@@ -298,11 +298,7 @@ impl<'src> TypeChecker<'src> {
                 span: object_expr.span,
             })?;
 
-        let type_name = self.sys.get_name(type_id);
-
-        let lookup_result = self
-            .type_scopes
-            .lookup_method(&type_name, method_token.lexeme);
+        let lookup_result = self.type_scopes.lookup_method(type_id, method_token.lexeme);
 
         let Some(method_id) = lookup_result else {
             let mut candidates = self.type_scopes.get_methods_for_type(type_id);

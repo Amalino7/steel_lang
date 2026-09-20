@@ -90,7 +90,7 @@ impl<'gc> VM<'gc> {
             #[cfg(feature = "debug_trace_execution")]
             disassemble_instruction(
                 chunk.instructions.as_ref(),
-                self.ip,
+                current_frame.ip,
                 chunk.constants.as_ref(),
                 chunk.lines.as_ref(),
             );
@@ -412,7 +412,10 @@ impl<'gc> VM<'gc> {
                                 }
                             }
                         }
-                        val => unreachable!("Only functions should be called found {}", val),
+                        val => unreachable!(
+                            "Only functions should be called found {} {} {}",
+                            val, chunk.lines[current_frame.ip], current_frame.ip
+                        ),
                     }
                 }
                 Opcode::MakeClosure => {

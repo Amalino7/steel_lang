@@ -12,9 +12,9 @@ pub mod vm;
 
 use crate::compiler::Compiler;
 use crate::parser::Parser;
+use crate::resolver::ModuleGraph;
 use crate::scanner::Scanner;
 use crate::stdlib::{get_natives, get_prelude};
-use crate::typechecker::core::ast::{FunctionBody, StmtKind};
 use crate::typechecker::system::TypeSystem;
 use crate::typechecker::{GlobalIdGenerator, TypeChecker};
 use crate::vm::VM;
@@ -220,10 +220,12 @@ fn run_inner(config: &RunConfig, source: &str) -> RunOutput {
     let natives = get_natives();
     let mut sys = TypeSystem::new();
     let id_generator = GlobalIdGenerator::new();
-    let mut typechecker = TypeChecker::new(&natives, &mut sys, &id_generator);
+
+    let module_graph = ModuleGraph::new();
+    let mut typechecker = TypeChecker::new(&natives, &mut sys, &id_generator, &module_graph);
 
     let t = std::time::Instant::now();
-    let analysis = typechecker.check(&ast);
+    let analysis = typechecker.check(&ast, None);
     timings.type_checking = t.elapsed();
 
     if !config.force
@@ -267,19 +269,11 @@ fn run_inner(config: &RunConfig, source: &str) -> RunOutput {
         };
     }
 
-    let (global_count, extern_fns) = match &typed_ast.kind {
-        StmtKind::Global {
-            global_count,
-            extern_fns,
-            ..
-        } => (*global_count, extern_fns.clone()),
-        _ => panic!("Global statement expected"),
-    };
-
     let mut gc = GarbageCollector::new();
     let t = std::time::Instant::now();
     let compiler = Compiler::new("main".to_string(), &mut gc);
-    let func = compiler.compile(0, &FunctionBody::Block(Box::new(typed_ast)));
+
+    let func = compiler.compile(typed_ast.reserved as u8, &typed_ast.file_ast);
     timings.compilation = t.elapsed();
 
     if emit_bytecode {
@@ -288,8 +282,8 @@ fn run_inner(config: &RunConfig, source: &str) -> RunOutput {
         println!("================");
     }
     drop(typechecker);
-    let mut vm = VM::new(global_count as usize, &mut gc);
-    vm.set_natives_by_name(&natives, &extern_fns);
+    let mut vm = VM::new(id_generator.count(), &mut gc);
+    vm.set_natives_by_name(&natives, &typed_ast.extern_fns);
 
     let t = std::time::Instant::now();
     let res = vm.run(func);
@@ -347,23 +341,19 @@ impl SteelProgram {
         let natives = get_natives();
         let mut sys = TypeSystem::new();
         let id_generator = GlobalIdGenerator::new();
-        let mut typechecker = TypeChecker::new(&natives, &mut sys, &id_generator);
+        let module_graph = ModuleGraph::new();
+        let mut typechecker = TypeChecker::new(&natives, &mut sys, &id_generator, &module_graph);
         let (typed_ast, _warnings) = typechecker
-            .check(&ast)
+            .check(&ast, None)
             .expect("SteelProgram: type-check failed");
 
-        let (global_count, extern_fns) = match &typed_ast.kind {
-            StmtKind::Global {
-                global_count,
-                extern_fns,
-                ..
-            } => (*global_count as usize, extern_fns.clone()),
-            _ => panic!("SteelProgram: expected Global statement"),
-        };
+        let global_count = id_generator.count();
+
+        let extern_fns = typed_ast.extern_fns;
 
         let mut gc = GarbageCollector::new();
         let compiler = Compiler::new("main".to_string(), &mut gc);
-        let func = compiler.compile(0, &FunctionBody::Block(Box::new(typed_ast)));
+        let func = compiler.compile(typed_ast.reserved as u8, &typed_ast.file_ast);
 
         SteelProgram {
             func,

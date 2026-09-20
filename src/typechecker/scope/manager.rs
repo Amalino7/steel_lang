@@ -99,10 +99,6 @@ impl<'ctx> ScopeManager<'ctx> {
         self.functions.last().map(FunctionContext::return_type)
     }
 
-    pub fn global_size(&self) -> u32 {
-        self.id_generator.count() as u32
-    }
-
     pub fn is_global(&self) -> bool {
         self.scopes.len() == 1
     }
@@ -111,27 +107,20 @@ impl<'ctx> ScopeManager<'ctx> {
         self.scopes.last().map(|s| s.max_index).unwrap_or(0)
     }
 
-    pub fn declare_existing(
-        &mut self,
-        decl: Declaration,
-        global_id: usize,
-    ) -> Result<(), TypeCheckerError> {
+    pub fn declare_existing(&mut self, ctx: &VariableContext) -> Result<(), TypeCheckerError> {
         let scope = &mut self.scopes[0];
-        if let Some(prev) = scope.variables.get(&decl.name)
+        if let Some(prev) = scope.variables.get(&ctx.name)
             && prev.mutability == Mutability::Unique
         {
             return Err(TypeCheckerError::Binding(BindingError::Redeclaration {
-                name: decl.name.to_string(),
-                span: decl.span,
+                name: ctx.name.to_string(),
+                span: ctx.span,
                 original: prev.span,
                 original_kind: prev.kind,
             }));
         }
 
-        scope.variables.insert(
-            decl.name.clone(),
-            VariableContext::from_declaration(global_id, decl),
-        );
+        scope.variables.insert(ctx.name.clone(), ctx.clone());
         Ok(())
     }
 
@@ -291,6 +280,11 @@ impl<'ctx> ScopeManager<'ctx> {
             .unwrap_or_default()
     }
 
+    pub(crate) fn export_vars(&mut self) -> HashMap<Symbol, VariableContext> {
+        let scope = self.scopes.first_mut().expect("No Scope exists");
+        std::mem::take(&mut scope.variables)
+    }
+
     /// Get all visible variable names in the current scope (for suggestions)
     pub fn visible_variable_names(&self) -> Vec<&str> {
         let mut names = Vec::new();
@@ -348,7 +342,7 @@ mod tests {
         let res2 = scope_manager.declare(decl2).unwrap();
         assert_eq!(res2, ResolvedVar::Global(1));
 
-        assert_eq!(scope_manager.global_size(), 2);
+        assert_eq!(scope_manager.id_generator.count(), 2);
         assert_eq!(generator.count(), 2);
 
         // Generating an ID externally advances the sequence
@@ -359,7 +353,7 @@ mod tests {
         let res3 = scope_manager.declare(decl3).unwrap();
         assert_eq!(res3, ResolvedVar::Global(3));
 
-        assert_eq!(scope_manager.global_size(), 4);
+        assert_eq!(scope_manager.id_generator.count(), 4);
         assert_eq!(generator.count(), 4);
     }
 }

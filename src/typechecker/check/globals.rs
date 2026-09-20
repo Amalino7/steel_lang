@@ -1,16 +1,17 @@
 use crate::compiler::analysis::ResolvedVar;
-use crate::parser::ast::{FunctionSig, Stmt, TypeAst, VariantType};
+use crate::parser::ast::{FunctionSig, ImportSegment, ImportType, Stmt, TypeAst, VariantType};
+use crate::resolver::Exports;
 use crate::scanner::{Span, Token};
 use crate::typechecker::core::ast::{StmtKind, TypedStmt};
 use crate::typechecker::core::error::{
-    DuplicateDefinition, DuplicateKind, Mismatch, Recoverable, TypeCheckerError,
+    BindingError, DuplicateDefinition, DuplicateKind, Mismatch, Recoverable, TypeCheckerError,
 };
 use crate::typechecker::core::types::{
     EnumId, FunctionType, InterfaceId, NameTypeId, StructId, Type,
 };
 use crate::typechecker::scope::guards::TypeScopeGuard;
-use crate::typechecker::scope::variables::Declaration;
-use crate::typechecker::system::ImplMethod;
+use crate::typechecker::scope::variables::{Declaration, DeclarationKind, VariableContext};
+use crate::typechecker::system::{ImplMethod, MethodId};
 use crate::typechecker::{Symbol, TypeChecker};
 use std::collections::HashMap;
 use std::iter::repeat_n;
@@ -169,11 +170,13 @@ impl<'src> TypeChecker<'src> {
                         let type_name_id =
                             inner_guard.type_scopes.lookup_type(name.0.lexeme).unwrap(); // TODO rethink
 
-                        inner_guard.type_scopes.declare_method(
+                        let res = inner_guard.type_scopes.declare_method(
                             type_name_id,
                             func_name.lexeme.into(),
                             method_id,
                         );
+
+                        inner_guard.redeclaration_method(res, func_name.lexeme, func_name.span);
                     }
                 }
                 _ => {}
@@ -269,7 +272,7 @@ impl<'src> TypeChecker<'src> {
         let mut missing_methods = vec![];
 
         for (method_name, (location, method_type)) in interface_type.methods.iter() {
-            let Some(method_id) = self.type_scopes.lookup_method(type_name, method_name) else {
+            let Some(method_id) = self.type_scopes.lookup_method(type_id, method_name) else {
                 missing_methods.push(method_name.clone());
                 continue;
             };
@@ -322,15 +325,21 @@ impl<'src> TypeChecker<'src> {
                     let id = self
                         .sys
                         .declare_struct(stmt.span(), name.lexeme.into(), generics);
-                    self.type_scopes
+
+                    let res = self
+                        .type_scopes
                         .declare_global(name.lexeme.into(), id.into());
+                    self.redeclaration_type(res, name.span);
 
                     tasks.push((id.into(), stmt))
                 }
                 Stmt::Interface { name, .. } => {
                     let id = self.sys.declare_interface(name.lexeme.into(), stmt.span());
-                    self.type_scopes
+                    let res = self
+                        .type_scopes
                         .declare_global(name.lexeme.into(), id.into());
+
+                    self.redeclaration_type(res, name.span);
 
                     tasks.push((id.into(), stmt))
                 }
@@ -338,14 +347,41 @@ impl<'src> TypeChecker<'src> {
                     let id = self
                         .sys
                         .declare_enum(stmt.span(), name.lexeme.into(), generics);
-                    self.type_scopes
+                    let res = self
+                        .type_scopes
                         .declare_global(name.lexeme.into(), id.into());
+
+                    self.redeclaration_type(res, name.span);
                     tasks.push((id.into(), stmt))
                 }
                 _ => {}
             }
         }
         tasks
+    }
+
+    fn redeclaration_type(&mut self, old_id: Result<(), NameTypeId>, new_location: Span) {
+        if let Err(old_id) = old_id {
+            let origin = self.sys.get_origin(old_id);
+            self.report(TypeCheckerError::Duplicate(DuplicateDefinition {
+                kind: DuplicateKind::Type,
+                name: self.sys.get_name(old_id).to_string(),
+                span: new_location,
+                original: origin.unwrap_or_default(),
+            }))
+        }
+    }
+
+    fn redeclaration_method(&mut self, res: Result<(), MethodId>, name: &str, new_location: Span) {
+        if let Err(id) = res {
+            let method_info = self.sys.get_method_info(id);
+            self.report(TypeCheckerError::Binding(BindingError::Redeclaration {
+                name: name.into(),
+                span: new_location,
+                original: method_info.origin,
+                original_kind: DeclarationKind::Method,
+            }));
+        }
     }
 
     pub fn define_types(&mut self, tasks: Vec<(NameTypeId, &Stmt<'src>)>) {
@@ -483,5 +519,98 @@ impl<'src> TypeChecker<'src> {
             }
         }
         field_types
+    }
+
+    pub fn imports(&mut self, ast: &[Stmt<'src>]) {
+        for stmt in ast {
+            if let Stmt::Import(import) = stmt {
+                self.handle_import(None, &import.segment)
+            }
+        }
+    }
+
+    fn handle_import(&mut self, prefix: Option<&str>, import: &ImportSegment) {
+        let mut path_segments = import.path.iter().map(|p| p.lexeme).collect::<Vec<_>>();
+
+        if let Some(prefix) = prefix {
+            path_segments.insert(0, prefix);
+        }
+
+        let path = path_segments.join(".");
+
+        match &import.import_type {
+            ImportType::Simple { terminator } => {
+                self.import_named(&path, terminator, terminator);
+            }
+            ImportType::Alias { terminator, alias } => {
+                self.import_named(&path, terminator, alias);
+            }
+            ImportType::Group { options } => {
+                for option in options {
+                    self.handle_import(Some(&path), option);
+                }
+            }
+            ImportType::Wildcard => {
+                let package_id = *self.module_graph.name_to_id_map.get(&path).unwrap();
+                let module_info = &self.module_graph.modules[package_id.0 as usize];
+                self.import_all(&module_info.exports);
+            }
+        }
+    }
+
+    fn import_named(&mut self, path: &str, terminator: &Token, target: &Token) {
+        let package_id = *self.module_graph.name_to_id_map.get(path).unwrap();
+
+        let module_info = &self.module_graph.modules[package_id.0 as usize];
+
+        if let Some((_, &id)) = module_info.exports.types.get_key_value(terminator.lexeme) {
+            let res = self.type_scopes.declare_global(target.lexeme.into(), id);
+            self.redeclaration_type(res, target.span);
+
+            for ((new_id, name), method_id) in module_info.exports.methods.iter() {
+                if *new_id == id {
+                    let res = self
+                        .type_scopes
+                        .declare_method(id, name.clone(), *method_id);
+                    self.redeclaration_method(res, target.lexeme, target.span);
+                }
+            }
+        }
+
+        if let Some(ctx) = module_info.exports.vars.get(terminator.lexeme) {
+            self.scopes
+                .declare_existing(&VariableContext {
+                    name: target.lexeme.into(),
+                    type_info: ctx.type_info.clone(),
+                    original_type: ctx.original_type.clone(),
+                    ..*ctx
+                })
+                .ok_or_report(&mut self.errors);
+        }
+    }
+
+    pub fn import_all(&mut self, exports: &Exports) {
+        for (name, id) in exports.types.iter() {
+            let res = self.type_scopes.declare_global(name.clone(), *id);
+            self.redeclaration_type(res, self.sys.get_origin(*id).unwrap_or_default())
+        }
+
+        for ((id, method_name), method_id) in exports.methods.iter() {
+            let res = self
+                .type_scopes
+                .declare_method(*id, method_name.clone(), *method_id);
+
+            self.redeclaration_method(
+                res,
+                method_name,
+                self.sys.get_method_info(*method_id).origin,
+            );
+        }
+
+        for var in exports.vars.values() {
+            self.scopes
+                .declare_existing(var)
+                .expect("TODO error handling");
+        }
     }
 }
