@@ -332,7 +332,10 @@ impl<'src> TypeChecker<'src> {
         let impl_count = method_info.impl_generic_count;
 
         let Type::Function(func) = &method_type else {
-            unreachable!("Method should be of type function {}", method_type)
+            unreachable!(
+                "Method should be of type function {}",
+                method_type.display_type(&self.sys)
+            )
         };
 
         if func.is_static() {

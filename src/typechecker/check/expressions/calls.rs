@@ -271,7 +271,7 @@ impl<'src> TypeChecker<'src> {
                 None => {
                     if seen_named {
                         return Err(TypeCheckerError::Call(CallError::PositionalAfterNamed {
-                            message: "positional arguments cannot appear after named arguments",
+                            message: "This positional argument cannot appear after named arguments.",
                             span,
                         }));
                     }

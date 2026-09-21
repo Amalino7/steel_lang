@@ -2,24 +2,17 @@ use crate::diagnostics::{DiagLabel, Diagnostic, LabelKind, Level};
 use crate::scanner::Span;
 
 pub struct DiagBuilder {
-    level: Level,
-    code: &'static str,
-    title: &'static str,
-    message: String,
-    primary_span: Span,
-    labels: Vec<DiagLabel>,
-    notes: Vec<String>,
-    helps: Vec<String>,
+    inner: Diagnostic,
 }
 
 impl DiagBuilder {
     pub fn error(
         span: Span,
         code: &'static str,
-        title: &'static str,
+        title: impl Into<String>,
         message: impl Into<String>,
     ) -> Self {
-        DiagBuilder {
+        let inner = Diagnostic {
             primary_span: span,
             code,
             title: title.into(),
@@ -28,11 +21,31 @@ impl DiagBuilder {
             helps: vec![],
             labels: vec![],
             notes: vec![],
-        }
+        };
+        DiagBuilder { inner }
     }
 
-    pub fn origin(mut self, span: Span, msg: impl Into<String>) -> Self {
-        self.labels.push(DiagLabel {
+    pub fn warn(
+        span: Span,
+        code: &'static str,
+        title: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
+        let inner = Diagnostic {
+            primary_span: span,
+            code,
+            title: title.into(),
+            message: message.into(),
+            level: Level::Warning,
+            helps: vec![],
+            labels: vec![],
+            notes: vec![],
+        };
+        DiagBuilder { inner }
+    }
+
+    pub fn with_origin(mut self, span: Span, msg: impl Into<String>) -> Self {
+        self.inner.labels.push(DiagLabel {
             span,
             kind: LabelKind::Origin,
             message: msg.into(),
@@ -40,8 +53,19 @@ impl DiagBuilder {
         self
     }
 
-    pub fn secondary(mut self, span: Span, msg: impl Into<String>) -> Self {
-        self.labels.push(DiagLabel {
+    pub fn with_optional_origin(mut self, span: Option<Span>, msg: impl Into<String>) -> Self {
+        if let Some(span) = span {
+            self.inner.labels.push(DiagLabel {
+                span,
+                kind: LabelKind::Origin,
+                message: msg.into(),
+            });
+        }
+        self
+    }
+
+    pub fn with_secondary(mut self, span: Span, msg: impl Into<String>) -> Self {
+        self.inner.labels.push(DiagLabel {
             span,
             kind: LabelKind::Secondary,
             message: msg.into(),
@@ -49,31 +73,22 @@ impl DiagBuilder {
         self
     }
 
-    pub fn help(mut self, msg: impl Into<String>) -> Self {
-        self.helps.push(msg.into());
+    pub fn with_help(mut self, msg: impl Into<String>) -> Self {
+        self.inner.helps.push(msg.into());
         self
     }
-    pub fn note(mut self, msg: impl Into<String>) -> Self {
-        self.notes.push(msg.into());
+    pub fn with_note(mut self, msg: impl Into<String>) -> Self {
+        self.inner.notes.push(msg.into());
         self
     }
-    pub fn suggest(self, suggestions: &[String]) -> Self {
+    pub fn with_suggestion(self, suggestions: &[String]) -> Self {
         if suggestions.is_empty() {
             self
         } else {
-            self.help(format!("Did you mean '{}'?", suggestions.join("', '")))
+            self.with_help(format!("Did you mean '{}'?", suggestions.join("', '")))
         }
     }
     pub fn build(self) -> Diagnostic {
-        Diagnostic {
-            level: self.level,
-            code: self.code,
-            title: self.code,
-            primary_span: self.primary_span,
-            message: self.message,
-            labels: self.labels,
-            notes: self.notes,
-            helps: self.helps,
-        }
+        self.inner
     }
 }

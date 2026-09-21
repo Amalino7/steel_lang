@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use std::iter::repeat_n;
 use std::rc::Rc;
 
+// TODO find out why when impl block fails Type is not findable.
 impl<'src> TypeChecker<'src> {
     pub(crate) fn declare_global_functions<'a>(
         &mut self,
@@ -167,16 +168,17 @@ impl<'src> TypeChecker<'src> {
                             location,
                         });
 
-                        let type_name_id =
-                            inner_guard.type_scopes.lookup_type(name.0.lexeme).unwrap(); // TODO rethink
+                        if let Some(type_name_id) =
+                            inner_guard.type_scopes.lookup_type(name.0.lexeme)
+                        {
+                            let res = inner_guard.type_scopes.declare_method(
+                                type_name_id,
+                                func_name.lexeme.into(),
+                                method_id,
+                            );
 
-                        let res = inner_guard.type_scopes.declare_method(
-                            type_name_id,
-                            func_name.lexeme.into(),
-                            method_id,
-                        );
-
-                        inner_guard.redeclaration_method(res, func_name.lexeme, func_name.span);
+                            inner_guard.redeclaration_method(res, func_name.lexeme, func_name.span);
+                        }
                     }
                 }
                 _ => {}

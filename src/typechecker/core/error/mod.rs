@@ -1,19 +1,15 @@
-mod diagnostic;
-mod render;
-mod report;
+mod codes;
+mod into_diag;
 mod warning;
 
 pub use warning::*;
 
-use self::report::Diagnostic;
+use crate::diagnostics::DiagnosticContext;
 use crate::scanner::Span;
-use crate::typechecker::core::error::report::ReportBuilder;
+use crate::typechecker::Symbol;
 use crate::typechecker::core::types::Type;
 use crate::typechecker::inference::{InferenceContext, UnificationError, UnificationErrorKind};
 use crate::typechecker::scope::variables::DeclarationKind;
-use crate::typechecker::Symbol;
-use ariadne::Report;
-use std::ops::Range;
 
 /// The leaf-level types at the exact point where unification failed.
 /// Only present when they differ from the root types in [`Mismatch`].
@@ -224,51 +220,6 @@ pub enum CallError {
     },
 }
 
-impl CallError {
-    pub(crate) fn render<'a>(
-        &self,
-        source_id: &'a str,
-        config: ariadne::Config,
-    ) -> Report<'a, (&'a str, Range<usize>)> {
-        match self {
-            CallError::TooMany {
-                expected,
-                found,
-                span,
-                callee,
-                callee_origin,
-            } => ReportBuilder::error(source_id, *span, self.code(), "Too many arguments", config)
-                .primary(
-                    *span,
-                    format!(
-                        "Too many arguments. Expected {} but found {}.",
-                        expected, found
-                    ),
-                )
-                .secondary(*callee, "Called function is here")
-                .optional_origin(*callee_origin, "Callee declared here")
-                .finish(),
-            CallError::DuplicateArgument { name, span } => ReportBuilder::error(
-                source_id,
-                *span,
-                self.code(),
-                format!("Duplicate argument name '{}'", name),
-                config,
-            )
-            .primary(
-                *span,
-                format!("'{}' is already passed as an argument", name),
-            )
-            .finish(),
-            CallError::PositionalAfterNamed { message, span } => {
-                ReportBuilder::error(source_id, *span, self.code(), "Invalid argument order", config)
-                    .primary(*span, *message)
-                    .finish()
-            }
-        }
-    }
-}
-
 /// Errors arising during generic resolution.
 /// Replaces `CannotInferType`, `GenericCountMismatch`, `InvalidGenericSpecification`.
 #[derive(Debug, Clone)]
@@ -446,12 +397,6 @@ impl TypeCheckerError {
     }
 }
 
-impl std::fmt::Display for TypeCheckerError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.message())
-    }
-}
-
 pub trait Recoverable<T> {
     /// Pushes error to a collection and returns a fallback value.
     fn recover(self, errors: &mut Vec<TypeCheckerError>, fallback: T) -> T;
@@ -479,10 +424,14 @@ impl<T> Recoverable<T> for Result<T, TypeCheckerError> {
     }
 }
 
-fn mismatch_label_message(m: &Mismatch) -> String {
+fn mismatch_label_message(m: &Mismatch, ctx: &DiagnosticContext) -> String {
     match &m.kind {
         UnificationErrorKind::TypeMismatch | UnificationErrorKind::VarianceMismatch => {
-            format!("found '{}', expected '{}'", m.found, m.expected)
+            format!(
+                "found '{}', expected '{}'",
+                m.found.display_type(&ctx.type_system),
+                m.expected.display_type(&ctx.type_system)
+            )
         }
         UnificationErrorKind::ArityMismatch {
             expected_len,
@@ -500,22 +449,34 @@ fn mismatch_label_message(m: &Mismatch) -> String {
             "generic functions must be specialized first — use .<Type> notation".to_string()
         }
         UnificationErrorKind::MetatypeNotUnifiable => {
-            format!("type '{}' cannot be used as a value here", m.found)
+            format!(
+                "type '{}' cannot be used as a value here",
+                m.found.display_type(&ctx.type_system)
+            )
         }
         UnificationErrorKind::OccursCheck => "recursive type definition detected".to_string(),
         UnificationErrorKind::InterfaceNotImplemented { interface } => {
-            format!("'{}' does not implement interface '{}'", m.found, interface)
+            format!(
+                "'{}' does not implement interface '{}'",
+                m.found.display_type(&ctx.type_system),
+                interface
+            )
         }
     }
 }
 
-/// Render the note line for a deep mismatch, using leaf types + kind.
-fn kind_note(kind: &UnificationErrorKind, detail: &MismatchDetail) -> String {
+/// Render the with_note line for a deep mismatch, using leaf types + kind.
+fn kind_note(
+    kind: &UnificationErrorKind,
+    detail: &MismatchDetail,
+    ctx: &DiagnosticContext,
+) -> String {
     match kind {
         UnificationErrorKind::TypeMismatch | UnificationErrorKind::VarianceMismatch => {
             format!(
                 "'{}' is not compatible with '{}'",
-                detail.found, detail.expected
+                detail.found.display_type(&ctx.type_system),
+                detail.expected.display_type(&ctx.type_system)
             )
         }
         UnificationErrorKind::ArityMismatch {
@@ -528,14 +489,21 @@ fn kind_note(kind: &UnificationErrorKind, detail: &MismatchDetail) -> String {
             "generic functions must be specialized first — use .<Type> notation".to_string()
         }
         UnificationErrorKind::InterfaceNotImplemented { interface } => {
-            format!("'{}' does not implement '{}'", detail.found, interface)
+            format!(
+                "'{}' does not implement '{}'",
+                detail.found.display_type(&ctx.type_system),
+                interface
+            )
         }
         UnificationErrorKind::OccursCheck => "recursive type detected".to_string(),
         UnificationErrorKind::VarargNotAllowed => {
             "vararg functions cannot be passed as arguments".to_string()
         }
         UnificationErrorKind::MetatypeNotUnifiable => {
-            format!("'{}' cannot be used as a value", detail.found)
+            format!(
+                "'{}' cannot be used as a value",
+                detail.found.display_type(&ctx.type_system)
+            )
         }
     }
 }

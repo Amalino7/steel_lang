@@ -1,15 +1,16 @@
 use crate::parser::Parser;
 use crate::parser::ast::{ImportSegment, ImportType, Stmt};
 use crate::resolver::error::ResolverError;
-use crate::resolver::{Exports, ModuleGraph, ModuleId, ModuleInfo};
+use crate::resolver::{Exports, FileId, ModuleGraph, ModuleId, ModuleInfo};
 use crate::scanner::Scanner;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 pub struct ModuleResolver {
     pub visiting: HashSet<PathBuf>,
     pub visiting_stack: Vec<(String, PathBuf)>,
+    pub next_file_id: u32,
 }
 
 impl Default for ModuleResolver {
@@ -22,6 +23,7 @@ impl ModuleResolver {
         Self {
             visiting: HashSet::new(),
             visiting_stack: Vec::new(),
+            next_file_id: 1,
         }
     }
 
@@ -38,10 +40,7 @@ impl ModuleResolver {
             .unwrap_or("main")
             .to_string();
 
-        let mut graph = ModuleGraph {
-            modules: vec![],
-            name_to_id_map: HashMap::new(),
-        };
+        let mut graph = ModuleGraph::new();
         self.visit_file(root, entry_module_name, &mut graph)?;
         Ok(graph)
     }
@@ -72,7 +71,9 @@ impl ModuleResolver {
         self.visiting.insert(path.clone());
         self.visiting_stack.push((name.clone(), path.clone()));
 
-        let res = self.handle_file(root, graph, &path, &name);
+        let file_id = self.next_id();
+
+        let res = self.handle_file(root, graph, &path, &name, file_id);
 
         self.visiting.remove(&path);
         self.visiting_stack.pop();
@@ -80,11 +81,14 @@ impl ModuleResolver {
         let (dep_ids, source) = res?;
 
         let module_id = ModuleId(graph.modules.len() as u32);
+
         graph.name_to_id_map.insert(name.clone(), module_id);
+        graph.file_to_module_id.insert(file_id, module_id);
 
         // Guarantees modules are already topologically sorted
         graph.modules.push(ModuleInfo {
             id: module_id,
+            file_id,
             name,
             path,
             source,
@@ -93,6 +97,12 @@ impl ModuleResolver {
         });
 
         Ok(module_id)
+    }
+
+    fn next_id(&mut self) -> FileId {
+        let id = FileId(self.next_file_id);
+        self.next_file_id += 1;
+        id
     }
 
     fn resolve_module_to_path(root: &Path, name: &str) -> Result<PathBuf, ResolverError> {
@@ -130,13 +140,14 @@ impl ModuleResolver {
         graph: &mut ModuleGraph,
         path: &Path,
         module_name: &str,
+        file_id: FileId,
     ) -> Result<(Vec<ModuleId>, String), ResolverError> {
         let source = fs::read_to_string(path).map_err(|err| ResolverError::Io {
             path: path.to_path_buf(),
             error: err,
         })?;
 
-        let scanner = Scanner::new(&source);
+        let scanner = Scanner::new(&source, file_id.0);
         let mut parser = Parser::new(scanner);
         let ast = parser.parse().map_err(|errors| ResolverError::ParseError {
             module_name: module_name.to_string(),
@@ -228,10 +239,7 @@ mod tests {
         project.write_file("a.steel", "import b/Item;");
 
         let mut resolver = ModuleResolver::new();
-        let mut graph = ModuleGraph {
-            modules: vec![],
-            name_to_id_map: HashMap::new(),
-        };
+        let mut graph = ModuleGraph::new();
         resolver
             .visit_file(project.root(), "a".to_string(), &mut graph)
             .unwrap();
@@ -258,10 +266,7 @@ mod tests {
         project.write_file("app.steel", "import b/BItem;\nimport c/CItem;");
 
         let mut resolver = ModuleResolver::new();
-        let mut graph = ModuleGraph {
-            modules: vec![],
-            name_to_id_map: HashMap::new(),
-        };
+        let mut graph = ModuleGraph::new();
         resolver
             .visit_file(project.root(), "app".to_string(), &mut graph)
             .unwrap();
@@ -292,10 +297,7 @@ mod tests {
         project.write_file("main.steel", "import core/{math/Sin, string/Format};");
 
         let mut resolver = ModuleResolver::new();
-        let mut graph = ModuleGraph {
-            modules: vec![],
-            name_to_id_map: HashMap::new(),
-        };
+        let mut graph = ModuleGraph::new();
         resolver
             .visit_file(project.root(), "main".to_string(), &mut graph)
             .unwrap();
@@ -328,10 +330,7 @@ mod tests {
         );
 
         let mut resolver = ModuleResolver::new();
-        let mut graph = ModuleGraph {
-            modules: vec![],
-            name_to_id_map: HashMap::new(),
-        };
+        let mut graph = ModuleGraph::new();
         resolver
             .visit_file(project.root(), "main".to_string(), &mut graph)
             .unwrap();
@@ -360,10 +359,7 @@ mod tests {
         project.write_file("main.steel", "import math/Add;");
 
         let mut resolver = ModuleResolver::new();
-        let mut graph = ModuleGraph {
-            modules: vec![],
-            name_to_id_map: HashMap::new(),
-        };
+        let mut graph = ModuleGraph::new();
 
         resolver
             .visit_file(project.root(), "main".to_string(), &mut graph)
@@ -391,10 +387,7 @@ mod tests {
         project.write_file("b.steel", "import a/Item;");
 
         let mut resolver = ModuleResolver::new();
-        let mut graph = ModuleGraph {
-            modules: vec![],
-            name_to_id_map: HashMap::new(),
-        };
+        let mut graph = ModuleGraph::new();
         let result = resolver.visit_file(project.root(), "a".to_string(), &mut graph);
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -414,10 +407,7 @@ mod tests {
         project.write_file("c.steel", "import a/Item;");
 
         let mut resolver = ModuleResolver::new();
-        let mut graph = ModuleGraph {
-            modules: vec![],
-            name_to_id_map: HashMap::new(),
-        };
+        let mut graph = ModuleGraph::new();
         let result = resolver.visit_file(project.root(), "a".to_string(), &mut graph);
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -435,10 +425,7 @@ mod tests {
         project.write_file("a.steel", "import a/Item;");
 
         let mut resolver = ModuleResolver::new();
-        let mut graph = ModuleGraph {
-            modules: vec![],
-            name_to_id_map: HashMap::new(),
-        };
+        let mut graph = ModuleGraph::new();
         let result = resolver.visit_file(project.root(), "a".to_string(), &mut graph);
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -455,10 +442,7 @@ mod tests {
         project.write_file("main.steel", "import non_existent/Item;");
 
         let mut resolver = ModuleResolver::new();
-        let mut graph = ModuleGraph {
-            modules: vec![],
-            name_to_id_map: HashMap::new(),
-        };
+        let mut graph = ModuleGraph::new();
         let result = resolver.visit_file(project.root(), "main".to_string(), &mut graph);
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -509,10 +493,7 @@ mod tests {
         project.write_file("broken.steel", "let = +;");
 
         let mut resolver = ModuleResolver::new();
-        let mut graph = ModuleGraph {
-            modules: vec![],
-            name_to_id_map: HashMap::new(),
-        };
+        let mut graph = ModuleGraph::new();
         let result = resolver.visit_file(project.root(), "main".to_string(), &mut graph);
         assert!(result.is_err());
         match result.unwrap_err() {

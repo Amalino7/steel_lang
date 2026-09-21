@@ -1,7 +1,7 @@
 pub mod ast;
-pub mod error;
 mod control_flow;
 mod declarations;
+pub mod error;
 mod expressions;
 mod literals;
 mod statements;
@@ -161,7 +161,7 @@ mod tests {
     use crate::scanner::Scanner;
 
     fn parse_snapshot(source: &str) -> String {
-        let scanner = Scanner::new(source);
+        let scanner = Scanner::new(source, 0);
         let mut parser = Parser::new(scanner);
         match parser.parse() {
             Ok(stmts) => stmts
@@ -502,7 +502,7 @@ mod tests {
     #[test]
     fn test_parser_error_missing_semicolon() {
         let source = "let a = 10";
-        let scanner = Scanner::new(source);
+        let scanner = Scanner::new(source, 0);
         let mut parser = Parser::new(scanner);
         let res = parser.parse();
         assert!(res.is_err(), "Parser should error on missing semicolon");
@@ -511,7 +511,7 @@ mod tests {
     #[test]
     fn test_parser_error_missing_right_paren() {
         let source = "let a = (10 + 2;";
-        let scanner = Scanner::new(source);
+        let scanner = Scanner::new(source, 0);
         let mut parser = Parser::new(scanner);
         assert!(
             parser.parse().is_err(),
@@ -529,7 +529,7 @@ mod tests {
         } else {
             println("a is equal to 0");
         }"#;
-        let scanner = Scanner::new(source);
+        let scanner = Scanner::new(source, 0);
         let mut parser = Parser::new(scanner);
         let _ast = parser.parse().expect("Failed to parse.");
     }

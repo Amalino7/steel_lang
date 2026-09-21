@@ -1,6 +1,6 @@
 use crate::parser::ast::{Binding, FunctionSig, MethodSig, Stmt, TypeAst, VariantType};
 use crate::parser::error::ParserError;
-use crate::parser::{check_token_type, match_token_type, Parser, TokT};
+use crate::parser::{Parser, TokT, check_token_type, match_token_type};
 use crate::scanner::{Span, Token, TokenType};
 
 type FunctionDecl<'src> = (Token<'src>, Vec<Token<'src>>, FunctionSig<'src>);
@@ -203,7 +203,7 @@ impl<'src> Parser<'src> {
     pub(super) fn type_block(&mut self) -> Result<TypeAst<'src>, ParserError<'src>> {
         const UNDER: Token<'static> = Token {
             token_type: TokenType::Identifier,
-            span: Span::new(0, 0, 0),
+            span: Span::new(0, 0, 0, 0),
             lexeme: "_",
         };
 

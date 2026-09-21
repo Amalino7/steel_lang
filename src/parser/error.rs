@@ -1,3 +1,5 @@
+use crate::diagnostics::builder::DiagBuilder;
+use crate::diagnostics::{Diagnostic, DiagnosticContext, IntoDiagnostic};
 use crate::scanner::Span;
 use crate::scanner::{Token, TokenType};
 use std::fmt::{Display, Formatter};
@@ -56,5 +58,11 @@ impl<'src> ParserError<'src> {
 impl Display for ParserError<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.message())
+    }
+}
+
+impl IntoDiagnostic for ParserError<'_> {
+    fn into_diagnostic(self, ctx: &DiagnosticContext) -> Diagnostic {
+        DiagBuilder::error(self.span(), "E0000", "Parser error", self.message()).build()
     }
 }

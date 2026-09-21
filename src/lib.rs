@@ -170,7 +170,7 @@ fn run_inner(config: &RunConfig, source: &str) -> RunOutput {
         .with_color(use_color);
 
     let t = std::time::Instant::now();
-    let scanner = Scanner::new(source);
+    let scanner = Scanner::new(source, 0);
     let mut parser = Parser::new(scanner);
     let ast = parser.parse();
     timings.scan_parse = t.elapsed();
@@ -233,9 +233,9 @@ fn run_inner(config: &RunConfig, source: &str) -> RunOutput {
     {
         let limit = config.error_limit.unwrap_or(usize::MAX);
         for err in errors.iter().take(limit) {
-            err.create_report(config.file_name, ariadne_config)
-                .print((config.file_name, Source::from(source)))
-                .unwrap();
+            // err.create_report(config.file_name, ariadne_config)
+            //     .print((config.file_name, Source::from(source)))
+            //     .unwrap();
         }
         error_limit(errors.len(), config.error_limit);
         return RunOutput {
@@ -248,10 +248,10 @@ fn run_inner(config: &RunConfig, source: &str) -> RunOutput {
 
     if !config.ignore_warnings {
         for warning in &warnings {
-            warning
-                .create_report(config.file_name, ariadne_config)
-                .print((config.file_name, Source::from(source)))
-                .unwrap();
+            // warning
+            //     .create_report(config.file_name, ariadne_config)
+            //     .print((config.file_name, Source::from(source)))
+            //     .unwrap();
         }
     }
 
@@ -334,7 +334,7 @@ impl SteelProgram {
         let mut full_source = source.to_string();
         full_source.push_str(get_prelude());
 
-        let scanner = Scanner::new(&full_source);
+        let scanner = Scanner::new(&full_source, 0);
         let mut parser = Parser::new(scanner);
         let ast = parser.parse().expect("SteelProgram: parse failed");
 

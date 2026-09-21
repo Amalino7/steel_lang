@@ -4,7 +4,6 @@ use crate::typechecker::core::types::{
 };
 use crate::typechecker::system::{TypeSystem, make_substitution_map};
 use std::collections::HashMap;
-use std::fmt;
 
 pub struct InferenceContext {
     substitutions: HashMap<u32, Type>,
@@ -50,7 +49,7 @@ impl InferenceContext {
         Type::Infer(id)
     }
 
-    /// Like [`new_type_var`] but records `name` as the human-readable origin of this
+    /// Like [`new_type_var`] but records `name` as the human-readable with_origin of this
     /// inference variable (e.g. the generic parameter name `"T"`).
     /// The name is used when building [`CannotInferType`] error messages.
     pub fn new_named_type_var(&mut self, name: GenericTypeId) -> Type {
@@ -415,66 +414,56 @@ pub enum UnificationErrorKind {
     },
 }
 
-impl fmt::Display for UnificationError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl UnificationError {
+    fn display(&self, sys: &TypeSystem) -> String {
         match &self.kind {
-            UnificationErrorKind::TypeMismatch => {
-                write!(
-                    f,
-                    "Type mismatch: expected {}, found {}",
-                    self.expected, self.found
-                )
-            }
+            UnificationErrorKind::TypeMismatch => format!(
+                "Type mismatch: expected {}, found {}",
+                self.expected.display_type(sys),
+                self.found.display_type(sys),
+            ),
             UnificationErrorKind::ArityMismatch {
                 expected_len,
                 found_len,
             } => {
-                write!(
-                    f,
+                format!(
                     "Arity mismatch: expected {} elements, found {} elements\n  Expected type: {}\n  Found type: {}",
-                    expected_len, found_len, self.expected, self.found
+                    expected_len,
+                    found_len,
+                    self.expected.display_type(sys),
+                    self.found.display_type(sys)
                 )
             }
             UnificationErrorKind::VarianceMismatch => {
-                write!(
-                    f,
+                format!(
                     "Variance mismatch: types are not compatible\n  Expected: {}\n  Found: {}",
-                    self.expected, self.found
+                    self.expected.display_type(sys),
+                    self.found.display_type(sys)
                 )
             }
             UnificationErrorKind::VarargNotAllowed => {
-                write!(f, "Cannot use vararg functions as arguments")
+                "Cannot use vararg functions as arguments".to_string()
             }
             UnificationErrorKind::GenericFunctionNotAllowed => {
-                write!(
-                    f,
-                    "Cannot assign a generic function.\n  TIP: specify generics using .<Type> notation"
-                )
+                "Cannot assign a generic function.\n  TIP: specify generics using .<Type> notation"
+                    .to_string()
             }
-            UnificationErrorKind::MetatypeNotUnifiable => {
-                write!(f, "Cannot unify metatypes")
-            }
+            UnificationErrorKind::MetatypeNotUnifiable => "Cannot unify metatypes".to_string(),
             UnificationErrorKind::OccursCheck => {
-                write!(
-                    f,
+                format!(
                     "Infinite type detected: type variable occurs in its own definition\n  Type: {}",
-                    self.expected
+                    self.expected.display_type(sys)
                 )
             }
             UnificationErrorKind::InterfaceNotImplemented { interface } => {
-                write!(
-                    f,
+                format!(
                     "Type does not implement interface `{}`\n  Expected: {}\n  Found: {}",
-                    interface, self.expected, self.found
+                    interface,
+                    self.expected.display_type(sys),
+                    self.found.display_type(sys)
                 )
             }
         }
-    }
-}
-
-impl From<UnificationError> for String {
-    fn from(err: UnificationError) -> String {
-        err.to_string()
     }
 }
 

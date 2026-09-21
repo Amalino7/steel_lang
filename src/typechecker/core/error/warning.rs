@@ -1,6 +1,6 @@
+use crate::diagnostics::builder::DiagBuilder;
+use crate::diagnostics::{DiagnosticContext, IntoDiagnostic};
 use crate::scanner::Span;
-use ariadne::{Color, Config, Label, Report, ReportKind};
-use std::ops::Range;
 
 #[derive(Debug, Clone)]
 pub enum TypeCheckerWarning {
@@ -28,90 +28,48 @@ pub enum TypeCheckerWarning {
     },
 }
 
-impl TypeCheckerWarning {
-    pub fn create_report<'a>(
-        &self,
-        source_id: &'a str,
-        config: Config,
-    ) -> Report<'a, (&'a str, Range<usize>)> {
-        let offset = self.span().start;
-        let mut report = Report::build(ReportKind::Warning, source_id, offset).with_config(config);
-
+impl IntoDiagnostic for TypeCheckerWarning {
+    fn into_diagnostic(self, ctx: &DiagnosticContext) -> crate::diagnostics::Diagnostic {
+        let span = self.span();
+        let builder = DiagBuilder::warn(span, "W0001", self.title(), self.message());
         match self {
-            TypeCheckerWarning::UnusedBinding { name, span } => {
-                report = report
-                    .with_message(format!("Unused binding '{}'", name))
-                    .with_label(
-                        Label::new((source_id, span.to_range()))
-                            .with_message(format!("Binding '{}' is never used", name))
-                            .with_color(Color::Yellow),
-                    )
-                    .with_help(format!(
-                        "Consider removing it or renaming it to '_' or '_{name}' to explicitly ignore this value"
-                    ));
+            TypeCheckerWarning::UnusedBinding { name, .. } => {
+                builder.with_help(format!(
+                    "Consider removing it or renaming it to '_' or '_{name}' to explicitly ignore this value"
+                ))
             }
-            TypeCheckerWarning::SafeAccessOnNonOptional { span } => {
-                report = report
-                    .with_message("Safe access operator on non-optional type")
-                    .with_label(
-                        Label::new((source_id, span.to_range()))
-                            .with_message("This type is not optional, safe access has no effect")
-                            .with_color(Color::Yellow),
-                    )
-                    .with_help("Remove the '?' operator as it's not needed here");
+            TypeCheckerWarning::SafeAccessOnNonOptional { .. } => {
+                builder.with_help("Remove the '?' operator as it's not needed here.")
             }
-            TypeCheckerWarning::RedundantForceUnwrap { span } => {
-                report = report
-                    .with_message("Force unwrap on non-optional type")
-                    .with_label(
-                        Label::new((source_id, span.to_range()))
-                            .with_message("This type is not optional, force unwrap has no effect")
-                            .with_color(Color::Yellow),
-                    )
-                    .with_help("Remove the '!' operator as it's not needed here");
+            TypeCheckerWarning::RedundantForceUnwrap { .. } => {
+                builder.with_help("Remove the '!' operator as it's not needed here.")
             }
-            TypeCheckerWarning::ShadowedVariable {
-                name,
-                span,
-                original_span,
-            } => {
-                report = report
-                    .with_message(format!("Variable '{}' shadows existing binding", name))
-                    .with_labels(vec![
-                        Label::new((source_id, span.to_range()))
-                            .with_message(format!("'{}' is redeclared here", name))
-                            .with_color(Color::Yellow),
-                        Label::new((source_id, original_span.to_range()))
-                            .with_message(format!("Previous declaration of '{}'", name))
-                            .with_color(Color::Blue),
-                    ]);
+            TypeCheckerWarning::ShadowedVariable { original_span, name,.. } => {
+                builder.with_origin(original_span, format!("Previous declaration of '{}'", name) )
             }
-            TypeCheckerWarning::UnreachableCode { span } => {
-                report = report
-                    .with_message("Unreachable code detected")
-                    .with_label(
-                        Label::new((source_id, span.to_range()))
-                            .with_message("This code will never be executed")
-                            .with_color(Color::Yellow),
-                    )
-                    .with_help("Consider removing this code")
+            TypeCheckerWarning::UnreachableCode { .. } => {
+                builder.with_help("Consider removing this code")
                     .with_note(
                         "Code after a return/continue/break and certain functions is unreachable",
-                    );
-            }
-            TypeCheckerWarning::UnreachablePattern { span, message } => {
-                report = report
-                    .with_message("Unreachable pattern")
-                    .with_label(
-                        Label::new((source_id, span.to_range()))
-                            .with_message(message.as_str())
-                            .with_color(Color::Yellow),
                     )
-                    .with_help("Consider removing this pattern");
             }
-        }
+            TypeCheckerWarning::UnreachablePattern { .. } => {
+                builder.with_help("Consider removing this pattern")
+            }
+        }.build()
+    }
+}
 
-        report.finish()
+impl TypeCheckerWarning {
+    pub fn title(&self) -> &'static str {
+        match self {
+            TypeCheckerWarning::UnusedBinding { .. } => "Unused binding",
+            TypeCheckerWarning::SafeAccessOnNonOptional { .. } => "Safe access on non-optional",
+            TypeCheckerWarning::RedundantForceUnwrap { .. } => "Redundant force unwrap",
+            TypeCheckerWarning::ShadowedVariable { .. } => "Shadowed variable",
+            TypeCheckerWarning::UnreachableCode { .. } => "Unreachable code",
+            TypeCheckerWarning::UnreachablePattern { .. } => "Unreachable pattern",
+        }
     }
 
     pub fn span(&self) -> Span {
@@ -128,18 +86,20 @@ impl TypeCheckerWarning {
     pub fn message(&self) -> String {
         match self {
             TypeCheckerWarning::UnusedBinding { name, .. } => {
-                format!("Unused binding '{}'", name)
+                format!("Binding '{}' is never used", name)
             }
             TypeCheckerWarning::SafeAccessOnNonOptional { .. } => {
-                "Safe access operator on non-optional type".to_string()
+                "This type is not optional, safe access has no effect".to_string()
             }
             TypeCheckerWarning::RedundantForceUnwrap { .. } => {
-                "Force unwrap on non-optional type".to_string()
+                "This type is not optional, force unwrap has no effect".to_string()
             }
             TypeCheckerWarning::ShadowedVariable { name, .. } => {
-                format!("Variable '{}' shadows existing binding", name)
+                format!("'{}' is redeclared here", name)
             }
-            TypeCheckerWarning::UnreachableCode { .. } => "Unreachable code detected".to_string(),
+            TypeCheckerWarning::UnreachableCode { .. } => {
+                "This code will never be executed".to_string()
+            }
             TypeCheckerWarning::UnreachablePattern { message, .. } => message.clone(),
         }
     }

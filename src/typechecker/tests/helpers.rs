@@ -33,7 +33,7 @@ impl<'src> TypeCheckerTest<'src> {
     }
 
     pub fn run(self) {
-        let scanner = Scanner::new(self.source);
+        let scanner = Scanner::new(self.source, 0);
         let mut parser = Parser::new(scanner);
         let mut ast = parser.parse().expect("Parser failed");
         let mut sys = TypeSystem::new();

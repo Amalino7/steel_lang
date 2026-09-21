@@ -10,6 +10,7 @@ pub struct Scanner<'src> {
     key_words: HashMap<&'static str, TokenType>,
     start: usize,
     current: usize,
+    file_id: u32,
     line: u32,
     context_stack: Vec<InterpolationFrame>,
 }
@@ -21,12 +22,13 @@ struct InterpolationFrame {
 }
 
 impl<'src> Scanner<'src> {
-    pub fn new(src: &'src str) -> Self {
+    pub fn new(src: &'src str, file_id: u32) -> Self {
         Scanner {
             src,
             key_words: keywords(),
             start: 0,
             current: 0,
+            file_id,
             line: 1,
             context_stack: Vec::new(),
         }
@@ -39,7 +41,7 @@ impl<'src> Scanner<'src> {
 
         self.start = self.current;
         if self.is_at_end() {
-            let span = Span::new(self.current, self.current, self.line);
+            let span = Span::new(self.current, self.current, self.line, self.file_id);
             return Token::new(TokenType::EOF, span, "end");
         }
         let char = self.advance();
@@ -134,7 +136,7 @@ impl<'src> Scanner<'src> {
         }
     }
     fn make_token(&self, token_type: TokenType) -> Token<'src> {
-        let span = Span::new(self.start, self.current, self.line);
+        let span = Span::new(self.start, self.current, self.line, self.file_id);
         Token::new(token_type, span, &self.src[self.start..self.current])
     }
     fn matches(&mut self, expected: char) -> bool {
@@ -149,7 +151,7 @@ impl<'src> Scanner<'src> {
         self.current >= self.src.len()
     }
     fn error(&self, message: &'static str) -> Token<'src> {
-        let span = Span::new(self.start, self.current, self.line);
+        let span = Span::new(self.start, self.current, self.line, self.file_id);
         Token::new(TokenType::Error, span, message)
     }
     fn advance(&mut self) -> char {

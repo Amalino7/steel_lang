@@ -17,7 +17,7 @@ pub fn assert_runs(source: &str) {
 
 /// Execute source and verify a global variable has expected value
 pub fn assert_global(source: &str, global_index: usize, expected: Value) {
-    let scanner = Scanner::new(source);
+    let scanner = Scanner::new(source, 0);
     let mut parser = Parser::new(scanner);
     let mut sys = TypeSystem::new();
     let id_generator = GlobalIdGenerator::new();
@@ -47,7 +47,7 @@ pub fn assert_panics_with_prelude(source: &str) {
 
     let full_source = format!("{}{}", source, get_prelude());
     let natives = get_natives();
-    let scanner = Scanner::new(&full_source);
+    let scanner = Scanner::new(&full_source, 0);
     let mut parser = Parser::new(scanner);
     let ast = parser.parse().expect("Failed to parse");
     let mut sys = TypeSystem::new();
@@ -71,7 +71,7 @@ pub fn assert_panics_with_prelude(source: &str) {
 
 /// Execute source and verify a global variable holds a string with the given content.
 pub fn assert_global_string(source: &str, global_index: usize, expected: &str) {
-    let scanner = Scanner::new(source);
+    let scanner = Scanner::new(source, 0);
     let mut parser = Parser::new(scanner);
 
     let mut sys = TypeSystem::new();
@@ -104,7 +104,7 @@ pub fn assert_global_string(source: &str, global_index: usize, expected: &str) {
 
 /// Assert that the source fails at the parse stage.
 pub fn assert_parse_fails(source: &str) {
-    let scanner = Scanner::new(source);
+    let scanner = Scanner::new(source, 0);
     let mut parser = Parser::new(scanner);
     assert!(
         parser.parse().is_err(),
@@ -115,7 +115,7 @@ pub fn assert_parse_fails(source: &str) {
 /// Execute source and verify a runtime error occurs.
 /// Does not check the error message - just that an error happened.
 pub fn assert_panics(source: &str) {
-    let scanner = Scanner::new(source);
+    let scanner = Scanner::new(source, 0);
     let mut parser = Parser::new(scanner);
     let mut sys = TypeSystem::new();
     let id_generator = GlobalIdGenerator::new();

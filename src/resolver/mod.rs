@@ -16,14 +16,19 @@ use crate::typechecker::scope::variables::VariableContext;
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct ModuleId(pub u32);
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub struct FileId(pub u32);
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModuleGraph {
     pub modules: Vec<ModuleInfo>,
     pub name_to_id_map: HashMap<String, ModuleId>,
+    pub file_to_module_id: HashMap<FileId, ModuleId>,
 }
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModuleInfo {
     pub id: ModuleId,
+    pub file_id: FileId,
     pub name: String,
     pub path: PathBuf,
     pub source: String,
@@ -59,6 +64,7 @@ impl ModuleGraph {
         ModuleGraph {
             modules: vec![],
             name_to_id_map: HashMap::new(),
+            file_to_module_id: HashMap::new(),
         }
     }
 }

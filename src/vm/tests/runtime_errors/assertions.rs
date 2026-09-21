@@ -15,7 +15,7 @@ fn assert_panics_with_natives(source: &str) {
 
     let full_source = format!("{}{}", source, get_prelude());
     let natives = get_natives();
-    let scanner = Scanner::new(&full_source);
+    let scanner = Scanner::new(&full_source, 0);
     let mut parser = Parser::new(scanner);
     let ast = parser.parse().expect("Failed to parse");
     let mut sys = TypeSystem::new();

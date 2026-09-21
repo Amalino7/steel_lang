@@ -111,6 +111,7 @@ impl<'ctx> ScopeManager<'ctx> {
         let scope = &mut self.scopes[0];
         if let Some(prev) = scope.variables.get(&ctx.name)
             && prev.mutability == Mutability::Unique
+            && ctx.index != prev.index
         {
             return Err(TypeCheckerError::Binding(BindingError::Redeclaration {
                 name: ctx.name.to_string(),

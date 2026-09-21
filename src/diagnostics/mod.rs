@@ -3,11 +3,12 @@ pub mod builder;
 pub mod emitter;
 
 use crate::scanner::Span;
+use crate::typechecker::system::TypeSystem;
 
 pub struct Diagnostic {
     level: Level,
     code: &'static str,
-    title: &'static str,
+    title: String,
     primary_span: Span,
     message: String,
     labels: Vec<DiagLabel>,
@@ -29,4 +30,12 @@ pub struct DiagLabel {
 pub enum LabelKind {
     Origin,
     Secondary,
+}
+
+pub struct DiagnosticContext<'ctx> {
+    pub type_system: &'ctx TypeSystem,
+}
+
+pub trait IntoDiagnostic {
+    fn into_diagnostic(self, ctx: &DiagnosticContext) -> Diagnostic;
 }
