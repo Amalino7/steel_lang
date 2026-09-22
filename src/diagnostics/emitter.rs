@@ -49,7 +49,7 @@ pub struct RecordingSink<T> {
 }
 
 impl<E> DiagnosticSink<E> for RecordingSink<E> {
-    fn emit(&mut self, error: E, ctx: &DiagnosticContext<'_>) {
+    fn emit(&mut self, error: E, _: &DiagnosticContext<'_>) {
         self.errors.push(error);
     }
 }

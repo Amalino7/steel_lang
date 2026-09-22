@@ -16,7 +16,6 @@ pub enum ResolverError {
     },
     ParseError {
         module_name: String,
-        path: PathBuf,
         errors: Vec<String>,
     },
 }
@@ -40,14 +39,9 @@ impl ResolverError {
         Self::CyclicDependency { cycle }
     }
 
-    pub fn parse_error(
-        module_name: impl Into<String>,
-        path: impl Into<PathBuf>,
-        errors: Vec<String>,
-    ) -> Self {
+    pub fn parse_error(module_name: impl Into<String>, errors: Vec<String>) -> Self {
         Self::ParseError {
             module_name: module_name.into(),
-            path: path.into(),
             errors,
         }
     }
@@ -84,20 +78,14 @@ impl ResolverError {
             }
             ResolverError::ParseError {
                 module_name,
-                path,
                 errors,
             } => {
                 if errors.is_empty() {
-                    format!(
-                        "Failed to parse module '{}' at '{}'",
-                        module_name,
-                        path.display()
-                    )
+                    format!("Failed to parse module '{}'", module_name,)
                 } else {
                     format!(
-                        "Failed to parse module '{}' at '{}':\n{}",
+                        "Failed to parse module '{}' :\n{}",
                         module_name,
-                        path.display(),
                         errors.join("\n")
                     )
                 }

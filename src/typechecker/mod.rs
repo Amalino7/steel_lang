@@ -84,7 +84,7 @@ impl<'ctx> TypeChecker<'ctx> {
         &mut self,
         ast: &[Stmt<'ctx>],
         exports: Option<&Exports>,
-    ) -> Result<(TypedFile, Vec<TypeCheckerWarning>), Vec<TypeCheckerError>> {
+    ) -> Result<(TypedFile, Vec<TypeCheckerWarning>), (Vec<TypeCheckerError>, Exports)> {
         self.scopes.begin_scope(ScopeKind::Global);
 
         if let Some(exports) = exports {
@@ -121,7 +121,7 @@ impl<'ctx> TypeChecker<'ctx> {
         let exports = self.get_exports();
 
         if !self.errors.is_empty() {
-            Err(take(&mut self.errors))
+            Err((take(&mut self.errors), exports))
         } else {
             Ok((
                 TypedFile {

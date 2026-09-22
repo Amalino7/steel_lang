@@ -1,8 +1,10 @@
+use crate::resolver::ModuleResolver;
 use crate::resolver::new_pipeline::pipeline;
-use crate::{ColorChoice, EmitTarget, Mode, RunConfig, run};
+use crate::resolver::resolution::Source;
+use crate::{ColorChoice, EmitTarget, Mode, RunConfig};
 use clap::{Parser, ValueEnum};
-use std::fs;
-use std::path::Path;
+use notify::{EventKind, RecursiveMode, Watcher};
+use std::sync::mpsc;
 
 /// The Steel language runtime
 #[derive(Parser)]
@@ -52,21 +54,15 @@ pub struct Cli {
 enum CliMode {
     /// Scan, parse, type-check, compile and run
     Run,
-    /// Scan and parse only (prints AST with --debug or --emit ast)
-    Parse,
     /// Scan, parse and type-check only
     Check,
-    /// New, experimental, multi-file support
-    New,
 }
 
 impl From<CliMode> for Mode {
     fn from(m: CliMode) -> Self {
         match m {
             CliMode::Run => Mode::Run,
-            CliMode::Parse => Mode::Parse,
             CliMode::Check => Mode::Check,
-            CliMode::New => Mode::Run,
         }
     }
 }
@@ -111,27 +107,29 @@ impl From<CliEmit> for EmitTarget {
     }
 }
 
-fn build_config<'a>(cli: &'a Cli, source: &'a str) -> RunConfig<'a> {
+fn build_config(cli: &Cli) -> RunConfig<'_> {
     RunConfig {
         file_name: &cli.file,
-        source,
+        source: Source::EntryFile(cli.file.as_ref()),
         mode: cli.mode.clone().into(),
         debug: cli.debug,
-        force: cli.force,
         include_prelude: !cli.no_stdlib,
         color: cli.color.into(),
+        diagnostics: true,
         emit: cli.emit.iter().copied().map(EmitTarget::from).collect(),
-        ignore_warnings: false,
         error_limit: cli.error_limit,
     }
 }
 
 pub fn watch_loop(cli: &Cli) {
-    use notify::{EventKind, RecursiveMode, Watcher};
-    use std::sync::mpsc;
+    let config = build_config(cli);
+    let res = ModuleResolver::new().resolve_source(&config.source);
+    let graph = res.unwrap_or_default();
 
-    let source = read_source(&cli.file);
-    let output = run(&build_config(cli, &source));
+    let mut paths: Vec<_> = graph.modules.iter().map(|info| info.path.clone()).collect();
+
+    let output = pipeline(&config);
+
     if cli.time {
         output.timings.print();
     }
@@ -141,12 +139,15 @@ pub fn watch_loop(cli: &Cli) {
         eprintln!("steel: cannot start file watcher: {}", e);
         std::process::exit(1);
     });
-    watcher
-        .watch(Path::new(&cli.file), RecursiveMode::NonRecursive)
-        .unwrap_or_else(|e| {
-            eprintln!("steel: cannot watch '{}': {}", cli.file, e);
-            std::process::exit(1);
-        });
+
+    for path in paths.iter() {
+        watcher
+            .watch(path.as_path(), RecursiveMode::NonRecursive)
+            .unwrap_or_else(|e| {
+                eprintln!("steel: cannot watch '{}': {}", cli.file, e);
+                std::process::exit(1);
+            });
+    }
 
     loop {
         match rx.recv() {
@@ -154,10 +155,34 @@ pub fn watch_loop(cli: &Cli) {
                 // Drain any rapid follow-up events (editors often emit several on save).
                 std::thread::sleep(std::time::Duration::from_millis(50));
                 while rx.try_recv().is_ok() {}
+                let graph = ModuleResolver::new()
+                    .resolve_source(&config.source)
+                    .unwrap_or_default();
 
-                eprintln!("\n=== {} changed ===\n", cli.file);
-                let source = read_source(&cli.file);
-                let output = run(&build_config(cli, &source));
+                let new_paths: Vec<_> =
+                    graph.modules.iter().map(|info| info.path.clone()).collect();
+
+                if new_paths != paths {
+                    for path in paths.iter() {
+                        watcher.unwatch(path.as_path()).unwrap_or_else(|e| {
+                            eprintln!("steel: cannot watch '{}': {}", cli.file, e);
+                            std::process::exit(1);
+                        });
+                    }
+
+                    for new_path in new_paths.iter() {
+                        watcher
+                            .watch(new_path.as_path(), RecursiveMode::NonRecursive)
+                            .unwrap_or_else(|e| {
+                                eprintln!("steel: cannot watch '{}': {}", cli.file, e);
+                                std::process::exit(1);
+                            });
+                    }
+                    paths = new_paths;
+                }
+
+                let output = pipeline(&config);
+
                 if cli.time {
                     output.timings.print();
                 }
@@ -169,23 +194,13 @@ pub fn watch_loop(cli: &Cli) {
     }
 }
 
-pub fn read_source(path: &str) -> String {
-    fs::read_to_string(path).unwrap_or_else(|e| {
-        eprintln!("steel: cannot read '{}': {}", path, e);
-        std::process::exit(1);
-    })
-}
-
 pub fn handle_input() {
     let cli = Cli::parse();
 
-    if cli.mode == CliMode::New {
-        pipeline(cli.file.as_ref())
-    } else if cli.watch {
+    if cli.watch {
         watch_loop(&cli);
     } else {
-        let source = read_source(&cli.file);
-        let output = run(&build_config(&cli, &source));
+        let output = pipeline(&build_config(&cli));
         if cli.time {
             output.timings.print();
         }

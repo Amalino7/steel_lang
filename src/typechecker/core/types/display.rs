@@ -1,6 +1,5 @@
 use crate::typechecker::core::types::Type;
 use crate::typechecker::system::TypeSystem;
-use std::fmt::Display;
 
 fn print_generics_with_sys(args: &[Type], sys: &TypeSystem) -> String {
     if args.is_empty() {

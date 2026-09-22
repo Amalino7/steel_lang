@@ -146,37 +146,6 @@ impl DuplicateKind {
             Self::GenericParam => "E034",
         }
     }
-
-    fn short_title(self) -> &'static str {
-        match self {
-            Self::Field => "Duplicate field",
-            Self::Variant => "Duplicate variant",
-            Self::Type => "Duplicate type declaration",
-            Self::GenericParam => "Duplicate generic parameter",
-        }
-    }
-
-    fn report_message(self, name: &str) -> String {
-        match self {
-            Self::Type => format!("Type '{}' is already defined", name),
-            _ => format!("Duplicate {} '{}'", self.noun(), name),
-        }
-    }
-
-    fn primary_label(self, name: &str) -> String {
-        match self {
-            Self::Type => format!("'{}' redefined here", name),
-            Self::GenericParam => format!("'{}' used again here", name),
-            _ => format!("'{}' declared again here", name),
-        }
-    }
-
-    fn origin_label(self, name: &str) -> String {
-        match self {
-            Self::Type => format!("'{}' first defined here", name),
-            _ => format!("'{}' first declared here", name),
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -429,8 +398,8 @@ fn mismatch_label_message(m: &Mismatch, ctx: &DiagnosticContext) -> String {
         UnificationErrorKind::TypeMismatch | UnificationErrorKind::VarianceMismatch => {
             format!(
                 "found '{}', expected '{}'",
-                m.found.display_type(&ctx.type_system),
-                m.expected.display_type(&ctx.type_system)
+                m.found.display_type(ctx.type_system),
+                m.expected.display_type(ctx.type_system)
             )
         }
         UnificationErrorKind::ArityMismatch {
@@ -451,14 +420,14 @@ fn mismatch_label_message(m: &Mismatch, ctx: &DiagnosticContext) -> String {
         UnificationErrorKind::MetatypeNotUnifiable => {
             format!(
                 "type '{}' cannot be used as a value here",
-                m.found.display_type(&ctx.type_system)
+                m.found.display_type(ctx.type_system)
             )
         }
         UnificationErrorKind::OccursCheck => "recursive type definition detected".to_string(),
         UnificationErrorKind::InterfaceNotImplemented { interface } => {
             format!(
                 "'{}' does not implement interface '{}'",
-                m.found.display_type(&ctx.type_system),
+                m.found.display_type(ctx.type_system),
                 interface
             )
         }
@@ -475,8 +444,8 @@ fn kind_note(
         UnificationErrorKind::TypeMismatch | UnificationErrorKind::VarianceMismatch => {
             format!(
                 "'{}' is not compatible with '{}'",
-                detail.found.display_type(&ctx.type_system),
-                detail.expected.display_type(&ctx.type_system)
+                detail.found.display_type(ctx.type_system),
+                detail.expected.display_type(ctx.type_system)
             )
         }
         UnificationErrorKind::ArityMismatch {
@@ -491,7 +460,7 @@ fn kind_note(
         UnificationErrorKind::InterfaceNotImplemented { interface } => {
             format!(
                 "'{}' does not implement '{}'",
-                detail.found.display_type(&ctx.type_system),
+                detail.found.display_type(ctx.type_system),
                 interface
             )
         }
@@ -502,7 +471,7 @@ fn kind_note(
         UnificationErrorKind::MetatypeNotUnifiable => {
             format!(
                 "'{}' cannot be used as a value",
-                detail.found.display_type(&ctx.type_system)
+                detail.found.display_type(ctx.type_system)
             )
         }
     }

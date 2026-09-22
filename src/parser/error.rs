@@ -62,7 +62,7 @@ impl Display for ParserError<'_> {
 }
 
 impl IntoDiagnostic for ParserError<'_> {
-    fn into_diagnostic(self, ctx: &DiagnosticContext) -> Diagnostic {
+    fn into_diagnostic(self, _: &DiagnosticContext) -> Diagnostic {
         DiagBuilder::error(self.span(), "E0000", "Parser error", self.message()).build()
     }
 }

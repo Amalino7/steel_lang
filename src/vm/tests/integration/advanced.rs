@@ -268,8 +268,7 @@ fn test_struct_destructuring() {
 
 #[test]
 fn test_panic_builtin() {
-    // panic() produces a runtime error - execute_source just prints it
-    assert_runs(
+    assert_panics(
         r#"
         func panic_func() {
             panic("Panic!");

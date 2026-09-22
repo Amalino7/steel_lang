@@ -1,6 +1,4 @@
-use crate::execute_source;
 use crate::typechecker::tests::helpers::*;
-use crate::Mode;
 
 #[test]
 fn test_basic_types() {
@@ -108,7 +106,7 @@ fn test_complex_function_types() {
 
 #[test]
 fn test_variable_shadowing_types() {
-    execute_source(
+    assert_typechecks(
         r#"
         let a: number = 10;
         {
@@ -117,24 +115,18 @@ fn test_variable_shadowing_types() {
         }
         let b = a + 5;
         "#,
-        false,
-        Mode::Check,
-        true,
     );
 }
 
 #[test]
 fn test_assign_void() {
-    execute_source(
+    assert_typechecks(
         r#"
         func noReturn(): void {
             return;
         }
         let x = noReturn();
         "#,
-        false,
-        Mode::Check,
-        true,
     );
 }
 

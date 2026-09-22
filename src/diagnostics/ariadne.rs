@@ -1,8 +1,13 @@
 use crate::diagnostics::{Diagnostic, LabelKind, Level};
 use crate::resolver::{FileId, ModuleGraph};
-use ariadne::{Color, Config, Label, Report, ReportKind, sources};
+use ariadne::{Cache, Color, Config, Label, Report, ReportKind, sources};
+use std::ops::Range;
 
-pub fn render<'a>(diag: &Diagnostic, config: Config, module_graph: &'a ModuleGraph) {
+pub fn render<'a>(
+    diag: &Diagnostic,
+    config: Config,
+    module_graph: &'a ModuleGraph,
+) -> Report<'a, (String, Range<usize>)> {
     let kind = match diag.level {
         Level::Error => ReportKind::Error,
         Level::Warning => ReportKind::Warning,
@@ -52,14 +57,16 @@ pub fn render<'a>(diag: &Diagnostic, config: Config, module_graph: &'a ModuleGra
         b = b.with_help(h.clone());
     }
 
-    let cache = sources(
-        module_graph
+    b.finish()
+}
+
+pub fn cache(graph: &ModuleGraph) -> impl Cache<String> {
+    sources(
+        graph
             .modules
             .iter()
-            .map(|info| (info.name.clone(), info.source.clone())),
-    );
-
-    b.finish().print(cache).unwrap();
+            .map(|info| (info.name.clone(), &info.source)),
+    )
 }
 
 fn file_id_to_name(file_id: u32, module_graph: &ModuleGraph) -> String {
@@ -69,9 +76,3 @@ fn file_id_to_name(file_id: u32, module_graph: &ModuleGraph) -> String {
         .unwrap();
     module_graph.modules[mod_id.0 as usize].name.clone()
 }
-
-// fn print<'a>(diag: &Diagnostic, config: Config, module_graph: &'a ModuleGraph) {
-//
-//
-//     render(diag, config, module_graph).print(cache).unwrap()
-// }

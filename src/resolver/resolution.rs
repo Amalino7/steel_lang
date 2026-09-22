@@ -3,14 +3,28 @@ use crate::parser::ast::{ImportSegment, ImportType, Stmt};
 use crate::resolver::error::ResolverError;
 use crate::resolver::{Exports, FileId, ModuleGraph, ModuleId, ModuleInfo};
 use crate::scanner::Scanner;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::mem::take;
 use std::path::{Path, PathBuf};
 
 pub struct ModuleResolver {
-    pub visiting: HashSet<PathBuf>,
-    pub visiting_stack: Vec<(String, PathBuf)>,
+    pub visiting: HashSet<String>,
+    pub visiting_stack: Vec<String>,
+    pub errors: Vec<ResolverError>,
     pub next_file_id: u32,
+}
+
+pub enum Source<'a> {
+    EntryFile(&'a Path),
+    File {
+        name: &'a str,
+        source: &'a str,
+    },
+    SourceMap {
+        entry: &'a str,
+        map: HashMap<String, &'static str>,
+    },
 }
 
 impl Default for ModuleResolver {
@@ -18,20 +32,41 @@ impl Default for ModuleResolver {
         Self::new()
     }
 }
+
 impl ModuleResolver {
     pub fn new() -> Self {
         Self {
             visiting: HashSet::new(),
             visiting_stack: Vec::new(),
+            errors: Vec::new(),
             next_file_id: 1,
         }
     }
 
-    pub fn resolve(&mut self, entry_file: &Path) -> Result<ModuleGraph, ResolverError> {
-        let canonical_entry = entry_file.canonicalize().map_err(|err| ResolverError::Io {
-            path: entry_file.to_path_buf(),
-            error: err,
-        })?;
+    pub fn resolve_source(&mut self, src: &Source) -> Result<ModuleGraph, Vec<ResolverError>> {
+        let graph = match src {
+            Source::EntryFile(file) => self.resolve(file)?,
+            Source::File { name, source } => self.resolve_file(name.to_string(), source),
+            Source::SourceMap { entry, map } => self.resolve_mock(entry.to_string(), map),
+        };
+        if !self.errors.is_empty() {
+            return Err(take(&mut self.errors));
+        }
+        Ok(graph)
+    }
+
+    pub fn resolve(&mut self, entry_file: &Path) -> Result<ModuleGraph, Vec<ResolverError>> {
+        let canonical_entry = entry_file
+            .canonicalize()
+            .map_err(|err| ResolverError::Io {
+                path: entry_file.to_path_buf(),
+                error: err,
+            })
+            .map_err(|err| {
+                self.errors.push(err);
+                take(&mut self.errors)
+            })?;
+
         let root = canonical_entry.parent().unwrap_or_else(|| Path::new("."));
 
         let entry_module_name = canonical_entry
@@ -41,26 +76,80 @@ impl ModuleResolver {
             .to_string();
 
         let mut graph = ModuleGraph::new();
-        self.visit_file(root, entry_module_name, &mut graph)?;
+        self.visit_file(entry_module_name, &mut graph, &|name| {
+            let path = Self::resolve_module_to_path(root, name)?;
+            let source = fs::read_to_string(&path).map_err(|err| ResolverError::Io {
+                path: path.to_path_buf(),
+                error: err,
+            })?;
+            Ok((source, path))
+        })
+        .map_err(|err| {
+            self.errors.push(err);
+            take(&mut self.errors)
+        })?;
+
+        if !self.errors.is_empty() {
+            return Err(take(&mut self.errors));
+        }
+
         Ok(graph)
+    }
+
+    pub fn resolve_mock(
+        &mut self,
+        entry: String,
+        source_map: &HashMap<String, &'static str>,
+    ) -> ModuleGraph {
+        let mut graph = ModuleGraph::new();
+        let res = self.visit_file(entry, &mut graph, &|name| {
+            Ok((
+                source_map
+                    .get(name)
+                    .ok_or(ResolverError::ModuleNotFound {
+                        module_name: name.to_string(),
+                        searched_paths: vec![],
+                    })?
+                    .to_string(),
+                format!("{}.steel", name).into(),
+            ))
+        });
+        if let Err(err) = res {
+            self.errors.push(err);
+        }
+        graph
+    }
+
+    pub fn resolve_file(&mut self, name: String, source: &str) -> ModuleGraph {
+        let mut graph = ModuleGraph::new();
+        graph.name_to_id_map.insert(name.clone(), ModuleId(0));
+        graph.file_to_module_id.insert(FileId(1), ModuleId(0));
+        graph.modules.push(ModuleInfo {
+            id: ModuleId(0),
+            file_id: FileId(1),
+            path: name.clone().into(),
+            name,
+            source: source.to_string(),
+            dependencies: vec![],
+            exports: Default::default(),
+        });
+        graph
     }
 
     fn visit_file(
         &mut self,
-        root: &Path,
         name: String,
         graph: &mut ModuleGraph,
+        module_to_source: &impl Fn(&str) -> Result<(String, PathBuf), ResolverError>,
     ) -> Result<ModuleId, ResolverError> {
         if let Some(id) = graph.name_to_id_map.get(&name) {
             return Ok(*id);
         }
 
-        let path = Self::resolve_module_to_path(root, &name)?;
-
-        if self.visiting.contains(&path) {
+        if self.visiting.contains(&name) {
             let mut cycle = Vec::new();
-            if let Some(pos) = self.visiting_stack.iter().position(|(_, p)| p == &path) {
-                for (mod_name, _) in &self.visiting_stack[pos..] {
+            if let Some(pos) = self.visiting_stack.iter().position(|n| n == &name) {
+                for mod_name in &self.visiting_stack[pos..] {
                     cycle.push(mod_name.clone());
                 }
             }
@@ -68,17 +157,30 @@ impl ModuleResolver {
             return Err(ResolverError::CyclicDependency { cycle });
         }
 
-        self.visiting.insert(path.clone());
-        self.visiting_stack.push((name.clone(), path.clone()));
+        self.visiting.insert(name.clone());
+        self.visiting_stack.push(name.clone());
 
         let file_id = self.next_id();
 
-        let res = self.handle_file(root, graph, &path, &name, file_id);
+        let res = module_to_source(&name).and_then(|(source, path)| {
+            self.handle_file(graph, source, &name, file_id, module_to_source)
+                .map(|(deps, source)| (path, deps, source))
+        });
 
-        self.visiting.remove(&path);
+        self.visiting.remove(&name);
         self.visiting_stack.pop();
 
-        let (dep_ids, source) = res?;
+        let (path, dep_ids, source) = match res {
+            Ok(res) => res,
+            Err(err) => {
+                self.errors.push(err);
+                (
+                    Self::name_to_path(&PathBuf::new(), &name),
+                    vec![],
+                    String::new(),
+                )
+            }
+        };
 
         let module_id = ModuleId(graph.modules.len() as u32);
 
@@ -136,22 +238,16 @@ impl ModuleResolver {
 
     fn handle_file(
         &mut self,
-        root: &Path,
         graph: &mut ModuleGraph,
-        path: &Path,
+        source: String,
         module_name: &str,
         file_id: FileId,
+        module_to_source: &impl Fn(&str) -> Result<(String, PathBuf), ResolverError>,
     ) -> Result<(Vec<ModuleId>, String), ResolverError> {
-        let source = fs::read_to_string(path).map_err(|err| ResolverError::Io {
-            path: path.to_path_buf(),
-            error: err,
-        })?;
-
         let scanner = Scanner::new(&source, file_id.0);
         let mut parser = Parser::new(scanner);
         let ast = parser.parse().map_err(|errors| ResolverError::ParseError {
             module_name: module_name.to_string(),
-            path: path.to_path_buf(),
             errors: errors.into_iter().map(|e| e.to_string()).collect(),
         })?;
 
@@ -159,8 +255,14 @@ impl ModuleResolver {
 
         let dep_ids = deps
             .into_iter()
-            .map(|dep| self.visit_file(root, dep, graph))
-            .collect::<Result<Vec<_>, _>>()?;
+            .filter_map(|dep| match self.visit_file(dep, graph, module_to_source) {
+                Ok(ok) => Some(ok),
+                Err(err) => {
+                    self.errors.push(err);
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
 
         Ok((dep_ids, source))
     }
@@ -236,13 +338,10 @@ mod tests {
         let project = TestProject::new();
         project.write_file("c.steel", "// leaf");
         project.write_file("b.steel", "import c/Item;");
-        project.write_file("a.steel", "import b/Item;");
+        let root = project.write_file("a.steel", "import b/Item;");
 
         let mut resolver = ModuleResolver::new();
-        let mut graph = ModuleGraph::new();
-        resolver
-            .visit_file(project.root(), "a".to_string(), &mut graph)
-            .unwrap();
+        let graph = resolver.resolve(&root).unwrap();
 
         let resolved_names: Vec<&str> = graph.modules.iter().map(|m| m.name.as_str()).collect();
         assert_eq!(resolved_names, vec!["c", "b", "a"]);
@@ -263,13 +362,10 @@ mod tests {
         project.write_file("d.steel", "// base utility");
         project.write_file("b.steel", "import d/BaseItem;");
         project.write_file("c.steel", "import d/BaseItem;");
-        project.write_file("app.steel", "import b/BItem;\nimport c/CItem;");
+        let root = project.write_file("app.steel", "import b/BItem;\nimport c/CItem;");
 
         let mut resolver = ModuleResolver::new();
-        let mut graph = ModuleGraph::new();
-        resolver
-            .visit_file(project.root(), "app".to_string(), &mut graph)
-            .unwrap();
+        let graph = resolver.resolve(&root).unwrap();
 
         assert_eq!(
             graph.modules.len(),
@@ -294,13 +390,10 @@ mod tests {
         let project = TestProject::new();
         project.write_file("core/math.steel", "");
         project.write_file("core/string.steel", "");
-        project.write_file("main.steel", "import core/{math/Sin, string/Format};");
+        let root = project.write_file("main.steel", "import core/{math/Sin, string/Format};");
 
         let mut resolver = ModuleResolver::new();
-        let mut graph = ModuleGraph::new();
-        resolver
-            .visit_file(project.root(), "main".to_string(), &mut graph)
-            .unwrap();
+        let graph = resolver.resolve(&root).unwrap();
 
         let math_idx = graph
             .modules
@@ -320,20 +413,17 @@ mod tests {
 
     #[test]
     fn test_glob_and_aliased_import_order() {
-        // Tests `import x/y/*;` and `import x/y/Item as Name;`
+        // Tests `import x/y/*; ` and `import x/y/Item as Name; `
         let project = TestProject::new();
         project.write_file("parser.steel", "");
         project.write_file("lexer.steel", "");
-        project.write_file(
+        let root = project.write_file(
             "main.steel",
             "import parser/{*};\nimport lexer/Token as LexToken;",
         );
 
         let mut resolver = ModuleResolver::new();
-        let mut graph = ModuleGraph::new();
-        resolver
-            .visit_file(project.root(), "main".to_string(), &mut graph)
-            .unwrap();
+        let graph = resolver.resolve(&root).unwrap();
 
         let parser_idx = graph
             .modules
@@ -356,14 +446,10 @@ mod tests {
         // Tests module path "math" where there is NO "math.steel", but "math/index.steel" exists.
         let project = TestProject::new();
         project.write_file("math/index.steel", "// math module root");
-        project.write_file("main.steel", "import math/Add;");
+        let root = project.write_file("main.steel", "import math/Add;");
 
         let mut resolver = ModuleResolver::new();
-        let mut graph = ModuleGraph::new();
-
-        resolver
-            .visit_file(project.root(), "main".to_string(), &mut graph)
-            .unwrap();
+        let graph = resolver.resolve(&root).unwrap();
 
         let math_mod = graph
             .modules
@@ -383,16 +469,15 @@ mod tests {
     fn test_direct_cycle_detection() {
         // a -> b -> a
         let project = TestProject::new();
-        project.write_file("a.steel", "import b/Item;");
+        let root = project.write_file("a.steel", "import b/Item;");
         project.write_file("b.steel", "import a/Item;");
 
         let mut resolver = ModuleResolver::new();
-        let mut graph = ModuleGraph::new();
-        let result = resolver.visit_file(project.root(), "a".to_string(), &mut graph);
+        let result = resolver.resolve(&root);
         assert!(result.is_err());
-        match result.unwrap_err() {
+        match result.unwrap_err().first().unwrap() {
             ResolverError::CyclicDependency { cycle } => {
-                assert_eq!(cycle, vec!["a", "b", "a"]);
+                assert_eq!(cycle, &["a", "b", "a"]);
             }
             err => panic!("Expected CyclicDependency error, got: {:?}", err),
         }
@@ -402,17 +487,17 @@ mod tests {
     fn test_transitive_cycle_detection() {
         // a -> b -> c -> a
         let project = TestProject::new();
-        project.write_file("a.steel", "import b/Item;");
+        let root = project.write_file("a.steel", "import b/Item;");
         project.write_file("b.steel", "import c/Item;");
         project.write_file("c.steel", "import a/Item;");
 
         let mut resolver = ModuleResolver::new();
-        let mut graph = ModuleGraph::new();
-        let result = resolver.visit_file(project.root(), "a".to_string(), &mut graph);
+
+        let result = resolver.resolve(&root);
         assert!(result.is_err());
-        match result.unwrap_err() {
+        match result.unwrap_err().first().unwrap() {
             ResolverError::CyclicDependency { cycle } => {
-                assert_eq!(cycle, vec!["a", "b", "c", "a"]);
+                assert_eq!(cycle, &["a", "b", "c", "a"]);
             }
             err => panic!("Expected CyclicDependency error, got: {:?}", err),
         }
@@ -422,15 +507,14 @@ mod tests {
     fn test_self_cycle_detection() {
         // a -> a
         let project = TestProject::new();
-        project.write_file("a.steel", "import a/Item;");
+        let root = project.write_file("a.steel", "import a/Item;");
 
         let mut resolver = ModuleResolver::new();
-        let mut graph = ModuleGraph::new();
-        let result = resolver.visit_file(project.root(), "a".to_string(), &mut graph);
+        let result = resolver.resolve(&root);
         assert!(result.is_err());
-        match result.unwrap_err() {
+        match result.unwrap_err().first().unwrap() {
             ResolverError::CyclicDependency { cycle } => {
-                assert_eq!(cycle, vec!["a", "a"]);
+                assert_eq!(cycle, &["a", "a"]);
             }
             err => panic!("Expected CyclicDependency error, got: {:?}", err),
         }
@@ -439,13 +523,12 @@ mod tests {
     #[test]
     fn test_module_not_found() {
         let project = TestProject::new();
-        project.write_file("main.steel", "import non_existent/Item;");
+        let root = project.write_file("main.steel", "import non_existent/Item;");
 
         let mut resolver = ModuleResolver::new();
-        let mut graph = ModuleGraph::new();
-        let result = resolver.visit_file(project.root(), "main".to_string(), &mut graph);
+        let result = resolver.resolve(&root);
         assert!(result.is_err());
-        match result.unwrap_err() {
+        match result.unwrap_err().first().unwrap() {
             ResolverError::ModuleNotFound {
                 module_name,
                 searched_paths,
@@ -475,11 +558,11 @@ mod tests {
         let mut resolver = ModuleResolver::new();
         let result = resolver.resolve(Path::new("definitely_non_existent_file_12345.steel"));
         assert!(result.is_err());
-        match result.unwrap_err() {
+        match result.unwrap_err().first().unwrap() {
             ResolverError::Io { path, .. } => {
                 assert_eq!(
                     path,
-                    PathBuf::from("definitely_non_existent_file_12345.steel")
+                    &PathBuf::from("definitely_non_existent_file_12345.steel")
                 );
             }
             err => panic!("Expected Io error, got: {:?}", err),
@@ -489,14 +572,13 @@ mod tests {
     #[test]
     fn test_parse_error_in_imported_module() {
         let project = TestProject::new();
-        project.write_file("main.steel", "import broken/Item;");
+        let root = project.write_file("main.steel", "import broken/Item;");
         project.write_file("broken.steel", "let = +;");
 
         let mut resolver = ModuleResolver::new();
-        let mut graph = ModuleGraph::new();
-        let result = resolver.visit_file(project.root(), "main".to_string(), &mut graph);
+        let result = resolver.resolve(&root);
         assert!(result.is_err());
-        match result.unwrap_err() {
+        match result.unwrap_err().first().unwrap() {
             ResolverError::ParseError {
                 module_name,
                 errors,
@@ -538,11 +620,7 @@ mod tests {
             "Cyclic dependency detected: a -> b -> a"
         );
 
-        let parse_err = ResolverError::parse_error(
-            "bad_mod",
-            PathBuf::from("bad_mod.steel"),
-            vec!["Unexpected token".to_string()],
-        );
+        let parse_err = ResolverError::parse_error("bad_mod", vec!["Unexpected token".to_string()]);
         assert!(parse_err.to_string().contains("bad_mod"));
         assert!(parse_err.to_string().contains("Unexpected token"));
     }

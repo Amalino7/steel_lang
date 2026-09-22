@@ -414,59 +414,6 @@ pub enum UnificationErrorKind {
     },
 }
 
-impl UnificationError {
-    fn display(&self, sys: &TypeSystem) -> String {
-        match &self.kind {
-            UnificationErrorKind::TypeMismatch => format!(
-                "Type mismatch: expected {}, found {}",
-                self.expected.display_type(sys),
-                self.found.display_type(sys),
-            ),
-            UnificationErrorKind::ArityMismatch {
-                expected_len,
-                found_len,
-            } => {
-                format!(
-                    "Arity mismatch: expected {} elements, found {} elements\n  Expected type: {}\n  Found type: {}",
-                    expected_len,
-                    found_len,
-                    self.expected.display_type(sys),
-                    self.found.display_type(sys)
-                )
-            }
-            UnificationErrorKind::VarianceMismatch => {
-                format!(
-                    "Variance mismatch: types are not compatible\n  Expected: {}\n  Found: {}",
-                    self.expected.display_type(sys),
-                    self.found.display_type(sys)
-                )
-            }
-            UnificationErrorKind::VarargNotAllowed => {
-                "Cannot use vararg functions as arguments".to_string()
-            }
-            UnificationErrorKind::GenericFunctionNotAllowed => {
-                "Cannot assign a generic function.\n  TIP: specify generics using .<Type> notation"
-                    .to_string()
-            }
-            UnificationErrorKind::MetatypeNotUnifiable => "Cannot unify metatypes".to_string(),
-            UnificationErrorKind::OccursCheck => {
-                format!(
-                    "Infinite type detected: type variable occurs in its own definition\n  Type: {}",
-                    self.expected.display_type(sys)
-                )
-            }
-            UnificationErrorKind::InterfaceNotImplemented { interface } => {
-                format!(
-                    "Type does not implement interface `{}`\n  Expected: {}\n  Found: {}",
-                    interface,
-                    self.expected.display_type(sys),
-                    self.found.display_type(sys)
-                )
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

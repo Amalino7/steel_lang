@@ -138,7 +138,7 @@ impl<'src> TypeChecker<'src> {
         expr_span: Span,
     ) -> Result<TypedExpr, TypeCheckerError> {
         let struct_def = self.sys.get_struct(*id);
-        let constructor = struct_def.get_constructor(generics, &mut self.infer_ctx, &self.sys);
+        let constructor = struct_def.get_constructor(generics, &mut self.infer_ctx);
 
         let owned_name = struct_def.name.clone();
         let definition_span = struct_def.origin;

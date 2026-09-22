@@ -47,7 +47,7 @@ impl<'src> TypeCheckerTest<'src> {
                 self.verify_errors(Vec::new());
                 self.verify_warnings(warnings);
             }
-            Err(errors) => {
+            Err((errors, _)) => {
                 self.verify_errors(errors);
                 self.verify_warnings(checker.warnings);
             }

@@ -191,7 +191,6 @@ impl StructType {
         &self,
         instance: &[Type],
         ctx: &mut InferenceContext,
-        sys: &TypeSystem,
     ) -> TypeConstructor {
         let type_args = ctx.fresh_args(&self.generic_params, instance);
         let map = make_substitution_map(&self.generic_params, &type_args);

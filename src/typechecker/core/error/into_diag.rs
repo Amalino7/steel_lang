@@ -43,14 +43,14 @@ impl IntoDiagnostic for TypeCheckerError {
                 code,
                 format!(
                     "Callee '{}' is not callable.",
-                    found.display_type(&ctx.type_system)
+                    found.display_type(ctx.type_system)
                 ),
                 "This callee is not callable.",
             ),
             TypeCheckerError::TypeMismatch { mismatch, context, primary_span, defined_at } => {
                 let mut builder = DiagBuilder::error(primary_span,
                                    code,
-                                   format!("{}. Found {}, but expected {}",context_short_message(&context), mismatch.found.display_type(&ctx.type_system), mismatch.expected.display_type(&ctx.type_system)),
+                                   format!("{}. Found {}, but expected {}",context_short_message(&context), mismatch.found.display_type(ctx.type_system), mismatch.expected.display_type(ctx.type_system)),
                                    mismatch_label_message(&mismatch, ctx),
                 ).with_optional_origin(defined_at, context_defined_at_message(&context));
 
@@ -87,7 +87,7 @@ impl IntoDiagnostic for TypeCheckerError {
                     Operand::Unary => "operand",
                 };
                 let req_str = match requirement {
-                    TypeRequirement::Exact(ty) => ty.display_type(&ctx.type_system),
+                    TypeRequirement::Exact(ty) => ty.display_type(ctx.type_system),
                     TypeRequirement::Structural(s) => s.to_string(),
                 };
 
@@ -96,10 +96,10 @@ impl IntoDiagnostic for TypeCheckerError {
                     code,
                     format!(
                         "Operator constraint violation: Operator '{operator}' cannot be applied to type '{}'"
-                        , found.display_type(&ctx.type_system)),
+                        , found.display_type(ctx.type_system)),
                     format!(
                         "The {} must be '{}',but found '{}'",
-                        operand_str, req_str, found.display_type(&ctx.type_system)
+                        operand_str, req_str, found.display_type(ctx.type_system)
                     ),
                 )
             }
@@ -126,7 +126,7 @@ impl IntoDiagnostic for TypeCheckerError {
                 code,
                 format!(
                     "Type '{}' has no fields.",
-                    found.display_type(&ctx.type_system)
+                    found.display_type(ctx.type_system)
                 ),
                 "This type has no fields.",
             ),
@@ -192,7 +192,7 @@ impl IntoDiagnostic for TypeCheckerError {
                 format!(
                     "Invalid tuple index: {} for tuple type {}",
                     index,
-                    tuple_type.display_type(&ctx.type_system)
+                    tuple_type.display_type(ctx.type_system)
                 ),
                 "Invalid index here.",
             ),
@@ -204,7 +204,7 @@ impl IntoDiagnostic for TypeCheckerError {
                     err.span,
                     code,
                     format!("Invalid operand types: {} and {} for operator {}",
-                            err.left.display_type(&ctx.type_system), err.right.display_type(&ctx.type_system), err.operator),
+                            err.left.display_type(ctx.type_system), err.right.display_type(ctx.type_system), err.operator),
                     "Invalid operand types here.",
                 ).with_help(err.help)
             }
@@ -335,7 +335,7 @@ impl IntoDiagnostic for TypeCheckerError {
                 DiagBuilder::error(
                     err.span,
                     code,
-                    format!("Could not find method named '{}' on type {}", err.method_name, err.found.display_type(&ctx.type_system)),
+                    format!("Could not find method named '{}' on type {}", err.method_name, err.found.display_type(ctx.type_system)),
                     "Could not find this method.",
                 ).with_optional_origin(err.type_origin, "Type defined here.")
                     .with_suggestion(&err.suggestions)

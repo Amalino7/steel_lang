@@ -17,7 +17,6 @@ use std::collections::HashMap;
 use std::iter::repeat_n;
 use std::rc::Rc;
 
-// TODO find out why when impl block fails Type is not findable.
 impl<'src> TypeChecker<'src> {
     pub(crate) fn declare_global_functions<'a>(
         &mut self,
@@ -90,7 +89,7 @@ impl<'src> TypeChecker<'src> {
 
                     for interface in interfaces {
                         let interface_id = guard.type_scopes.lookup_type(interface.lexeme);
-                        if let Some(NameTypeId::Interface(id)) = interface_id {
+                        if let Some(NameTypeId::Interface(_)) = interface_id {
                         } else {
                             guard.errors.push(TypeCheckerError::UndefinedType {
                                 name: interface.lexeme.to_string(),
@@ -405,9 +404,7 @@ impl<'src> TypeChecker<'src> {
 
     fn define_interface(&mut self, id: InterfaceId, stmt: &Stmt<'src>) {
         if let Stmt::Interface {
-            name,
-            methods,
-            generics,
+            methods, generics, ..
         } = stmt
         {
             let generic_ids = self.sys.get_generic_param_names(id.into());
@@ -430,9 +427,7 @@ impl<'src> TypeChecker<'src> {
 
     fn define_struct(&mut self, id: StructId, stmt: &Stmt<'src>) {
         if let Stmt::Struct {
-            name,
-            fields,
-            generics,
+            fields, generics, ..
         } = stmt
         {
             let generic_ids = self.sys.get_generic_param_names(id.into());
@@ -561,7 +556,9 @@ impl<'src> TypeChecker<'src> {
     }
 
     fn import_named(&mut self, path: &str, terminator: &Token, target: &Token) {
-        let package_id = *self.module_graph.name_to_id_map.get(path).unwrap();
+        let Some(&package_id) = self.module_graph.name_to_id_map.get(path) else {
+            return;
+        };
 
         let module_info = &self.module_graph.modules[package_id.0 as usize];
 

@@ -1,37 +1,80 @@
-use crate::Mode;
-use crate::compiler::Compiler;
-use crate::execute_source;
+use crate::RunResult;
 use crate::parser::Parser;
-use crate::resolver::ModuleGraph;
+use crate::resolver::new_pipeline::pipeline;
+use crate::resolver::resolution::Source;
 use crate::scanner::Scanner;
-use crate::typechecker::system::TypeSystem;
-use crate::typechecker::{GlobalIdGenerator, TypeChecker};
 use crate::vm::VM;
-use crate::vm::gc::GarbageCollector;
 use crate::vm::value::Value;
+use crate::{ColorChoice, Mode, RunConfig};
+use std::collections::HashMap;
 
 /// Execute source and verify it runs successfully
 pub fn assert_runs(source: &str) {
-    execute_source(source, false, Mode::Run, true);
+    let res = pipeline(&RunConfig::new(
+        "test.steel",
+        Source::File {
+            name: "test.steel",
+            source,
+        },
+        Mode::Run,
+        false,
+    ));
+    assert_eq!(res.result, RunResult::Ok)
+}
+
+pub struct TestBuilder {
+    sources: HashMap<String, &'static str>,
+    entry: &'static str,
+}
+
+impl TestBuilder {
+    pub fn new(name: &'static str, src: &'static str) -> Self {
+        let mut builder = TestBuilder {
+            sources: Default::default(),
+            entry: name,
+        };
+        builder.sources.insert(name.to_string(), src);
+        builder.entry = name;
+        builder
+    }
+    pub fn with_module(mut self, name: &'static str, src: &'static str) -> Self {
+        self.sources.insert(name.to_string(), src);
+        self
+    }
+    pub fn assert_runs(self) {
+        let res = pipeline(&RunConfig::new(
+            "test.steel",
+            Source::SourceMap {
+                entry: self.entry,
+                map: self.sources,
+            },
+            Mode::Run,
+            false,
+        ));
+        assert_eq!(res.result, RunResult::Ok)
+    }
 }
 
 /// Execute source and verify a global variable has expected value
 pub fn assert_global(source: &str, global_index: usize, expected: Value) {
-    let scanner = Scanner::new(source, 0);
-    let mut parser = Parser::new(scanner);
-    let mut sys = TypeSystem::new();
-    let id_generator = GlobalIdGenerator::new();
-    let module_graph = ModuleGraph::new();
-    let mut typechecker = TypeChecker::new(&[], &mut sys, &id_generator, &module_graph);
-    let ast = parser.parse().expect("Failed to parse");
-    let (typed_ast, _) = typechecker.check(&ast, None).expect("Failed to typecheck");
+    let res = pipeline(&RunConfig {
+        file_name: "main",
+        source: Source::File {
+            name: "main",
+            source,
+        },
+        mode: Mode::Compile,
+        debug: false,
+        include_prelude: false,
+        diagnostics: false,
+        color: ColorChoice::Auto,
+        emit: vec![],
+        error_limit: None,
+    });
+    let mut program = res.program.expect("Expected file to compile.");
 
-    let mut gc = GarbageCollector::new();
-    let compiler = Compiler::new("main".to_string(), &mut gc);
-    let function = compiler.compile(typed_ast.reserved as u8, &typed_ast.file_ast);
-
-    let mut vm = VM::new(id_generator.count(), &mut gc);
-    vm.run(function).expect("VM execution failed");
+    let mut vm = VM::new(program.global_count, &mut program.gc);
+    vm.run(program.func).expect("VM execution failed");
 
     assert_eq!(
         vm.globals[global_index], expected,
@@ -40,53 +83,26 @@ pub fn assert_global(source: &str, global_index: usize, expected: Value) {
     );
 }
 
-/// Execute source (with the full prelude) and verify a runtime error occurs.
-/// Use this instead of `assert_panics` when the source calls prelude methods.
-pub fn assert_panics_with_prelude(source: &str) {
-    use crate::stdlib::{get_natives, get_prelude};
-
-    let full_source = format!("{}{}", source, get_prelude());
-    let natives = get_natives();
-    let scanner = Scanner::new(&full_source, 0);
-    let mut parser = Parser::new(scanner);
-    let ast = parser.parse().expect("Failed to parse");
-    let mut sys = TypeSystem::new();
-    let id_generator = GlobalIdGenerator::new();
-    let module_graph = ModuleGraph::new();
-    let mut typechecker = TypeChecker::new(&natives, &mut sys, &id_generator, &module_graph);
-    let (typed_ast, _) = typechecker.check(&ast, None).expect("Failed to typecheck");
-
-    let mut gc = GarbageCollector::new();
-    let compiler = Compiler::new("main".to_string(), &mut gc);
-    let function = compiler.compile(typed_ast.reserved as u8, &typed_ast.file_ast);
-
-    let mut vm = VM::new(id_generator.count(), &mut gc);
-    vm.set_natives_by_name(&natives, &typed_ast.extern_fns);
-
-    assert!(
-        vm.run(function).is_err(),
-        "Expected runtime error but execution succeeded"
-    );
-}
-
 /// Execute source and verify a global variable holds a string with the given content.
 pub fn assert_global_string(source: &str, global_index: usize, expected: &str) {
-    let scanner = Scanner::new(source, 0);
-    let mut parser = Parser::new(scanner);
+    let res = pipeline(&RunConfig {
+        file_name: "main",
+        source: Source::File {
+            name: "main",
+            source,
+        },
+        mode: Mode::Compile,
+        debug: false,
+        include_prelude: false,
+        diagnostics: false,
+        color: ColorChoice::Auto,
+        emit: vec![],
+        error_limit: None,
+    });
+    let mut program = res.program.expect("Expected file to compile.");
 
-    let mut sys = TypeSystem::new();
-    let id_generator = GlobalIdGenerator::new();
-    let module_graph = ModuleGraph::new();
-    let mut typechecker = TypeChecker::new(&[], &mut sys, &id_generator, &module_graph);
-    let ast = parser.parse().expect("Failed to parse");
-    let (typed_ast, _) = typechecker.check(&ast, None).expect("Failed to typecheck");
-
-    let mut gc = GarbageCollector::new();
-    let compiler = Compiler::new("main".to_string(), &mut gc);
-    let function = compiler.compile(typed_ast.reserved as u8, &typed_ast.file_ast);
-
-    let mut vm = VM::new(id_generator.count(), &mut gc);
-    vm.run(function).expect("VM execution failed");
+    let mut vm = VM::new(program.global_count, &mut program.gc);
+    vm.run(program.func).expect("VM execution failed");
 
     match &vm.globals[global_index] {
         Value::String(s) => assert_eq!(
@@ -115,22 +131,14 @@ pub fn assert_parse_fails(source: &str) {
 /// Execute source and verify a runtime error occurs.
 /// Does not check the error message - just that an error happened.
 pub fn assert_panics(source: &str) {
-    let scanner = Scanner::new(source, 0);
-    let mut parser = Parser::new(scanner);
-    let mut sys = TypeSystem::new();
-    let id_generator = GlobalIdGenerator::new();
-    let module_graph = ModuleGraph::new();
-    let mut typechecker = TypeChecker::new(&[], &mut sys, &id_generator, &module_graph);
-    let ast = parser.parse().expect("Failed to parse");
-    let (typed_ast, _) = typechecker.check(&ast, None).expect("Failed to typecheck");
-
-    let mut gc = GarbageCollector::new();
-    let compiler = Compiler::new("main".to_string(), &mut gc);
-    let function = compiler.compile(typed_ast.reserved as u8, &typed_ast.file_ast);
-
-    let mut vm = VM::new(id_generator.count(), &mut gc);
-    assert!(
-        vm.run(function).is_err(),
-        "Expected runtime error but execution succeeded"
-    );
+    let res = pipeline(&RunConfig::new(
+        "test.steel",
+        Source::File {
+            name: "test.steel",
+            source,
+        },
+        Mode::Run,
+        false,
+    ));
+    assert_eq!(res.result, RunResult::RuntimeError)
 }

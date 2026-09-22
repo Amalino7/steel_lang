@@ -29,7 +29,7 @@ pub enum TypeCheckerWarning {
 }
 
 impl IntoDiagnostic for TypeCheckerWarning {
-    fn into_diagnostic(self, ctx: &DiagnosticContext) -> crate::diagnostics::Diagnostic {
+    fn into_diagnostic(self, _: &DiagnosticContext) -> crate::diagnostics::Diagnostic {
         let span = self.span();
         let builder = DiagBuilder::warn(span, "W0001", self.title(), self.message());
         match self {

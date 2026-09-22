@@ -42,7 +42,7 @@ impl<'a, 'src> TypeScopeGuard<'a, 'src> {
         generics: &[Token<'src>],
         ids: &[GenericTypeId],
     ) -> Self {
-        let generic_map = Self::create_generic_map(&checker.sys, ids);
+        let generic_map = Self::create_generic_map(checker.sys, ids);
 
         let res = checker
             .type_scopes
@@ -53,7 +53,7 @@ impl<'a, 'src> TypeScopeGuard<'a, 'src> {
     }
     pub fn new_function(checker: &'a mut TypeChecker<'src>, generics: &[Token<'src>]) -> Self {
         let ids = checker.sys.declare_ids(generics);
-        let generic_map = Self::create_generic_map(&checker.sys, &ids);
+        let generic_map = Self::create_generic_map(checker.sys, &ids);
 
         let res = checker
             .type_scopes
@@ -63,9 +63,9 @@ impl<'a, 'src> TypeScopeGuard<'a, 'src> {
     }
 
     pub fn old_function(checker: &'a mut TypeChecker<'src>, generics: &[GenericTypeId]) -> Self {
-        let generic_map = Self::create_generic_map(&checker.sys, generics);
+        let generic_map = Self::create_generic_map(checker.sys, generics);
 
-        let res = checker
+        let _ = checker
             .type_scopes
             .begin_type_scope(generic_map, None, TypeScopeKind::Function);
         TypeScopeGuard { checker }

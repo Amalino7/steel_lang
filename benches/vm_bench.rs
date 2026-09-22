@@ -1,8 +1,11 @@
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use std::fs;
 use std::hint::black_box;
 use std::path::Path;
-use steel_lang::SteelProgram;
+use steel_lang::resolver::new_pipeline::pipeline;
+use steel_lang::resolver::resolution::Source;
+use steel_lang::vm::VM;
+use steel_lang::{CompiledProgram, Mode, RunConfig};
 
 /// Discovers every `.steel` file under `benches/programs/`, compiles each one
 /// exactly once, then registers a Criterion benchmark that calls `run_once`
@@ -31,12 +34,30 @@ fn bench_programs(c: &mut Criterion) {
             .unwrap_or_else(|e| panic!("Failed to read {}: {e}", path.display()));
 
         // compile once, outside the measured loop
-        let mut program = SteelProgram::compile(&source);
+        let mut program = pipeline(&RunConfig::new(
+            &name,
+            Source::File {
+                name: &name,
+                source: &source,
+            },
+            Mode::Compile,
+            false,
+        ));
+        let mut compiled = program.program.expect("Expected correct bench program");
 
         c.bench_function(&name, |b| {
-            b.iter(|| black_box(program.run_once()));
+            b.iter(|| black_box(run_once(&mut compiled)));
         });
     }
+}
+
+fn run_once(compiled: &mut CompiledProgram) {
+    let func = compiled.func;
+    let mut vm = VM::new(compiled.global_count, &mut compiled.gc);
+    vm.set_natives_by_name(&compiled.natives, &compiled.extern_fns);
+    vm.run(func).expect("SteelProgram: runtime error");
+    drop(vm);
+    compiled.gc.collect_roots(compiled.func);
 }
 
 criterion_group!(benches, bench_programs);

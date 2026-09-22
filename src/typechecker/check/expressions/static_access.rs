@@ -63,7 +63,6 @@ impl<'src> TypeChecker<'src> {
         method_name: &Token,
         generics: &GenericArgs,
     ) -> Result<TypedExpr, TypeCheckerError> {
-        let name = self.sys.get_name(type_id);
         let method_id = self.type_scopes.lookup_method(type_id, method_name.lexeme);
 
         let method_id = method_id.ok_or_else(|| {

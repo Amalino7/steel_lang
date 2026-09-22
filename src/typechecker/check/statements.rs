@@ -70,10 +70,7 @@ impl<'src> TypeChecker<'src> {
                 }
             }
             impl_block @ Stmt::Impl {
-                interfaces,
-                name,
-                methods,
-                generics,
+                interfaces, name, ..
             } => {
                 if self.non_global("impl", &name.0) {
                     return TypedStmt::new_blank(stmt.span());
