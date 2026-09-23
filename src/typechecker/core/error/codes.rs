@@ -31,6 +31,7 @@ impl TypeCheckerError {
             TypeCheckerError::Call(c) => c.code(),
             TypeCheckerError::Generic(g) => g.code(),
             TypeCheckerError::Binding(b) => b.code(),
+            TypeCheckerError::ImportNotFound { .. } => "E070",
         }
     }
 }

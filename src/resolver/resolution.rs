@@ -96,10 +96,10 @@ impl ModuleResolver {
         Ok(graph)
     }
 
-    pub fn resolve_mock(
+    pub fn resolve_mock<'src>(
         &mut self,
         entry: String,
-        source_map: &HashMap<String, &'static str>,
+        source_map: &HashMap<String, &'src str>,
     ) -> ModuleGraph {
         let mut graph = ModuleGraph::new();
         let res = self.visit_file(entry, &mut graph, &|name| {

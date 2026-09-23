@@ -51,6 +51,13 @@ impl Exports {
             vars: Default::default(),
         }
     }
+
+    pub fn visible_names(&self) -> Vec<Symbol> {
+        let mut names = Vec::new();
+        names.extend(self.types.keys().cloned());
+        names.extend(self.vars.keys().cloned());
+        names
+    }
 }
 
 impl Default for Exports {

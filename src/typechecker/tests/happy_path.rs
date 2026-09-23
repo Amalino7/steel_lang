@@ -157,31 +157,183 @@ fn test_lambda_return_with_explicit_annotation() {
 }
 
 #[test]
-fn test_lambda_return_type_visible_to_caller() {
-    // The lambda returns a `number`. Assigning the result to a `string` must produce
-    // a TypeMismatch — proving the return type was correctly inferred as `number`, not
-    // as `Never` (the pre-fix bug).
+fn test_imported_variables_and_aliases() {
     Tester::new(
         r#"
-        let f = |x: number| { return x; };
-        let _: string = f(1);
+        import values/{one, two as second};
+        let sum: number = one + second;
         "#,
     )
-    .expect_error(|e| matches!(e, TypeCheckerError::TypeMismatch { .. }))
+    .with_module(
+        "values",
+        r#"
+        let one = 10;
+        let two = 20;
+        "#,
+    )
     .run();
 }
 
 #[test]
-fn test_multiple_errors_collected() {
+fn test_glob_import() {
     Tester::new(
         r#"
-            let a: number = "hello"; // Error 1: Type mismatch
-            b(1);                     // Error 2: Undefined variable 'b'
-            return 10;                // Error 3: Return outside function
-            "#,
+        import values/{*};
+        let sum: number = one + two;
+        "#,
     )
-    .expect_error(|e| matches!(e, TypeCheckerError::TypeMismatch { .. }))
-    .expect_error(|e| matches!(e, TypeCheckerError::UndefinedVariable { .. }))
-    .expect_error(|e| matches!(e, TypeCheckerError::InvalidReturnOutsideFunction { .. }))
+    .with_module(
+        "values",
+        r#"
+        let one = 10;
+        let two = 20;
+        "#,
+    )
+    .run();
+}
+
+#[test]
+fn test_nested_module_import() {
+    Tester::new(
+        r#"
+        import package/math/add;
+        let value: number = add(10, 20);
+        "#,
+    )
+    .with_module(
+        "package.math",
+        r#"
+        func add(a: number, b: number): number { return a + b; }
+        "#,
+    )
+    .run();
+}
+
+#[test]
+fn test_imported_struct_methods() {
+    Tester::new(
+        r#"
+        import geometry/Point;
+        let p: Point = Point.new(1, 2);
+        let dist: number = p.distance_squared();
+        let p2: Point = p.add(Point(x: 3, y: 4));
+        "#,
+    )
+    .with_module(
+        "geometry",
+        r#"
+        struct Point { x: number, y: number }
+        impl Point {
+            func new(x: number, y: number): Point {
+                return Point(x: x, y: y);
+            }
+            func distance_squared(self): number {
+                return self.x * self.x + self.y * self.y;
+            }
+            func add(self, other: Point): Point {
+                return Point(x: self.x + other.x, y: self.y + other.y);
+            }
+        }
+        "#,
+    )
+    .run();
+}
+
+#[test]
+fn test_imported_struct_alias_methods() {
+    Tester::new(
+        r#"
+        import geometry/Point as Vector;
+        let v: Vector = Vector(x: 10, y: 20);
+        let len: number = v.length();
+        "#,
+    )
+    .with_module(
+        "geometry",
+        r#"
+        struct Point { x: number, y: number }
+        impl Point {
+            func length(self): number {
+                return self.x + self.y;
+            }
+        }
+        "#,
+    )
+    .run();
+}
+
+#[test]
+fn test_imported_enum_methods() {
+    Tester::new(
+        r#"
+        import results/Outcome;
+        let res: Outcome = Outcome.Ok(10);
+        let flag: boolean = res.is_ok();
+        "#,
+    )
+    .with_module(
+        "results",
+        r#"
+        enum Outcome { Ok(number), Err(string) }
+        impl Outcome {
+            func is_ok(self): boolean {
+                match self {
+                    Outcome.Ok(_) => { return true; }
+                    Outcome.Err(_) => { return false; }
+                }
+            }
+        }
+        "#,
+    )
+    .run();
+}
+
+#[test]
+fn test_imported_interface() {
+    Tester::new(
+        r#"
+        import contracts/Printable;
+
+        struct Book { title: string }
+        impl Book : Printable {
+            func print(self): void {}
+        }
+
+        func display(p: Printable): void {
+            p.print();
+        }
+        "#,
+    )
+    .with_module(
+        "contracts",
+        r#"
+        interface Printable {
+            func print(self): void;
+        }
+        "#,
+    )
+    .run();
+}
+
+#[test]
+fn test_generic_type_methods_imported() {
+    Tester::new(
+        r#"
+        import containers/Wrapper;
+        let w: Wrapper<number> = Wrapper(item: 42);
+        let val: number = w.get();
+        "#,
+    )
+    .with_module(
+        "containers",
+        r#"
+        struct Wrapper<T> { item: T }
+        impl<T> Wrapper<T> {
+            func get(self): T {
+                return self.item;
+            }
+        }
+        "#,
+    )
     .run();
 }

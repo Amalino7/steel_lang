@@ -314,11 +314,11 @@ impl<'src> TypeChecker<'src> {
         expected: &Type,
     ) -> TypedExpr {
         let key_ty = expected
-            .map_key(&self.sys)
+            .map_key(self.sys)
             .cloned()
             .unwrap_or_else(|| self.infer_ctx.new_type_var());
         let val_ty = expected
-            .map_value(&self.sys)
+            .map_value(self.sys)
             .cloned()
             .unwrap_or_else(|| self.infer_ctx.new_type_var());
 
@@ -332,7 +332,7 @@ impl<'src> TypeChecker<'src> {
             typed_pairs.push((typed_key, typed_val));
         }
 
-        let final_ty = Type::new_map(key_ty, val_ty, &self.sys);
+        let final_ty = Type::new_map(key_ty, val_ty, self.sys);
         let inferred = self.infer_ctx.substitute(&final_ty);
 
         TypedExpr {
@@ -350,12 +350,12 @@ impl<'src> TypeChecker<'src> {
         expected: &Type,
     ) -> TypedExpr {
         // Empty `[]` can be used as an empty map literal when the expected type is Map.
-        if elements.is_empty() && expected.map_key(&self.sys).is_some() {
+        if elements.is_empty() && expected.map_key(self.sys).is_some() {
             return self.check_map(expr, &[], expected);
         }
 
         let inner_ty = expected
-            .list_element(&self.sys)
+            .list_element(self.sys)
             .cloned()
             .unwrap_or_else(|| self.infer_ctx.new_type_var());
 
@@ -367,7 +367,7 @@ impl<'src> TypeChecker<'src> {
             typed_elements.push(typed);
         }
 
-        let final_ty = Type::new_list(inner_ty, &self.sys);
+        let final_ty = Type::new_list(inner_ty, self.sys);
 
         let inferred = self.infer_ctx.substitute(&final_ty);
 

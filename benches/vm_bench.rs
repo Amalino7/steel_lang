@@ -34,7 +34,7 @@ fn bench_programs(c: &mut Criterion) {
             .unwrap_or_else(|e| panic!("Failed to read {}: {e}", path.display()));
 
         // compile once, outside the measured loop
-        let mut program = pipeline(&RunConfig::new(
+        let program = pipeline(&RunConfig::new(
             &name,
             Source::File {
                 name: &name,

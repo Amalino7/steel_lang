@@ -52,9 +52,9 @@ pub struct Cli {
 
 #[derive(ValueEnum, Clone, PartialEq)]
 enum CliMode {
-    /// Scan, parse, type-check, compile and run
+    /// Scan, parse, type-check, compile, and run
     Run,
-    /// Scan, parse and type-check only
+    /// Scan, parse, and type-check only
     Check,
 }
 

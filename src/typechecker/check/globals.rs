@@ -11,6 +11,7 @@ use crate::typechecker::core::types::{
 };
 use crate::typechecker::scope::guards::TypeScopeGuard;
 use crate::typechecker::scope::variables::{Declaration, DeclarationKind, VariableContext};
+use crate::typechecker::similarity::find_similar;
 use crate::typechecker::system::{ImplMethod, MethodId};
 use crate::typechecker::{Symbol, TypeChecker};
 use std::collections::HashMap;
@@ -562,9 +563,13 @@ impl<'src> TypeChecker<'src> {
 
         let module_info = &self.module_graph.modules[package_id.0 as usize];
 
+        let mut has_imported = false;
+
         if let Some((_, &id)) = module_info.exports.types.get_key_value(terminator.lexeme) {
             let res = self.type_scopes.declare_global(target.lexeme.into(), id);
             self.redeclaration_type(res, target.span);
+
+            has_imported = true;
 
             for ((new_id, name), method_id) in module_info.exports.methods.iter() {
                 if *new_id == id {
@@ -577,6 +582,7 @@ impl<'src> TypeChecker<'src> {
         }
 
         if let Some(ctx) = module_info.exports.vars.get(terminator.lexeme) {
+            has_imported = true;
             self.scopes
                 .declare_existing(&VariableContext {
                     name: target.lexeme.into(),
@@ -585,6 +591,28 @@ impl<'src> TypeChecker<'src> {
                     ..*ctx
                 })
                 .ok_or_report(&mut self.errors);
+        }
+
+        if !has_imported {
+            let _ = self
+                .scopes
+                .declare(Declaration::variable(
+                    target.lexeme.into(),
+                    Type::Error,
+                    target.span,
+                ))
+                .ok_or_report(&mut self.errors);
+
+            let visible_names = module_info.exports.visible_names();
+            let candidates = visible_names.iter().map(|name| name.as_ref());
+
+            let suggestions = find_similar(terminator.lexeme, candidates, 3);
+
+            self.report(TypeCheckerError::ImportNotFound {
+                name: terminator.lexeme.into(),
+                span: terminator.span,
+                suggestions,
+            });
         }
     }
 

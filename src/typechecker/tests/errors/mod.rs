@@ -1,11 +1,12 @@
 // Error tests organized by category
 
-mod variables;
-mod types;
-mod functions;
-mod structs;
-mod interfaces;
 mod enums;
+mod functions;
 mod generics;
+mod interfaces;
 mod maps;
+pub mod module;
+mod structs;
 mod tuples;
+mod types;
+mod variables;

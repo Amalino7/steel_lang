@@ -340,6 +340,15 @@ impl IntoDiagnostic for TypeCheckerError {
                 ).with_optional_origin(err.type_origin, "Type defined here.")
                     .with_suggestion(&err.suggestions)
             }
+            TypeCheckerError::ImportNotFound { name, span, suggestions } => {
+                DiagBuilder::error(
+                    span,
+                    code,
+                    format!("Could not find Item named '{}' to import.", name),
+                    "Could not find this Item.",
+                )
+                    .with_suggestion(&suggestions)
+            }
         }
             .build()
     }

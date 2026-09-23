@@ -731,7 +731,7 @@ impl Display for Stmt<'_> {
                         ImportType::Group { options } => {
                             write!(f, "{{")?;
                             for option in options {
-                                print_segment(f, &option)?;
+                                print_segment(f, option)?;
                             }
                             write!(f, "}}")
                         }

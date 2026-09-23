@@ -328,6 +328,11 @@ pub enum TypeCheckerError {
     Call(CallError),
     Generic(GenericError),
     Binding(BindingError),
+    ImportNotFound {
+        name: String,
+        span: Span,
+        suggestions: Vec<String>,
+    },
 }
 #[derive(Debug, Clone)]
 pub struct UndefinedMethodError {
@@ -434,7 +439,7 @@ fn mismatch_label_message(m: &Mismatch, ctx: &DiagnosticContext) -> String {
     }
 }
 
-/// Render the with_note line for a deep mismatch, using leaf types + kind.
+/// Render the with_note line for a deep mismatch, using leaf types and kind.
 fn kind_note(
     kind: &UnificationErrorKind,
     detail: &MismatchDetail,

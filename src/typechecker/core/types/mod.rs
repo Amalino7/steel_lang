@@ -233,11 +233,11 @@ impl Type {
             }
             Type::Struct(name, args) => {
                 let args: Vec<_> = args.iter().map(|t| t.clone().transform(f, u)).collect();
-                Type::Struct(name.clone(), Rc::from(args))
+                Type::Struct(*name, Rc::from(args))
             }
             Type::Enum(name, args) => {
                 let args: Vec<_> = args.iter().map(|t| t.clone().transform(f, u)).collect();
-                Type::Enum(name.clone(), Rc::from(args))
+                Type::Enum(*name, Rc::from(args))
             }
         };
         f(transformed)

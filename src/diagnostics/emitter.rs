@@ -43,13 +43,3 @@ impl<E: IntoDiagnostic> DiagnosticSink<E> for DiagnosticEmitter {
 pub trait DiagnosticSink<E> {
     fn emit(&mut self, error: E, ctx: &DiagnosticContext<'_>);
 }
-
-pub struct RecordingSink<T> {
-    errors: Vec<T>,
-}
-
-impl<E> DiagnosticSink<E> for RecordingSink<E> {
-    fn emit(&mut self, error: E, _: &DiagnosticContext<'_>) {
-        self.errors.push(error);
-    }
-}

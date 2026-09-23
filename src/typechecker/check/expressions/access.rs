@@ -82,8 +82,8 @@ impl<'src> TypeChecker<'src> {
 
         // Map indexing: always returns V? (Optional)
         if let (Some(key_ty), Some(val_ty)) = (
-            parent_type.map_key(&self.sys).cloned(),
-            parent_type.map_value(&self.sys).cloned(),
+            parent_type.map_key(self.sys).cloned(),
+            parent_type.map_value(self.sys).cloned(),
         ) {
             let index_typed =
                 self.coerce_expression(index, &key_ty, MismatchContext::IndexValue, None);
@@ -104,16 +104,15 @@ impl<'src> TypeChecker<'src> {
             });
         }
 
-        let inner = parent_type
-            .list_element(&self.sys)
-            .cloned()
-            .ok_or_else(|| TypeCheckerError::OperatorConstraint {
+        let inner = parent_type.list_element(self.sys).cloned().ok_or_else(|| {
+            TypeCheckerError::OperatorConstraint {
                 operator: "[]",
                 operand: Operand::Lhs,
                 found: parent_type.clone(),
                 requirement: TypeRequirement::Structural("List or Map"),
                 span: object_typed.span,
-            })?;
+            }
+        })?;
 
         let index_typed = self.check_expression(index, &Type::Number);
         self.check_operand(
@@ -142,7 +141,7 @@ impl<'src> TypeChecker<'src> {
 
     pub(crate) fn check_set_index(
         &mut self,
-        expr: &Expr<'src>,
+        expr: &Expr,
         safe: &bool,
         object: &Expr<'src>,
         index: &Expr<'src>,
@@ -156,8 +155,8 @@ impl<'src> TypeChecker<'src> {
 
         // Map set-indexing: upsert key -> value
         if let (Some(key_ty), Some(val_ty)) = (
-            parent_type.map_key(&self.sys).cloned(),
-            parent_type.map_value(&self.sys).cloned(),
+            parent_type.map_key(self.sys).cloned(),
+            parent_type.map_value(self.sys).cloned(),
         ) {
             let index_typed =
                 self.coerce_expression(index, &key_ty, MismatchContext::IndexValue, None);
@@ -176,16 +175,15 @@ impl<'src> TypeChecker<'src> {
             });
         }
 
-        let inner = parent_type
-            .list_element(&self.sys)
-            .cloned()
-            .ok_or_else(|| TypeCheckerError::OperatorConstraint {
+        let inner = parent_type.list_element(self.sys).cloned().ok_or_else(|| {
+            TypeCheckerError::OperatorConstraint {
                 operator: "[]",
                 operand: Operand::Lhs,
                 found: parent_type.clone(),
                 requirement: TypeRequirement::Structural("List or Map"),
                 span: object_typed.span,
-            })?;
+            }
+        })?;
 
         let index_typed = self.check_expression(index, &Type::Number);
 
@@ -304,7 +302,7 @@ impl<'src> TypeChecker<'src> {
             let mut candidates = self.type_scopes.get_methods_for_type(type_id);
             // Add field names if this is a struct type
             if let NameTypeId::Struct(id) = type_id {
-                candidates.extend(self.sys.get_struct(id).fields.keys().map(|s| s.clone()));
+                candidates.extend(self.sys.get_struct(id).fields.keys().cloned());
             }
 
             let suggestions = similarity::find_similar(
@@ -334,7 +332,7 @@ impl<'src> TypeChecker<'src> {
         let Type::Function(func) = &method_type else {
             unreachable!(
                 "Method should be of type function {}",
-                method_type.display_type(&self.sys)
+                method_type.display_type(self.sys)
             )
         };
 
@@ -366,7 +364,7 @@ impl<'src> TypeChecker<'src> {
 
         let result_type = self.infer_ctx.substitute(&method_with_fresh);
 
-        // Remove the self parameter from the resolved method type.
+        // Remove the 'self' parameter from the resolved method type.
         let mut method_ty = if let Type::Function(mut func) = result_type {
             let func_inner = Rc::make_mut(&mut func);
             func_inner.params.remove(0);
@@ -406,7 +404,7 @@ impl<'src> TypeChecker<'src> {
                 .ty
                 .unwrap_optional_safe(safe, field.span, &mut self.warnings);
 
-        let (index, field_type) = resolve_member_type(&parent_type, field, &self.sys)?;
+        let (index, field_type) = resolve_member_type(&parent_type, field, self.sys)?;
         callback(self, object_typed, index, field_type, safe)
     }
 }

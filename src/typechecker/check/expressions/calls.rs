@@ -96,7 +96,7 @@ impl<'src> TypeChecker<'src> {
             for fresh in fresh_generics.iter() {
                 let resolved = self.infer_ctx.substitute(fresh);
                 if !resolved.is_concrete() {
-                    let uninferred_generics = self.infer_ctx.uninferred_names(&resolved, &self.sys);
+                    let uninferred_generics = self.infer_ctx.uninferred_names(&resolved, self.sys);
                     return Err(TypeCheckerError::Generic(GenericError::CannotInfer {
                         span: expr.span(),
                         uninferred_generics,
@@ -183,7 +183,7 @@ impl<'src> TypeChecker<'src> {
         };
 
         let constructor = enum_def
-            .get_constructor(generics.clone(), old_value.ty.clone(), &self.sys)
+            .get_constructor(generics.clone(), old_value.ty.clone(), self.sys)
             .unwrap();
 
         let definition_span = enum_def.origin;
