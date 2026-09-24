@@ -123,8 +123,7 @@ fn build_config(cli: &Cli) -> RunConfig<'_> {
 
 pub fn watch_loop(cli: &Cli) {
     let config = build_config(cli);
-    let res = ModuleResolver::new().resolve_source(&config.source);
-    let graph = res.unwrap_or_default();
+    let graph = ModuleResolver::new().resolve_source(&config.source);
 
     let mut paths: Vec<_> = graph.modules.iter().map(|info| info.path.clone()).collect();
 
@@ -155,9 +154,7 @@ pub fn watch_loop(cli: &Cli) {
                 // Drain any rapid follow-up events (editors often emit several on save).
                 std::thread::sleep(std::time::Duration::from_millis(50));
                 while rx.try_recv().is_ok() {}
-                let graph = ModuleResolver::new()
-                    .resolve_source(&config.source)
-                    .unwrap_or_default();
+                let graph = ModuleResolver::new().resolve_source(&config.source);
 
                 let new_paths: Vec<_> =
                     graph.modules.iter().map(|info| info.path.clone()).collect();

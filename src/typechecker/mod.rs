@@ -104,11 +104,11 @@ impl<'ctx> TypeChecker<'ctx> {
         // then global functions are declared
         let global_functions = self.declare_global_functions(ast, &mut typed_ast);
 
-        self.define_global_functions(global_functions, &mut typed_ast);
-
         for stmt in ast.iter() {
             typed_ast.push(self.check_stmt(stmt));
         }
+
+        self.define_global_functions(global_functions, &mut typed_ast);
 
         let reserved = self.scopes.max_index() as u16;
 

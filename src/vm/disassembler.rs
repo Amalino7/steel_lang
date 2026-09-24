@@ -1,6 +1,7 @@
 use crate::vm::byte_utils::{byte_to_opcode, read_bytes};
 use crate::vm::bytecode::{Bytecode, Chunk, Opcode};
-use crate::vm::value::Value;
+use crate::vm::value::{Lazy, Value};
+use std::ops::Deref;
 
 pub fn disassemble_chunk(chunk: &Chunk, name: &str) {
     let bytecode = &chunk.instructions;
@@ -33,6 +34,12 @@ pub fn disassemble_instruction(
             let val = constants[index as usize];
             println!(" {}", val);
             if let Value::Function(func) = val {
+                disassemble_chunk(&func.chunk, func.name.as_str());
+            }
+
+            if let Value::Lazy(lazy) = val
+                && let Lazy::Uninit(func) = lazy.deref()
+            {
                 disassemble_chunk(&func.chunk, func.name.as_str());
             }
         }
@@ -102,6 +109,10 @@ pub fn disassemble_instruction(
         Opcode::SetLocal => {
             offset += 1;
             println!("SetLocal {}", bytecode[offset]);
+        }
+        Opcode::ResolveGlobal => {
+            offset += 1;
+            println!("ResolveGlobal {}", bytecode[offset]);
         }
         Opcode::GetLocal => {
             offset += 1;

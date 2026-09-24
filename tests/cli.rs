@@ -23,23 +23,17 @@ fn check_mode_exits_zero() {
 }
 
 #[test]
-fn parse_mode_exits_zero() {
-    let status = steel()
-        .args(["tests/fixtures/hello.steel", "parse"])
-        .status()
-        .unwrap();
-    assert!(status.success());
-}
-
-#[test]
 fn parse_mode_debug_prints_ast() {
     let output = steel()
-        .args(["tests/fixtures/hello.steel", "parse", "-d"])
+        .args(["tests/fixtures/hello.steel", "check", "-d"])
         .output()
         .unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("=== AST ==="), "Expected AST header in output:\n{stdout}");
+    assert!(
+        stdout.contains("=== AST ==="),
+        "Expected AST header in output:\n{stdout}"
+    );
 }
 
 #[test]

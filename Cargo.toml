@@ -1,6 +1,6 @@
 [package]
 name = "steel_lang"
-version = "0.6.7"
+version = "0.7.0"
 edition = "2024"
 
 [features]
@@ -13,7 +13,7 @@ stress_gc = []
 [dependencies]
 ariadne = "0.4.1"
 clap = { version = "4", features = ["derive"] }
-notify = "6"
+notify = "8.2.0"
 
 
 [dev-dependencies]

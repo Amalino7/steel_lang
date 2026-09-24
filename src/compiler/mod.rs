@@ -8,7 +8,7 @@ use crate::typechecker::core::ast::{
 };
 use crate::vm::bytecode::{Chunk, Opcode};
 use crate::vm::gc::{GarbageCollector, Gc};
-use crate::vm::value::{Function, Value};
+use crate::vm::value::{Function, Lazy, Value};
 
 pub struct Compiler<'a> {
     function: Function,
@@ -65,7 +65,7 @@ impl<'a> Compiler<'a> {
                 self.compile_expr(e);
                 self.emit_op(Opcode::Pop, stmt.span.line);
             }
-            StmtKind::Let { binding, value } => {
+            StmtKind::Let { binding, value, .. } => {
                 self.compile_expr(value);
 
                 self.compile_binding(binding, stmt.span.line);
@@ -144,14 +144,26 @@ impl<'a> Compiler<'a> {
                     }
                 }
             }
-            StmtKind::Global { stmts, .. } => {
+            StmtKind::Global { stmts } => {
+                // functions and vars
                 for s in stmts {
                     match &s.kind {
                         StmtKind::Function { .. } => self.compile_stmt(s),
-                        StmtKind::Impl { .. } => {
-                            self.compile_stmt(s);
+                        StmtKind::Let {
+                            binding,
+                            value,
+                            reserved,
+                        } => {
+                            self.compile_global_let(binding, value, *reserved);
                         }
                         _ => {}
+                    }
+                }
+
+                // v-tables which rely on functions
+                for s in stmts {
+                    if let StmtKind::Impl { .. } = s.kind {
+                        self.compile_stmt(s);
                     }
                 }
 
@@ -159,6 +171,9 @@ impl<'a> Compiler<'a> {
                 for s in stmts {
                     match &s.kind {
                         StmtKind::Function { .. } | StmtKind::Impl { .. } => continue,
+                        StmtKind::Let { binding, value, .. } => {
+                            self.initialize_binding(binding, value, s.span.line);
+                        }
                         _ => self.compile_stmt(s),
                     }
                 }
@@ -166,6 +181,81 @@ impl<'a> Compiler<'a> {
             StmtKind::EnumDecl { .. } => {}
             StmtKind::StructDecl { .. } => {}
             StmtKind::ExternFunction { .. } => {}
+        }
+    }
+
+    fn compile_global_let(&mut self, binding: &TypedBinding, value: &TypedExpr, reserved: u16) {
+        let mut vars = vec![];
+        Self::collect_vars(binding, &mut vars);
+        let line = value.span.line;
+
+        let mut compiler = Compiler::new(format!("<lazy init {}>", binding), self.gc);
+        compiler.emit_op(Opcode::Reserve, line);
+        compiler.emit_byte(reserved as u8, line);
+
+        {
+            let lazy = compiler.gc.alloc(Lazy::Initializing);
+            for var in vars.iter() {
+                compiler
+                    .chunk()
+                    .write_constant(Value::Lazy(lazy), value.span.line as usize);
+                compiler.emit_set_var(var, line);
+                compiler.emit_op(Opcode::Pop, line);
+            }
+        }
+
+        compiler.compile_expr(value);
+        compiler.compile_binding(binding, value.span.line);
+        compiler
+            .chunk()
+            .write_constant(Value::Nil, value.span.line as usize);
+        compiler.emit_op(Opcode::Return, value.span.line);
+
+        let thunk = compiler.gc.alloc(compiler.function);
+        let lazy = self.gc.alloc(Lazy::Uninit(thunk));
+        // Setting the thunk
+
+        {
+            for var in vars {
+                self.chunk()
+                    .write_constant(Value::Lazy(lazy), line as usize);
+                self.emit_set_var(var, line);
+                self.emit_op(Opcode::Pop, line);
+            }
+        }
+    }
+
+    fn collect_vars<'b>(binding: &'b TypedBinding, vars: &mut Vec<&'b ResolvedVar>) {
+        match binding {
+            TypedBinding::Variable(var, _) => {
+                vars.push(var);
+            }
+            TypedBinding::Tuple(bindings) => {
+                for binding in bindings {
+                    Self::collect_vars(binding, vars);
+                }
+            }
+            TypedBinding::Struct(bindings) => {
+                for (_, binding) in bindings {
+                    Self::collect_vars(binding, vars);
+                }
+            }
+            TypedBinding::Ignored => {}
+        }
+    }
+
+    fn initialize_binding(&mut self, binding: &TypedBinding, value: &TypedExpr, line: u32) {
+        let mut vars = vec![];
+        Self::collect_vars(binding, &mut vars);
+
+        if vars.is_empty() {
+            self.compile_expr(value);
+            self.emit_op(Opcode::Pop, line);
+        }
+
+        for var in vars {
+            self.emit_var_access(var, line);
+            self.emit_op(Opcode::Pop, line);
         }
     }
 
@@ -180,7 +270,7 @@ impl<'a> Compiler<'a> {
 
     fn compile_binding(&mut self, binding: &TypedBinding, line: u32) {
         match binding {
-            TypedBinding::Variable(var) => {
+            TypedBinding::Variable(var, _) => {
                 self.emit_set_var(var, line);
                 self.emit_op(Opcode::Pop, line);
             }
@@ -230,6 +320,8 @@ impl<'a> Compiler<'a> {
                 self.emit_byte(*idx, line);
             }
             ResolvedVar::Global(idx) => {
+                self.emit_op(Opcode::ResolveGlobal, line);
+                self.emit_byte(*idx as u8, line);
                 self.emit_op(Opcode::GetGlobal, line);
                 self.emit_byte(*idx as u8, line);
             }
@@ -457,7 +549,7 @@ impl<'a> Compiler<'a> {
                 self.emit_op(Opcode::CheckEnumTag, expr.span.line);
                 self.emit_byte(0, expr.span.line);
                 let jump = self.emit_jump(Opcode::JumpIfFalse, expr.span.line);
-                // if ok destructure
+                // if OK destructure
                 self.emit_op(Opcode::Pop, expr.span.line);
                 self.emit_op(Opcode::DestructureEnum, expr.span.line);
                 let exit_jump = self.emit_jump(Opcode::Jump, expr.span.line);

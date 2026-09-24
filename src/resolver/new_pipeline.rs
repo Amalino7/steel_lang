@@ -40,14 +40,18 @@ pub fn pipeline(config: &RunConfig) -> RunOutput {
     };
 
     let mut res = ModuleResolver::new();
-    let mut graph = res.resolve_source(&config.source).unwrap_or_else(|err| {
+    let mut graph_failed = false;
+    let mut graph = res.resolve_source(&config.source);
+    let errors = res.errors;
+
+    if !errors.is_empty() {
         if config.diagnostics {
-            for err in err {
+            for err in errors {
                 eprintln!("{}", err.message());
             }
         }
-        ModuleGraph::new()
-    });
+        graph_failed = true;
+    }
 
     let natives = get_natives();
 
@@ -83,7 +87,7 @@ pub fn pipeline(config: &RunConfig) -> RunOutput {
         .with_index_type(IndexType::Byte)
         .with_color(config.color.should_color());
 
-    if ctx.diagnostics.has_errors() {
+    if ctx.diagnostics.has_errors() || graph_failed {
         if config.diagnostics {
             let mut cache = cache(&graph);
 
@@ -122,6 +126,13 @@ pub fn pipeline(config: &RunConfig) -> RunOutput {
     let compiler = Compiler::new("main".to_string(), &mut ctx.gc);
     let global_func = compiler.compile_many(ctx.compiled_files);
 
+    let emit_bytecode = config.debug || config.emit.contains(&EmitTarget::Bytecode);
+    if emit_bytecode {
+        println!("=== Bytecode ===");
+        vm::disassembler::disassemble_chunk(&global_func.chunk, "module_script");
+        println!("================");
+    }
+
     if config.mode == Mode::Compile {
         return RunOutput {
             program: Some(CompiledProgram {
@@ -134,13 +145,6 @@ pub fn pipeline(config: &RunConfig) -> RunOutput {
             result: RunResult::Ok,
             timings: ctx.timings,
         };
-    }
-
-    let emit_bytecode = config.debug || config.emit.contains(&EmitTarget::Bytecode);
-    if emit_bytecode {
-        println!("=== Bytecode ===");
-        vm::disassembler::disassemble_chunk(&global_func.chunk, "module_script");
-        println!("================");
     }
 
     let t = Instant::now();

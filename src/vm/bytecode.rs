@@ -51,6 +51,7 @@ pub enum Opcode {
     SetLocal,
     GetLocal,
     SetGlobal,
+    ResolveGlobal,
     GetGlobal,
     Call,
 

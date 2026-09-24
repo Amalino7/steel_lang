@@ -3,6 +3,7 @@ use crate::parser::ast::Literal;
 use crate::scanner::Span;
 use crate::typechecker::Symbol;
 use crate::typechecker::core::types::Type;
+use std::fmt::{Display, Formatter};
 
 #[derive(Debug)]
 pub struct TypedExpr {
@@ -249,6 +250,7 @@ pub enum StmtKind {
     Let {
         binding: TypedBinding,
         value: TypedExpr,
+        reserved: u16,
     },
     Block {
         body: Vec<TypedStmt>,
@@ -271,10 +273,36 @@ pub enum StmtKind {
 }
 #[derive(Debug, Clone)]
 pub enum TypedBinding {
-    Variable(ResolvedVar),
+    Variable(ResolvedVar, Symbol),
     Ignored,
     Tuple(Vec<TypedBinding>),
     Struct(Vec<(u8, TypedBinding)>),
+}
+impl Display for TypedBinding {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TypedBinding::Variable(_, name) => {
+                write!(f, "{name}")
+            }
+            TypedBinding::Ignored => {
+                write!(f, "_")
+            }
+            TypedBinding::Tuple(bindings) => {
+                write!(f, "(")?;
+                for binding in bindings {
+                    write!(f, "{binding}, ")?;
+                }
+                write!(f, ")")
+            }
+            TypedBinding::Struct(fields) => {
+                write!(f, "{{")?;
+                for field in fields {
+                    write!(f, "{},", field.0)?;
+                }
+                write!(f, "}}")
+            }
+        }
+    }
 }
 
 #[derive(Debug)]

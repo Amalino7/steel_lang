@@ -110,7 +110,7 @@ impl<'ctx> ScopeManager<'ctx> {
     pub fn declare_existing(&mut self, ctx: &VariableContext) -> Result<(), TypeCheckerError> {
         let scope = &mut self.scopes[0];
         if let Some(prev) = scope.variables.get(&ctx.name)
-            && prev.mutability == Mutability::Unique
+            && (prev.mutability == Mutability::Unique || scope.kind == ScopeKind::Global)
             && ctx.index != prev.index
         {
             return Err(TypeCheckerError::Binding(BindingError::Redeclaration {
@@ -129,7 +129,7 @@ impl<'ctx> ScopeManager<'ctx> {
         let scope = self.scopes.last_mut().expect("No scope active");
 
         if let Some(prev) = scope.variables.get(&decl.name)
-            && prev.mutability == Mutability::Unique
+            && (prev.mutability == Mutability::Unique || scope.kind == ScopeKind::Global)
         {
             return Err(TypeCheckerError::Binding(BindingError::Redeclaration {
                 name: decl.name.to_string(),

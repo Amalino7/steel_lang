@@ -5,6 +5,7 @@ pub mod emitter;
 use crate::scanner::Span;
 use crate::typechecker::system::TypeSystem;
 
+#[derive(Debug)]
 pub struct Diagnostic {
     level: Level,
     code: &'static str,
@@ -16,17 +17,20 @@ pub struct Diagnostic {
     helps: Vec<String>,
 }
 
+#[derive(Debug)]
 pub enum Level {
     Error,
     Warning,
 }
 
+#[derive(Debug)]
 pub struct DiagLabel {
     span: Span,
     kind: LabelKind,
     message: String,
 }
 
+#[derive(Debug)]
 pub enum LabelKind {
     Origin,
     Secondary,

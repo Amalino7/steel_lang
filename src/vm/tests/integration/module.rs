@@ -267,7 +267,7 @@ fn test_nested_module_types_and_methods() {
     .with_module(
         "data.collections",
         r#"
-        struct Stack { items: [number] }
+        struct Stack { items: List<number> }
         impl Stack {
             func new(): Stack {
                 return Stack(items: []);

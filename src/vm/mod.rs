@@ -5,9 +5,10 @@ use crate::vm::error::RuntimeError;
 use crate::vm::gc::{GarbageCollector, Gc};
 use crate::vm::stack::Stack;
 use crate::vm::value::{
-    BoundMethod, Closure, EnumVariant, Function, HashableValue, Instance, InterfaceObj, List, Map,
-    VTable, Value,
+    BoundMethod, Closure, EnumVariant, Function, HashableValue, Instance, InterfaceObj, Lazy, List,
+    Map, VTable, Value,
 };
+use std::ops::Deref;
 
 mod byte_utils;
 pub mod bytecode;
@@ -26,7 +27,7 @@ struct CallFrame {
     function: Gc<Function>,
 }
 
-const STACK_MAX: usize = 256 * 128;
+const STACK_MAX: usize = 256 * 64;
 
 pub struct VM<'gc> {
     vtables: Vec<Gc<VTable>>,
@@ -341,9 +342,38 @@ impl<'gc> VM<'gc> {
                     current_frame.ip += 1;
                     self.globals[index] = self.stack.get_top();
                 }
+                Opcode::ResolveGlobal => {
+                    let idx = chunk.instructions[current_frame.ip] as usize;
+                    let val = self.globals[idx];
+                    current_frame.ip += 1;
+                    if let Value::Lazy(lazy) = val {
+                        match lazy.deref() {
+                            Lazy::Initializing => {
+                                self.frames.push(current_frame);
+                                return Err(self.make_error("Circular dependency initialization."));
+                            }
+                            Lazy::Uninit(func) => {
+                                self.stack.push(Value::Function(*func)); // Necessary for calling convention
+                                let new_slot_offset = self.stack.top - 1;
+                                let frame = CallFrame {
+                                    function: *func,
+                                    ip: 0,
+                                    slot_offset: new_slot_offset,
+                                };
+
+                                self.frames.push(current_frame);
+                                current_frame = frame;
+                                chunk = &current_frame.function.chunk; // updated chunk
+                            }
+                        }
+                    } else {
+                        self.stack.push(Value::Nil); // Necessary placeholder
+                    }
+                }
                 Opcode::GetGlobal => {
                     let val = self.globals[chunk.instructions[current_frame.ip] as usize];
                     current_frame.ip += 1;
+                    self.stack.pop(); // Value returned from the thunk
                     self.stack.push(val);
                 }
                 Opcode::Call => {
@@ -665,7 +695,10 @@ impl<'gc> VM<'gc> {
                         match v {
                             Value::Function(f) => methods.push(f),
                             Value::Closure(c) => methods.push(c.function),
-                            _ => unreachable!("MakeVTable expects function/closure values"),
+                            _ => unreachable!(
+                                "MakeVTable expects function/closure values, found {}",
+                                v
+                            ),
                         }
                     }
 

@@ -1,5 +1,6 @@
 use crate::vm::value::{
-    BoundMethod, Closure, EnumVariant, Function, Instance, InterfaceObj, List, Map, VTable, Value,
+    BoundMethod, Closure, EnumVariant, Function, Instance, InterfaceObj, Lazy, List, Map, VTable,
+    Value,
 };
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::fmt::{Debug, Display, Formatter};
@@ -193,6 +194,9 @@ impl GarbageCollector {
             Value::Map(map) => {
                 self.mark(map);
             }
+            Value::Lazy(lazy) => {
+                self.mark(lazy);
+            }
         }
     }
 
@@ -325,6 +329,15 @@ impl Trace for Map {
         for (k, v) in self.map.iter() {
             gc.mark_value(k.0);
             gc.mark_value(*v);
+        }
+    }
+}
+
+impl Trace for Lazy {
+    fn trace(&self, gc: &mut GarbageCollector) {
+        match self {
+            Lazy::Initializing => {}
+            Lazy::Uninit(func) => gc.mark(*func),
         }
     }
 }

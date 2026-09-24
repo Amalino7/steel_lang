@@ -18,6 +18,11 @@ pub struct Closure {
     pub captures: Vec<Value>,
 }
 
+#[derive(Debug)]
+pub enum Lazy {
+    Initializing,
+    Uninit(Gc<Function>),
+}
 pub struct Instance {
     pub name: Value, // Name of the struct useful for debugging
     pub fields: Vec<Value>,
@@ -153,6 +158,10 @@ impl Hash for HashableValue {
                 12u8.hash(state);
                 gc.address().hash(state);
             }
+            Value::Lazy(gc) => {
+                13u8.hash(state);
+                gc.address().hash(state);
+            }
         }
     }
 }
@@ -166,6 +175,7 @@ pub enum Value {
     Map(Gc<Map>),
     String(Gc<String>),
     Closure(Gc<Closure>),
+    Lazy(Gc<Lazy>),
     Function(Gc<Function>),
     NativeFunction(NativeFn),
     BoundMethod(Gc<BoundMethod>),
@@ -227,6 +237,7 @@ impl Display for Value {
             Value::Function(func) => write!(f, "<fn {}>", func.name.as_str()),
             Value::NativeFunction(_) => write!(f, "<native fn>"),
             Value::Closure(closure) => write!(f, "<closure {} @>", closure.function.name.as_str()),
+            Value::Lazy(inner) => write!(f, "<lazy @{}>", inner),
             Value::Instance(instance) => write!(f, "<instance {} @{}>", instance.name, instance),
             Value::BoundMethod(bound_method) => write!(
                 f,

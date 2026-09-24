@@ -49,7 +49,7 @@ impl TestBuilder {
                 map: self.sources,
             },
             Mode::Run,
-            false,
+            true,
         ));
         assert_eq!(res.result, RunResult::Ok)
     }

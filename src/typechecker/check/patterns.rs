@@ -331,8 +331,8 @@ impl<'src> TypeChecker<'src> {
                 };
                 self.scopes.declare(decl)?;
                 // TODO: migrate to a non-write lookup once one exists that still
-                let (_, resolved) = self.scopes.lookup_for_write(token.lexeme).unwrap();
-                Ok(TypedBinding::Variable(resolved))
+                let (ctx, resolved) = self.scopes.lookup_for_write(token.lexeme).unwrap();
+                Ok(TypedBinding::Variable(resolved, ctx.name.clone()))
             }
         }
     }

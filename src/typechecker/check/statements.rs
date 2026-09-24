@@ -37,12 +37,28 @@ impl<'src> TypeChecker<'src> {
                     TypeAst::Infer => None,
                     other => Some(other.span()),
                 };
-                let coerced_value = self.coerce_expression(
+
+                let is_global = self.scopes.is_global();
+                let mut guard = if is_global {
+                    ScopeGuard::new(self, ScopeKind::Function) // This is necessary to handle global vars that use lazy eval
+                } else {
+                    ScopeGuard::new(self, ScopeKind::Block)
+                };
+
+                let coerced_value = guard.coerce_expression(
                     value,
                     &declared_type,
                     MismatchContext::Let,
                     type_annotation_span,
                 );
+
+                let reserved = if is_global {
+                    guard.scopes.max_index()
+                } else {
+                    0
+                };
+
+                drop(guard);
 
                 let final_type = if declared_type == Type::Error || declared_type == Type::Unknown {
                     coerced_value.ty.clone()
@@ -56,6 +72,7 @@ impl<'src> TypeChecker<'src> {
 
                 let kind = if let Some(tb) = typed_binding {
                     StmtKind::Let {
+                        reserved: reserved as u16,
                         binding: tb,
                         value: coerced_value,
                     }
