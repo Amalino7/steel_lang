@@ -2,7 +2,7 @@ use crate::RunResult;
 use crate::parser::Parser;
 use crate::resolver::new_pipeline::pipeline;
 use crate::resolver::resolution::Source;
-use crate::scanner::Scanner;
+use crate::scanner::{FileId, Scanner};
 use crate::vm::VM;
 use crate::vm::value::Value;
 use crate::{ColorChoice, Mode, RunConfig};
@@ -120,7 +120,7 @@ pub fn assert_global_string(source: &str, global_index: usize, expected: &str) {
 
 /// Assert that the source fails at the parse stage.
 pub fn assert_parse_fails(source: &str) {
-    let scanner = Scanner::new(source, 0);
+    let scanner = Scanner::new(source, FileId(0));
     let mut parser = Parser::new(scanner);
     assert!(
         parser.parse().is_err(),

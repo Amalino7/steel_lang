@@ -121,7 +121,11 @@ impl<'ctx> ScopeManager<'ctx> {
             }));
         }
 
-        scope.variables.insert(ctx.name.clone(), ctx.clone());
+        let imported = VariableContext {
+            is_public: false,
+            ..ctx.clone()
+        };
+        scope.variables.insert(ctx.name.clone(), imported);
         Ok(())
     }
 
@@ -236,6 +240,7 @@ impl<'ctx> ScopeManager<'ctx> {
                 name: name.clone(),
                 type_info: new_type,
                 span: Span::default(),
+                is_public: false,
             };
 
             self.declare(new_decl).expect("Declaration Shouldn't fail");

@@ -153,7 +153,7 @@ pub struct DuplicateDefinition {
     pub kind: DuplicateKind,
     pub name: String,
     pub span: Span,
-    pub original: Span,
+    pub original: Option<Span>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -319,10 +319,6 @@ pub enum TypeCheckerError {
         message: &'static str,
     },
     InvalidOperandTypes(Box<InvalidOperandTypes>),
-    PrimitiveTypeShadowing {
-        name: String,
-        span: Span,
-    },
     Duplicate(DuplicateDefinition),
     CallParam(CallParamError),
     Call(CallError),
@@ -332,6 +328,56 @@ pub enum TypeCheckerError {
         name: String,
         span: Span,
         suggestions: Vec<String>,
+        note: Option<String>,
+    },
+    PrivateImport {
+        name: String,
+        module: String,
+        span: Span,
+        definition: Span,
+    },
+    PrivateField {
+        struct_name: Symbol,
+        field_name: Symbol,
+        module: String,
+        span: Span,
+        definition: Span,
+    },
+    PrivateTypeInPublicApi {
+        item: Symbol,
+        private_type: Symbol,
+        span: Span,
+        type_origin: Span,
+    },
+    InterfaceMethodNotPublic {
+        method_name: String,
+        interface_name: String,
+        span: Span,
+    },
+    PrivateMethod {
+        method_name: Symbol,
+        module: String,
+        span: Span,
+        definition: Span,
+    },
+    PrivateConstructor {
+        struct_name: Symbol,
+        private_fields: Vec<(String, Span)>,
+        module: String,
+        span: Span,
+    },
+    ExtensionShadowsInherent {
+        method_name: Symbol,
+        type_name: Symbol,
+        span: Span,
+        inherent_origin: Span,
+    },
+    ConflictingExtension {
+        method_name: Symbol,
+        type_name: Symbol,
+        span: Span,
+        first: Span,
+        second: Span,
     },
 }
 #[derive(Debug, Clone)]

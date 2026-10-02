@@ -1,6 +1,5 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::fs;
-use std::hint::black_box;
 use std::path::Path;
 use steel_lang::resolver::new_pipeline::pipeline;
 use steel_lang::resolver::resolution::Source;
@@ -46,7 +45,7 @@ fn bench_programs(c: &mut Criterion) {
         let mut compiled = program.program.expect("Expected correct bench program");
 
         c.bench_function(&name, |b| {
-            b.iter(|| black_box(run_once(&mut compiled)));
+            b.iter(|| run_once(&mut compiled));
         });
     }
 }

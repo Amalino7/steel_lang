@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 use crate::typechecker::Symbol;
 use crate::typechecker::core::types::NameTypeId;
-use crate::typechecker::system::MethodId;
+use crate::typechecker::method_table::MethodTable;
 use std::path::PathBuf;
 
 use crate::typechecker::scope::variables::VariableContext;
@@ -16,8 +16,7 @@ use crate::typechecker::scope::variables::VariableContext;
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct ModuleId(pub u32);
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub struct FileId(pub u32);
+pub use crate::scanner::FileId;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModuleGraph {
@@ -39,7 +38,7 @@ pub struct ModuleInfo {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Exports {
     pub types: HashMap<Symbol, NameTypeId>,
-    pub methods: HashMap<(NameTypeId, Symbol), MethodId>,
+    pub extensions: MethodTable,
     pub vars: HashMap<Symbol, VariableContext>,
 }
 
@@ -47,16 +46,9 @@ impl Exports {
     pub fn new() -> Self {
         Exports {
             types: Default::default(),
-            methods: Default::default(),
+            extensions: Default::default(),
             vars: Default::default(),
         }
-    }
-
-    pub fn visible_names(&self) -> Vec<Symbol> {
-        let mut names = Vec::new();
-        names.extend(self.types.keys().cloned());
-        names.extend(self.vars.keys().cloned());
-        names
     }
 }
 
@@ -73,6 +65,20 @@ impl ModuleGraph {
             name_to_id_map: HashMap::new(),
             file_to_module_id: HashMap::new(),
         }
+    }
+
+    pub fn module_by_name(&self, name: &str) -> Option<&ModuleInfo> {
+        let id = self.name_to_id_map.get(name)?;
+        self.modules.get(id.0 as usize)
+    }
+
+    /// Name of the module whose source file has the given id.
+    pub fn module_name_of_file(&self, file_id: FileId) -> String {
+        self.file_to_module_id
+            .get(&file_id)
+            .and_then(|id| self.modules.get(id.0 as usize))
+            .map(|module| module.name.clone())
+            .unwrap_or_default()
     }
 }
 

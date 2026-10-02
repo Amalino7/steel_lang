@@ -167,8 +167,8 @@ fn test_imported_variables_and_aliases() {
     .with_module(
         "values",
         r#"
-        let one = 10;
-        let two = 20;
+        public let one = 10;
+        public let two = 20;
         "#,
     )
     .run();
@@ -185,8 +185,8 @@ fn test_glob_import() {
     .with_module(
         "values",
         r#"
-        let one = 10;
-        let two = 20;
+        public let one = 10;
+        public let two = 20;
         "#,
     )
     .run();
@@ -203,7 +203,7 @@ fn test_nested_module_import() {
     .with_module(
         "package.math",
         r#"
-        func add(a: number, b: number): number { return a + b; }
+        public func add(a: number, b: number): number { return a + b; }
         "#,
     )
     .run();
@@ -222,15 +222,15 @@ fn test_imported_struct_methods() {
     .with_module(
         "geometry",
         r#"
-        struct Point { x: number, y: number }
+        public struct Point { public x: number, public y: number }
         impl Point {
-            func new(x: number, y: number): Point {
+            public func new(x: number, y: number): Point {
                 return Point(x: x, y: y);
             }
-            func distance_squared(self): number {
+            public func distance_squared(self): number {
                 return self.x * self.x + self.y * self.y;
             }
-            func add(self, other: Point): Point {
+            public func add(self, other: Point): Point {
                 return Point(x: self.x + other.x, y: self.y + other.y);
             }
         }
@@ -251,9 +251,9 @@ fn test_imported_struct_alias_methods() {
     .with_module(
         "geometry",
         r#"
-        struct Point { x: number, y: number }
+        public struct Point { public x: number, public y: number }
         impl Point {
-            func length(self): number {
+            public func length(self): number {
                 return self.x + self.y;
             }
         }
@@ -274,9 +274,9 @@ fn test_imported_enum_methods() {
     .with_module(
         "results",
         r#"
-        enum Outcome { Ok(number), Err(string) }
+        public enum Outcome { Ok(number), Err(string) }
         impl Outcome {
-            func is_ok(self): boolean {
+            public func is_ok(self): boolean {
                 match self {
                     Outcome.Ok(_) => { return true; }
                     Outcome.Err(_) => { return false; }
@@ -296,7 +296,7 @@ fn test_imported_interface() {
 
         struct Book { title: string }
         impl Book : Printable {
-            func print(self): void {}
+            public func print(self): void {}
         }
 
         func display(p: Printable): void {
@@ -307,7 +307,7 @@ fn test_imported_interface() {
     .with_module(
         "contracts",
         r#"
-        interface Printable {
+        public interface Printable {
             func print(self): void;
         }
         "#,
@@ -327,9 +327,9 @@ fn test_generic_type_methods_imported() {
     .with_module(
         "containers",
         r#"
-        struct Wrapper<T> { item: T }
+        public struct Wrapper<T> { public item: T }
         impl<T> Wrapper<T> {
-            func get(self): T {
+            public func get(self): T {
                 return self.item;
             }
         }

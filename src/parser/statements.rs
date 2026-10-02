@@ -1,28 +1,56 @@
 use crate::parser::ast::{ImportSegment, ImportStmt, ImportType, Stmt};
 use crate::parser::error::ParserError;
 use crate::parser::{Parser, TokT, check_token_type, match_token_type};
+use crate::scanner::Token;
 
 impl<'src> Parser<'src> {
-    pub(super) fn declaration(&mut self) -> Result<Stmt<'src>, ParserError<'src>> {
+    pub(super) fn declaration(&mut self, top_level: bool) -> Result<Stmt<'src>, ParserError<'src>> {
+        let is_public = match_token_type!(self, TokT::Public);
+        let prev_token = self.previous_token.clone();
+        if is_public && !top_level {
+            self.errors.push(ParserError::ParseError {
+                token: prev_token.clone(),
+                message: "`public` is only allowed on top-level declarations.".to_string(),
+            });
+        }
+        // Already reported above when nested; don't report a second error for the same token.
+        let report = is_public && top_level;
+
         if match_token_type!(self, TokT::Let) {
-            self.let_declaration()
+            self.let_declaration(is_public)
         } else if match_token_type!(self, TokT::Enum) {
-            self.enum_declaration()
+            self.enum_declaration(is_public)
         } else if match_token_type!(self, TokT::Func) {
-            self.func_declaration(false)
+            self.func_declaration(is_public, false)
         } else if match_token_type!(self, TokT::Import) {
+            self.public_err(report, prev_token, "re-exports are not supported.");
             self.import_statement()
         } else if match_token_type!(self, TokT::Struct) {
-            self.struct_declaration()
+            self.struct_declaration(is_public)
         } else if match_token_type!(self, TokT::Impl) {
+            self.public_err(
+                report,
+                prev_token,
+                "`impl` blocks are always visible; mark individual methods `public`.",
+            );
             self.impl_block()
         } else if match_token_type!(self, TokT::Interface) {
-            self.interface_declaration()
+            self.interface_declaration(is_public)
         } else if match_token_type!(self, TokT::Extern) {
             self.consume(TokT::Func, "Expected 'func' after 'extern'.")?;
-            self.extern_func_declaration(false)
+            self.extern_func_declaration(is_public, false)
         } else {
+            self.public_err(report, prev_token, "expected a declaration after `public`.");
             self.statement()
+        }
+    }
+
+    fn public_err(&mut self, report: bool, token: Token<'src>, message: &str) {
+        if report {
+            self.errors.push(ParserError::ParseError {
+                token,
+                message: format!("`public` is not allowed here: {message}"),
+            })
         }
     }
 
@@ -92,7 +120,7 @@ impl<'src> Parser<'src> {
         self.consume(TokT::LeftBrace, "Expected '{' before block.")?;
         let mut statements = vec![];
         while !check_token_type!(self, TokT::RightBrace) {
-            match self.declaration() {
+            match self.declaration(false) {
                 Ok(stmt) => statements.push(stmt),
                 Err(e) => {
                     self.synchronize();
@@ -135,6 +163,7 @@ impl<'src> Parser<'src> {
                 | TokT::Extern
                 | TokT::Enum
                 | TokT::While
+                | TokT::Public
         )
     }
 }

@@ -56,11 +56,11 @@ impl<'src> TypeCheckerTest<'src> {
             let src = &graph.modules[id].source;
             let file_id = graph.modules[id].file_id;
 
-            let scanner = Scanner::new(src, file_id.0);
+            let scanner = Scanner::new(src, file_id);
             let mut parser = Parser::new(scanner);
             let mut ast = parser.parse().expect("Parser failed");
 
-            let mut checker = TypeChecker::new(&[], &mut sys, &id_generator, &graph);
+            let mut checker = TypeChecker::new(&[], &mut sys, &id_generator, &graph, file_id);
             let res = checker.check(ast.as_mut_slice(), None);
 
             let exports = match res {
@@ -71,7 +71,7 @@ impl<'src> TypeCheckerTest<'src> {
                 Err((err, exports)) => {
                     errors.extend(err);
                     warnings.extend(checker.warnings);
-                    exports
+                    *exports
                 }
             };
             graph.modules[id].exports = exports;

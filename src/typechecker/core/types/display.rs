@@ -119,7 +119,7 @@ mod tests {
     #[test]
     fn test_display_type_system_types() {
         let mut sys = TypeSystem::new();
-        let point_id = sys.declare_struct(Span::default(), "Point".into(), &[]);
+        let point_id = sys.declare_struct(Span::default(), "Point".into(), &[], true);
         let point_ty = Type::Struct(point_id, Rc::from(vec![]));
         assert_eq!(point_ty.display_type(&sys), "Point");
 
@@ -131,11 +131,11 @@ mod tests {
         let map_ty = Type::Struct(map_id, Rc::from(vec![Type::String, point_ty.clone()]));
         assert_eq!(map_ty.display_type(&sys), "Map<string, Point>");
 
-        let color_id = sys.declare_enum(Span::default(), "Color".into(), &[]);
+        let color_id = sys.declare_enum(Span::default(), "Color".into(), &[], true);
         let color_ty = Type::Enum(color_id, Rc::from(vec![]));
         assert_eq!(color_ty.display_type(&sys), "Color");
 
-        let iface_id = sys.declare_interface("Printable".into(), Span::default());
+        let iface_id = sys.declare_interface("Printable".into(), Span::default(), true);
         let iface_ty = Type::Interface(iface_id);
         assert_eq!(iface_ty.display_type(&sys), "Printable");
 

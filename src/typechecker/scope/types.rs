@@ -1,5 +1,6 @@
 use crate::typechecker::Symbol;
 use crate::typechecker::core::types::{GenericTypeId, NameTypeId, PrimitiveTypeId, Type};
+use crate::typechecker::method_table::MethodTable;
 use crate::typechecker::system::MethodId;
 use std::collections::HashMap;
 
@@ -18,7 +19,8 @@ struct TypeScope {
 
 pub struct TypeScopeManager {
     globals: HashMap<Symbol, NameTypeId>,
-    method_map: HashMap<(NameTypeId, Symbol), MethodId>,
+    /// Extension methods in scope for the module being checked.
+    extensions: MethodTable,
     scopes: Vec<TypeScope>,
 }
 
@@ -28,7 +30,7 @@ impl TypeScopeManager {
         TypeScopeManager {
             globals: Self::primitives(),
             scopes: vec![],
-            method_map: HashMap::new(),
+            extensions: MethodTable::new(),
         }
     }
     pub fn begin_type_scope(
@@ -110,8 +112,8 @@ impl TypeScopeManager {
         self.globals.get(name).cloned()
     }
 
-    pub fn lookup_method(&self, ty_id: NameTypeId, method_name: &str) -> Option<&MethodId> {
-        self.method_map.get(&(ty_id, method_name.into()))
+    pub fn lookup_method(&self, ty_id: NameTypeId, method_name: &str) -> Option<MethodId> {
+        self.extensions.lookup(ty_id, method_name)
     }
 
     pub fn declare_method(
@@ -120,34 +122,20 @@ impl TypeScopeManager {
         method_name: Symbol,
         method_id: MethodId,
     ) -> Result<(), MethodId> {
-        let old = self.method_map.insert((ty_id, method_name), method_id);
-        if let Some(old_id) = old
-            && old_id != method_id
-        {
-            Err(method_id)
-        } else {
-            Ok(())
-        }
+        self.extensions.declare(ty_id, method_name, method_id)
     }
 
     /// Get all method names for a given type (for suggestions)
     pub fn get_methods_for_type(&self, type_name: NameTypeId) -> Vec<Symbol> {
-        let mut methods = Vec::new();
-        for ((ty_id, name), _) in self.method_map.iter() {
-            if *ty_id == type_name {
-                methods.push(name.clone());
-            }
-        }
-
-        methods
+        self.extensions.names_of(type_name).cloned().collect()
     }
 
     pub fn export_types(&mut self) -> HashMap<Symbol, NameTypeId> {
         std::mem::take(&mut self.globals)
     }
 
-    pub fn export_methods(&mut self) -> HashMap<(NameTypeId, Symbol), MethodId> {
-        std::mem::take(&mut self.method_map)
+    pub fn export_methods(&mut self) -> MethodTable {
+        std::mem::take(&mut self.extensions)
     }
 
     fn primitives() -> HashMap<Symbol, NameTypeId> {

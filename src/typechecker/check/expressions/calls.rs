@@ -142,6 +142,18 @@ impl<'src> TypeChecker<'src> {
 
         let owned_name = struct_def.name.clone();
         let definition_span = struct_def.origin;
+        let private_fields = struct_def.private_fields();
+        if !private_fields.is_empty() && definition_span.file_id != self.file_id {
+            let error = TypeCheckerError::PrivateConstructor {
+                struct_name: owned_name.clone(),
+                private_fields,
+                module: self
+                    .module_graph
+                    .module_name_of_file(definition_span.file_id),
+                span: callee_span,
+            };
+            self.report(error);
+        }
         let bound_args = self.bind_arguments(
             callee_span,
             Some(definition_span),

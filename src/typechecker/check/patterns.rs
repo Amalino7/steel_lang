@@ -1,5 +1,5 @@
 use crate::parser::ast::{Binding, Expr, ExprMatchArm, Pattern};
-use crate::scanner::Span;
+use crate::scanner::{Span, Token};
 use crate::typechecker::core::ast::{ExprKind, MatchCase, TypedBinding, TypedExpr};
 use crate::typechecker::core::error::TypeRequirement::Structural;
 use crate::typechecker::core::error::{
@@ -157,7 +157,7 @@ impl<'src> TypeChecker<'src> {
                     let mut guard = ScopeGuard::new(self, ScopeKind::Block);
                     let typed_binding = match bind {
                         Some(binding) => {
-                            let result = guard.check_binding(binding, &payload_type, false);
+                            let result = guard.check_binding(binding, &payload_type, false, false);
                             result.recover(&mut guard.errors, TypedBinding::Ignored)
                         }
                         None => {
@@ -193,6 +193,7 @@ impl<'src> TypeChecker<'src> {
                         &Binding::Variable(name.clone()),
                         &value_typed.ty,
                         false,
+                        false,
                     );
                     let typed_binding = result.recover(&mut guard.errors, TypedBinding::Ignored);
                     let typed_body =
@@ -217,6 +218,7 @@ impl<'src> TypeChecker<'src> {
         binding: &Binding,
         type_to_match: &Type,
         nested: bool,
+        is_public: bool,
     ) -> Result<TypedBinding, TypeCheckerError> {
         match binding {
             Binding::Struct { name, fields } => {
@@ -254,13 +256,16 @@ impl<'src> TypeChecker<'src> {
 
                 let struct_def = self.sys.get_struct(*struct_id);
 
-                let mut resolved: Vec<(usize, Type, &Binding)> = Vec::with_capacity(fields.len());
+                let mut resolved: Vec<(usize, Type, &Binding, &Token)> =
+                    Vec::with_capacity(fields.len());
                 for (field_name, field_binding) in fields {
                     let (field_idx, field_type) = struct_def
                         .get_field(field_name.lexeme, generics)
                         .ok_or_else(|| {
-                            let field_names: Vec<&str> =
-                                struct_def.fields.keys().map(|s| s.as_ref()).collect();
+                            let field_names: Vec<&str> = struct_def
+                                .visible_field_names(self.file_id)
+                                .map(|s| s.as_ref())
+                                .collect();
                             let suggestions =
                                 similarity::find_similar(field_name.lexeme, field_names, 3);
                             TypeCheckerError::UndefinedField {
@@ -271,13 +276,20 @@ impl<'src> TypeChecker<'src> {
                                 suggestions,
                             }
                         })?;
-                    resolved.push((field_idx, field_type, field_binding));
+                    resolved.push((field_idx, field_type, field_binding, field_name));
+                }
+
+                for (idx, _, _, field_name) in &resolved {
+                    self.check_field_access(type_to_match, *idx as u8, field_name);
                 }
 
                 let typed_fields = resolved
                     .into_iter()
-                    .map(|(idx, ty, field_binding)| {
-                        Ok((idx as u8, self.check_binding(field_binding, &ty, true)?))
+                    .map(|(idx, ty, field_binding, _)| {
+                        Ok((
+                            idx as u8,
+                            self.check_binding(field_binding, &ty, true, is_public)?,
+                        ))
                     })
                     .collect::<Result<Vec<_>, TypeCheckerError>>()?;
 
@@ -314,7 +326,7 @@ impl<'src> TypeChecker<'src> {
                 let typed_fields = fields
                     .iter()
                     .zip(tuple.types.iter())
-                    .map(|(field, ty)| self.check_binding(field, ty, true))
+                    .map(|(field, ty)| self.check_binding(field, ty, true, is_public))
                     .collect::<Result<Vec<_>, _>>()?;
 
                 Ok(TypedBinding::Tuple(typed_fields))
@@ -328,7 +340,8 @@ impl<'src> TypeChecker<'src> {
                     Declaration::binding(token.lexeme.into(), type_to_match.clone(), token.span)
                 } else {
                     Declaration::mutable(token.lexeme.into(), type_to_match.clone(), token.span)
-                };
+                }
+                .public(is_public);
                 self.scopes.declare(decl)?;
                 // TODO: migrate to a non-write lookup once one exists that still
                 let (ctx, resolved) = self.scopes.lookup_for_write(token.lexeme).unwrap();

@@ -63,10 +63,10 @@ impl<'src> TypeChecker<'src> {
         method_name: &Token,
         generics: &GenericArgs,
     ) -> Result<TypedExpr, TypeCheckerError> {
-        let method_id = self.type_scopes.lookup_method(type_id, method_name.lexeme);
+        let method_id = self.lookup_method(type_id, method_name.lexeme);
 
         let method_id = method_id.ok_or_else(|| {
-            let methods = self.type_scopes.get_methods_for_type(type_id);
+            let methods = self.method_names_for_type(type_id);
             let suggestions =
                 similarity::find_similar(method_name.lexeme, methods.iter().map(|s| s.as_ref()), 3);
 
@@ -81,7 +81,8 @@ impl<'src> TypeChecker<'src> {
             }))
         })?;
 
-        let method_info = self.sys.get_method_info(*method_id);
+        self.check_method_access(method_id, method_name);
+        let method_info = self.sys.get_method_info(method_id);
         let method_type = method_info.func_type.clone();
         let self_type = method_info.self_type.clone();
         let impl_count = method_info.impl_generic_count;

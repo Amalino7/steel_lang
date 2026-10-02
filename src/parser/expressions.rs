@@ -1,10 +1,10 @@
+use crate::parser::TokT;
 use crate::parser::ast::Expr::Tuple;
 use crate::parser::ast::{CallArg, Expr, Literal, StringPart, TypeAst};
 use crate::parser::error::ParserError;
 use crate::parser::literals::{parse_number, process_escapes, process_raw_string};
-use crate::parser::TokT;
+use crate::parser::{Parser, match_token_type};
 use crate::parser::{check_next_token_type, check_token_type};
-use crate::parser::{match_token_type, Parser};
 use crate::scanner::token::Token;
 
 impl<'src> Parser<'src> {

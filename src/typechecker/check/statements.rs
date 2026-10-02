@@ -27,6 +27,7 @@ impl<'src> TypeChecker<'src> {
                 binding,
                 value,
                 type_info,
+                is_public,
             } => {
                 let declared_type = self
                     .res()
@@ -67,7 +68,7 @@ impl<'src> TypeChecker<'src> {
                 };
 
                 let typed_binding = self
-                    .check_binding(binding, &final_type, false)
+                    .check_binding(binding, &final_type, false, *is_public && is_global)
                     .ok_or_report(&mut self.errors);
 
                 let kind = if let Some(tb) = typed_binding {
@@ -140,6 +141,7 @@ impl<'src> TypeChecker<'src> {
                 body,
                 signature,
                 generics,
+                ..
             } => {
                 if !self.scopes.is_global() {
                     let mut guard = TypeScopeGuard::new_function(self, generics);

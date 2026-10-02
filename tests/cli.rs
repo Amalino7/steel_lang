@@ -23,7 +23,7 @@ fn check_mode_exits_zero() {
 }
 
 #[test]
-fn parse_mode_debug_prints_ast() {
+fn check_mode_debug_prints_ast() {
     let output = steel()
         .args(["tests/fixtures/hello.steel", "check", "-d"])
         .output()

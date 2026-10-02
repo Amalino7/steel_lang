@@ -1,0 +1,6 @@
+whatever();
+
+let var = "10";
+func whatever() {
+    println(var);
+}

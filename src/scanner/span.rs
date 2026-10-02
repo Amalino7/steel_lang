@@ -1,15 +1,19 @@
 use std::ops::Range;
 
+/// Identifies a source file. `FileId(0)` is the prelude.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Default, PartialOrd, Ord)]
+pub struct FileId(pub u32);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Span {
     pub start: usize,
     pub end: usize,
     pub line: u32,
-    pub file_id: u32,
+    pub file_id: FileId,
 }
 
 impl Span {
-    pub const fn new(start: usize, end: usize, line: u32, file_id: u32) -> Self {
+    pub const fn new(start: usize, end: usize, line: u32, file_id: FileId) -> Self {
         Self {
             start,
             end,

@@ -1,5 +1,6 @@
 use crate::diagnostics::{Diagnostic, LabelKind, Level};
 use crate::resolver::{FileId, ModuleGraph};
+use crate::typechecker::system::PRELUDE_FILE;
 use ariadne::{Cache, Color, Config, Label, Report, ReportKind, sources};
 use std::ops::Range;
 
@@ -69,10 +70,10 @@ pub fn cache(graph: &ModuleGraph) -> impl Cache<String> {
     )
 }
 
-fn file_id_to_name(file_id: u32, module_graph: &ModuleGraph) -> String {
-    let mod_id = *module_graph
-        .file_to_module_id
-        .get(&FileId(file_id))
-        .unwrap();
+fn file_id_to_name(file_id: FileId, module_graph: &ModuleGraph) -> String {
+    if file_id == PRELUDE_FILE {
+        return "prelude".to_string();
+    }
+    let mod_id = *module_graph.file_to_module_id.get(&file_id).unwrap();
     module_graph.modules[mod_id.0 as usize].name.clone()
 }

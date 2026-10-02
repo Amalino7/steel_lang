@@ -1,5 +1,5 @@
 use crate::parser::ast::Expr;
-use crate::scanner::Token;
+use crate::scanner::{FileId, Token};
 use crate::typechecker::core::ast::{ExprKind, TypedExpr};
 use crate::typechecker::core::error::{
     Mismatch, MismatchContext, Operand, TypeCheckerError, TypeCheckerWarning, TypeRequirement,
@@ -219,7 +219,10 @@ impl<'src> TypeChecker<'src> {
                 .ty
                 .unwrap_optional_safe(safe, member_token.span, &mut self.warnings);
 
-        if let Ok((idx, field_type)) = resolve_member_type(&actual_ty, member_token, self.sys) {
+        if let Ok((idx, field_type)) =
+            resolve_member_type(&actual_ty, member_token, self.sys, self.file_id)
+        {
+            self.check_field_access(&actual_ty, idx, member_token);
             let mut expr = TypedExpr {
                 ty: field_type,
                 span: object_typed.span.merge(member_token.span),
@@ -296,13 +299,14 @@ impl<'src> TypeChecker<'src> {
                 span: object_expr.span,
             })?;
 
-        let lookup_result = self.type_scopes.lookup_method(type_id, method_token.lexeme);
+        let lookup_result = self.lookup_method(type_id, method_token.lexeme);
 
         let Some(method_id) = lookup_result else {
-            let mut candidates = self.type_scopes.get_methods_for_type(type_id);
+            let mut candidates = self.method_names_for_type(type_id);
             // Add field names if this is a struct type
             if let NameTypeId::Struct(id) = type_id {
-                candidates.extend(self.sys.get_struct(id).fields.keys().cloned());
+                let def = self.sys.get_struct(id);
+                candidates.extend(def.visible_field_names(self.file_id).cloned());
             }
 
             let suggestions = similarity::find_similar(
@@ -322,7 +326,8 @@ impl<'src> TypeChecker<'src> {
             )));
         };
 
-        let method_info = self.sys.get_method_info(*method_id);
+        self.check_method_access(method_id, method_token);
+        let method_info = self.sys.get_method_info(method_id);
 
         let definition_span = method_info.origin;
         let method_type = method_info.func_type.clone();
@@ -388,6 +393,22 @@ impl<'src> TypeChecker<'src> {
             },
         })
     }
+    pub(crate) fn check_field_access(&mut self, ty: &Type, idx: u8, field: &Token) {
+        let Type::Struct(id, _) = ty else { return };
+        let def = self.sys.get_struct(*id);
+        if def.is_field_public(idx as usize) || def.origin.file_id == self.file_id {
+            return;
+        }
+        let error = TypeCheckerError::PrivateField {
+            struct_name: def.name.clone(),
+            field_name: field.lexeme.into(),
+            module: self.module_graph.module_name_of_file(def.origin.file_id),
+            span: field.span,
+            definition: def.field_span(idx as usize),
+        };
+        self.report(error);
+    }
+
     pub(crate) fn with_member_access<F>(
         &mut self,
         object_expr: &Expr<'src>,
@@ -404,7 +425,8 @@ impl<'src> TypeChecker<'src> {
                 .ty
                 .unwrap_optional_safe(safe, field.span, &mut self.warnings);
 
-        let (index, field_type) = resolve_member_type(&parent_type, field, self.sys)?;
+        let (index, field_type) = resolve_member_type(&parent_type, field, self.sys, self.file_id)?;
+        self.check_field_access(&parent_type, index, field);
         callback(self, object_typed, index, field_type, safe)
     }
 }
@@ -413,6 +435,7 @@ fn resolve_member_type(
     parent_type: &Type,
     field: &Token,
     sys: &TypeSystem,
+    file_id: FileId,
 ) -> Result<(u8, Type), TypeCheckerError> {
     match parent_type {
         Type::Tuple(tuple_type) => {
@@ -442,8 +465,10 @@ fn resolve_member_type(
             let (field_id, ty) = struct_def
                 .get_field(field.lexeme, generics)
                 .ok_or_else(|| {
-                    let field_names: Vec<&str> =
-                        struct_def.fields.keys().map(|s| s.as_ref()).collect();
+                    let field_names: Vec<&str> = struct_def
+                        .visible_field_names(file_id)
+                        .map(|name| name.as_ref())
+                        .collect();
                     let suggestions = similarity::find_similar(field.lexeme, field_names, 3);
                     TypeCheckerError::UndefinedField {
                         struct_name: struct_def.name.clone(),

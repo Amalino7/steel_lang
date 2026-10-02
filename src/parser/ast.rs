@@ -207,9 +207,17 @@ impl Display for Binding<'_> {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct StructField<'src> {
+    pub is_public: bool,
+    pub name: Token<'src>,
+    pub type_info: TypeAst<'src>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum Stmt<'src> {
     Expression(Expr<'src>),
     Let {
+        is_public: bool,
         binding: Binding<'src>,
         value: Expr<'src>,
         type_info: TypeAst<'src>,
@@ -223,19 +231,22 @@ pub enum Stmt<'src> {
         body: Box<Stmt<'src>>,
     },
     Function {
+        is_public: bool,
         name: Token<'src>,
         body: Box<Stmt<'src>>,
         generics: Vec<Token<'src>>,
         signature: FunctionSig<'src>,
     },
     ExternFunction {
+        is_public: bool,
         name: Token<'src>,
         generics: Vec<Token<'src>>,
         signature: FunctionSig<'src>,
     },
     Struct {
+        is_public: bool,
         name: Token<'src>,
-        fields: Vec<(Token<'src>, TypeAst<'src>)>,
+        fields: Vec<StructField<'src>>,
         generics: Vec<Token<'src>>,
     },
     Impl {
@@ -246,11 +257,13 @@ pub enum Stmt<'src> {
     },
     Import(ImportStmt<'src>),
     Interface {
+        is_public: bool,
         name: Token<'src>,
         methods: Vec<MethodSig<'src>>,
         generics: Vec<Token<'src>>,
     },
     Enum {
+        is_public: bool,
         name: Token<'src>,
         variants: Vec<(Token<'src>, VariantType<'src>)>,
         generics: Vec<Token<'src>>,
@@ -287,7 +300,7 @@ pub enum ImportType<'src> {
 #[derive(Clone, Debug, PartialEq)]
 pub enum VariantType<'src> {
     Tuple(Vec<TypeAst<'src>>),
-    Struct(Vec<(Token<'src>, TypeAst<'src>)>),
+    Struct(Vec<StructField<'src>>),
     Unit,
 }
 
@@ -597,8 +610,12 @@ impl Display for Stmt<'_> {
                 name,
                 body,
                 signature,
+                is_public,
                 ..
             } => {
+                if *is_public {
+                    write!(f, "public ")?;
+                }
                 write!(
                     f,
                     "func {}({}) {}",
@@ -613,8 +630,14 @@ impl Display for Stmt<'_> {
                 )
             }
             Stmt::ExternFunction {
-                name, signature, ..
+                name,
+                signature,
+                is_public,
+                ..
             } => {
+                if *is_public {
+                    write!(f, "public ")?;
+                }
                 write!(
                     f,
                     "extern func {}({});",
@@ -628,14 +651,21 @@ impl Display for Stmt<'_> {
                 )
             }
             Stmt::Struct {
+                is_public,
                 name,
                 fields,
                 generics,
             } => {
+                if *is_public {
+                    write!(f, "public ")?;
+                }
                 write!(f, "struct {} {{", name.lexeme)?;
                 print_generics(f, generics)?;
                 for field in fields {
-                    write!(f, "{} : {}, ", field.0.lexeme, field.1)?;
+                    if field.is_public {
+                        write!(f, "public ")?;
+                    }
+                    write!(f, "{} : {}, ", field.name.lexeme, field.type_info)?;
                 }
                 write!(f, "}}")
             }
@@ -662,10 +692,14 @@ impl Display for Stmt<'_> {
                 write!(f, "}}")
             }
             Stmt::Interface {
+                is_public,
                 name,
                 methods,
                 generics,
             } => {
+                if *is_public {
+                    write!(f, "public ")?;
+                }
                 write!(f, "interface {}", name.lexeme)?;
                 print_generics(f, generics)?;
                 write!(f, ": {{")?;
@@ -689,7 +723,11 @@ impl Display for Stmt<'_> {
                 name,
                 variants,
                 generics,
+                is_public,
             } => {
+                if *is_public {
+                    write!(f, "public ")?;
+                }
                 write!(f, "enum {}", name.lexeme)?;
                 print_generics(f, generics)?;
                 write!(f, "{{")?;
@@ -705,8 +743,8 @@ impl Display for Stmt<'_> {
                         }
                         VariantType::Struct(str) => {
                             write!(f, "{{")?;
-                            for (name, ty) in str {
-                                write!(f, "{} : {},", name.lexeme, ty)?;
+                            for field in str {
+                                write!(f, "{} : {},", field.name.lexeme, field.type_info)?;
                             }
                             write!(f, "}}")?;
                         }
@@ -854,7 +892,7 @@ impl Stmt<'_> {
             } => name.span.merge(signature.return_type.span()),
             Stmt::Struct { name, fields, .. } => fields
                 .last()
-                .map(|(field, _)| name.span.merge(field.span))
+                .map(|field| name.span.merge(field.name.span))
                 .unwrap_or(name.span),
             Stmt::Impl { name, methods, .. } => methods
                 .last()

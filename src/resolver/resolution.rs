@@ -237,7 +237,7 @@ impl ModuleResolver {
         file_id: FileId,
         module_to_source: &impl Fn(&str) -> Result<(String, PathBuf), ResolverError>,
     ) -> (Vec<ModuleId>, String) {
-        let scanner = Scanner::new(&source, file_id.0);
+        let scanner = Scanner::new(&source, file_id);
         let mut parser = Parser::new(scanner);
         let deps = parser
             .parse()

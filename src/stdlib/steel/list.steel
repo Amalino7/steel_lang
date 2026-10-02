@@ -1,12 +1,12 @@
 impl<Val> List<Val> {
-    extern func len(self): number;
-    extern func is_empty(self): boolean;
-    extern func push(self, value: Val): void;
-    extern func pop(self): Val?;
-    extern func slice(self, start: number, end_exclusive: number): List<Val>;
-    extern func concat(self, other: List<Val>): List<Val>;
+    public extern func len(self): number;
+    public extern func is_empty(self): boolean;
+    public extern func push(self, value: Val): void;
+    public extern func pop(self): Val?;
+    public extern func slice(self, start: number, end_exclusive: number): List<Val>;
+    public extern func concat(self, other: List<Val>): List<Val>;
 
-    func contains(self, value: Val): boolean {
+    public func contains(self, value: Val): boolean {
         let i = 0;
         while i < self.len() {
             if self[i] == value {
@@ -17,7 +17,7 @@ impl<Val> List<Val> {
         return false;
     }
 
-    func fold<U>(self, initial: U, f: func(U, Val): U): U {
+    public func fold<U>(self, initial: U, f: func(U, Val): U): U {
         let result = initial;
         let i = 0;
         while i < self.len() {
@@ -27,7 +27,7 @@ impl<Val> List<Val> {
         return result;
     }
 
-    func each(self, f: func(Val)): void {
+    public func each(self, f: func(Val)): void {
         let i = 0;
         while i < self.len() {
             f(self[i]);
@@ -35,7 +35,7 @@ impl<Val> List<Val> {
         }
     }
 
-    func map<M>(self, f: func(Val): M): List<M> {
+    public func map<M>(self, f: func(Val): M): List<M> {
         let out: List<M> = [];
         let i = 0;
         while i < self.len() {
@@ -46,7 +46,7 @@ impl<Val> List<Val> {
         return out;
     }
 
-    func filter(self, f: func(Val): boolean): List<Val> {
+    public func filter(self, f: func(Val): boolean): List<Val> {
         let out: List<Val> = [];
         let i = 0;
         while i < self.len() {
@@ -58,21 +58,21 @@ impl<Val> List<Val> {
         return out;
     }
 
-    func first(self): Val? {
+    public func first(self): Val? {
         if self.len() > 0 {
             return self[0];
         }
         return nil;
     }
 
-    func last(self): Val? {
+    public func last(self): Val? {
         if self.len() > 0 {
             return self[self.len() - 1];
         }
         return nil;
     }
 
-    func reverse(self): List<Val> {
+    public func reverse(self): List<Val> {
         let out: List<Val> = [];
         let i = self.len() - 1;
         while i >= 0 {
@@ -82,7 +82,7 @@ impl<Val> List<Val> {
         return out;
     }
 
-    func any(self, f: func(Val): boolean): boolean {
+    public func any(self, f: func(Val): boolean): boolean {
         let i = 0;
         while i < self.len() {
             if f(self[i]) {
@@ -93,7 +93,7 @@ impl<Val> List<Val> {
         return false;
     }
 
-    func all(self, f: func(Val): boolean): boolean {
+    public func all(self, f: func(Val): boolean): boolean {
         let i = 0;
         while i < self.len() {
             if !f(self[i]) {
@@ -104,7 +104,7 @@ impl<Val> List<Val> {
         return true;
     }
 
-    func find(self, f: func(Val): boolean): Val? {
+    public func find(self, f: func(Val): boolean): Val? {
         let i = 0;
         while i < self.len() {
             if f(self[i]) {
@@ -115,7 +115,7 @@ impl<Val> List<Val> {
         return nil;
     }
 
-    func count(self, f: func(Val): boolean): number {
+    public func count(self, f: func(Val): boolean): number {
         let n = 0;
         let i = 0;
         while i < self.len() {
@@ -127,7 +127,7 @@ impl<Val> List<Val> {
         return n;
     }
 
-    func index_of(self, value: Val): number? {
+    public func index_of(self, value: Val): number? {
         let i = 0;
         while i < self.len() {
             if self[i] == value {
@@ -138,7 +138,7 @@ impl<Val> List<Val> {
         return nil;
     }
 
-    func flat_map<M>(self, f: func(Val): List<M>): List<M> {
+    public func flat_map<M>(self, f: func(Val): List<M>): List<M> {
         let out: List<M> = [];
         let i = 0;
         while i < self.len() {
@@ -149,7 +149,7 @@ impl<Val> List<Val> {
         return out;
     }
 
-    func sort_by(self, less_than: func(Val, Val): boolean): List<Val> {
+    public func sort_by(self, less_than: func(Val, Val): boolean): List<Val> {
         let out: List<Val> = [];
         let i = 0;
         while i < self.len() {
@@ -199,12 +199,12 @@ impl<Val> List<Val> {
 }
 
 impl List<number> {
-    func sum(self): number {
+    public func sum(self): number {
         func add(a: number, b: number): number { return a + b; }
         return self.fold(0, add);
     }
 
-    func min(self): number? {
+    public func min(self): number? {
         if self.is_empty() { return nil; }
         let m = self[0];
         let i = 1;
@@ -215,7 +215,7 @@ impl List<number> {
         return m;
     }
 
-    func max(self): number? {
+    public func max(self): number? {
         if self.is_empty() { return nil; }
         let m = self[0];
         let i = 1;
@@ -228,5 +228,5 @@ impl List<number> {
 }
 
 impl List<string> {
-    extern func join(self, sep: string): string;
+    public extern func join(self, sep: string): string;
 }

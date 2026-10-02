@@ -6,7 +6,7 @@ use crate::parser::Parser;
 use crate::resolver::{Exports, FileId, ModuleGraph, ModuleResolver};
 use crate::scanner::Scanner;
 use crate::stdlib::{NativeDef, get_natives, get_prelude};
-use crate::typechecker::system::TypeSystem;
+use crate::typechecker::system::{PRELUDE_FILE, TypeSystem};
 use crate::typechecker::{GlobalIdGenerator, TypeChecker};
 use crate::vm::VM;
 use crate::vm::gc::{GarbageCollector, Gc};
@@ -61,7 +61,7 @@ pub fn pipeline(config: &RunConfig) -> RunOutput {
             config,
             "prelude",
             prelude,
-            FileId(0),
+            PRELUDE_FILE,
             &natives,
             &mut ctx,
             &graph,
@@ -184,7 +184,7 @@ fn process_file(
     let emit_types = config.debug || config.emit.contains(&EmitTarget::Types);
 
     let t = Instant::now();
-    let scanner = Scanner::new(src, file_id.0);
+    let scanner = Scanner::new(src, file_id);
     let mut parser = Parser::new(scanner);
 
     let ast = match parser.parse() {
@@ -211,7 +211,7 @@ fn process_file(
     }
 
     let t = Instant::now();
-    let mut ty_checker = TypeChecker::new(natives, &mut ctx.sys, &ctx.id_generator, graph);
+    let mut ty_checker = TypeChecker::new(natives, &mut ctx.sys, &ctx.id_generator, graph, file_id);
 
     match ty_checker.check(&ast, ctx.global_export.as_ref()) {
         Ok((typed_file, warn)) => {
@@ -254,7 +254,7 @@ fn process_file(
                     },
                 )
             }
-            export
+            *export
         }
     }
 }

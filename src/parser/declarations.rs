@@ -1,12 +1,17 @@
-use crate::parser::ast::{Binding, FunctionSig, MethodSig, Stmt, TypeAst, VariantType};
+use crate::parser::ast::{
+    Binding, FunctionSig, MethodSig, Stmt, StructField, TypeAst, VariantType,
+};
 use crate::parser::error::ParserError;
 use crate::parser::{Parser, TokT, check_token_type, match_token_type};
-use crate::scanner::{Span, Token, TokenType};
+use crate::scanner::{FileId, Span, Token, TokenType};
 
 type FunctionDecl<'src> = (Token<'src>, Vec<Token<'src>>, FunctionSig<'src>);
 
 impl<'src> Parser<'src> {
-    pub(super) fn let_declaration(&mut self) -> Result<Stmt<'src>, ParserError<'src>> {
+    pub(super) fn let_declaration(
+        &mut self,
+        is_public: bool,
+    ) -> Result<Stmt<'src>, ParserError<'src>> {
         let binding = self.parse_binding()?;
         let type_info = if match_token_type!(self, TokT::Colon) {
             self.type_block()?
@@ -18,6 +23,7 @@ impl<'src> Parser<'src> {
         let expr = self.expression()?;
         self.consume(TokT::Semicolon, "Expected ';' after variable declaration.")?;
         Ok(Stmt::Let {
+            is_public,
             binding,
             value: expr,
             type_info,
@@ -114,12 +120,14 @@ impl<'src> Parser<'src> {
 
     pub(super) fn func_declaration(
         &mut self,
+        is_public: bool,
         is_method: bool,
     ) -> Result<Stmt<'src>, ParserError<'src>> {
         let (name, generics, signature) = self.func_signature(is_method)?;
         let body = self.block()?;
 
         Ok(Stmt::Function {
+            is_public,
             generics,
             signature,
             name,
@@ -129,6 +137,7 @@ impl<'src> Parser<'src> {
 
     pub(super) fn extern_func_declaration(
         &mut self,
+        is_public: bool,
         is_method: bool,
     ) -> Result<Stmt<'src>, ParserError<'src>> {
         let (name, generics, signature) = self.func_signature(is_method)?;
@@ -137,6 +146,7 @@ impl<'src> Parser<'src> {
             "Expected ';' after extern function signature.",
         )?;
         Ok(Stmt::ExternFunction {
+            is_public,
             name,
             generics,
             signature,
@@ -203,7 +213,7 @@ impl<'src> Parser<'src> {
     pub(super) fn type_block(&mut self) -> Result<TypeAst<'src>, ParserError<'src>> {
         const UNDER: Token<'static> = Token {
             token_type: TokenType::Identifier,
-            span: Span::new(0, 0, 0, 0),
+            span: Span::new(0, 0, 0, FileId(0)),
             lexeme: "_",
         };
 
@@ -290,7 +300,10 @@ impl<'src> Parser<'src> {
         }
     }
 
-    pub(super) fn struct_declaration(&mut self) -> Result<Stmt<'src>, ParserError<'src>> {
+    pub(super) fn struct_declaration(
+        &mut self,
+        is_public: bool,
+    ) -> Result<Stmt<'src>, ParserError<'src>> {
         self.consume(TokT::Identifier, "Expected struct name.")?;
         let name = self.previous_token.clone();
 
@@ -299,23 +312,32 @@ impl<'src> Parser<'src> {
         let mut fields = vec![];
 
         while !check_token_type!(self, TokT::RightBrace) {
+            let is_public = match_token_type!(self, TokT::Public);
             self.consume(TokT::Identifier, "Expected field name")?;
             let field_name = self.previous_token.clone();
             self.consume(TokT::Colon, "Expected ':' after field name")?;
             let field_type = self.type_block()?;
-            fields.push((field_name, field_type));
+            fields.push(StructField {
+                is_public,
+                name: field_name,
+                type_info: field_type,
+            });
             // TODO review trailing commas
             match_token_type!(self, TokT::Comma); // Optional trailing comma.
         }
         self.consume(TokT::RightBrace, "Expected '}' after struct body.")?;
         Ok(Stmt::Struct {
+            is_public,
             name,
             fields,
             generics,
         })
     }
 
-    pub(super) fn enum_declaration(&mut self) -> Result<Stmt<'src>, ParserError<'src>> {
+    pub(super) fn enum_declaration(
+        &mut self,
+        is_public: bool,
+    ) -> Result<Stmt<'src>, ParserError<'src>> {
         self.consume(TokT::Identifier, "Expected enum name.")?;
         let name = self.previous_token.clone();
         let generics = self.parse_generic_params()?;
@@ -323,6 +345,7 @@ impl<'src> Parser<'src> {
 
         let mut variants = vec![];
         while !check_token_type!(self, TokT::RightBrace) {
+            self.reject_public("enum variants are always as visible as the enum.")?;
             self.consume(TokT::Identifier, "Expected variant name.")?;
             let variant_name = self.previous_token.clone();
 
@@ -341,11 +364,16 @@ impl<'src> Parser<'src> {
                 // Struct Style: Variant { msg: string }
                 let mut fields = vec![];
                 while !check_token_type!(self, TokT::RightBrace) {
+                    self.reject_public("enum variant fields are always as visible as the enum.")?;
                     self.consume(TokT::Identifier, "Expected field name.")?;
                     let field_name = self.previous_token.clone();
                     self.consume(TokT::Colon, "Expected ':' after field name.")?;
                     let field_type = self.type_block()?;
-                    fields.push((field_name, field_type));
+                    fields.push(StructField {
+                        is_public: false,
+                        type_info: field_type,
+                        name: field_name,
+                    });
 
                     if !match_token_type!(self, TokT::Comma) {
                         break;
@@ -364,6 +392,7 @@ impl<'src> Parser<'src> {
         self.consume(TokT::RightBrace, "Expected '}' after enum body.")?;
 
         Ok(Stmt::Enum {
+            is_public,
             name,
             variants,
             generics,
@@ -402,13 +431,18 @@ impl<'src> Parser<'src> {
 
         self.consume(TokT::LeftBrace, "Expected '{' before impl block.")?;
         let mut methods = vec![];
-        while check_token_type!(self, TokT::Func) || check_token_type!(self, TokT::Extern) {
+        while check_token_type!(self, TokT::Func)
+            || check_token_type!(self, TokT::Extern)
+            || check_token_type!(self, TokT::Public)
+        {
+            let is_public = match_token_type!(self, TokT::Public);
+
             if match_token_type!(self, TokT::Extern) {
                 self.consume(TokT::Func, "Expected 'func' after 'extern'.")?;
-                methods.push(self.extern_func_declaration(true)?);
+                methods.push(self.extern_func_declaration(is_public, true)?);
             } else {
                 match_token_type!(self, TokT::Func);
-                methods.push(self.func_declaration(true)?);
+                methods.push(self.func_declaration(is_public, true)?);
             }
         }
         self.consume(TokT::RightBrace, "Expected '}' after impl block.")?;
@@ -422,7 +456,21 @@ impl<'src> Parser<'src> {
         })
     }
 
-    pub(super) fn interface_declaration(&mut self) -> Result<Stmt<'src>, ParserError<'src>> {
+    /// Consumes a stray `public` and reports it, so parsing can continue normally.
+    fn reject_public(&mut self, message: &str) -> Result<(), ParserError<'src>> {
+        if match_token_type!(self, TokT::Public) {
+            self.errors.push(ParserError::ParseError {
+                token: self.previous_token.clone(),
+                message: format!("`public` is not allowed here: {message}"),
+            });
+        }
+        Ok(())
+    }
+
+    pub(super) fn interface_declaration(
+        &mut self,
+        is_public: bool,
+    ) -> Result<Stmt<'src>, ParserError<'src>> {
         self.consume(TokT::Identifier, "Expected interface name.")?;
         let name = self.previous_token.clone();
         let generics = self.parse_generic_params()?;
@@ -430,12 +478,14 @@ impl<'src> Parser<'src> {
         let mut methods = vec![];
 
         while !check_token_type!(self, TokT::RightBrace) {
+            self.reject_public("interface methods are always as visible as the interface.")?;
             self.consume(TokT::Func, "Expected 'func' in interface body.")?;
             methods.push(self.interface_method_sig()?);
         }
 
         self.consume(TokT::RightBrace, "Expected '}' after interface body.")?;
         Ok(Stmt::Interface {
+            is_public,
             name,
             methods,
             generics,

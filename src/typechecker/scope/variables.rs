@@ -14,6 +14,8 @@ pub struct VariableContext {
     pub(crate) was_read: bool,
     pub(crate) was_written: bool,
     pub(crate) original_type: Option<(ResolvedVar, Type)>,
+    /// Declared `public` in this module; imported copies are always private.
+    pub(crate) is_public: bool,
 }
 /// Describes whether a variable can be reassigned.
 /// Unique means it cannot be neither shadowed nor reassigned in the current scope.
@@ -66,18 +68,22 @@ impl VariableContext {
             was_read: false,
             was_written: false,
             original_type: None,
+            is_public: false,
         }
     }
 
     pub(crate) fn from_declaration(index: usize, decl: Declaration) -> Self {
-        VariableContext::new(
-            decl.name,
-            decl.type_info,
-            index,
-            decl.span,
-            decl.mutability,
-            decl.kind,
-        )
+        VariableContext {
+            is_public: decl.is_public,
+            ..VariableContext::new(
+                decl.name,
+                decl.type_info,
+                index,
+                decl.span,
+                decl.mutability,
+                decl.kind,
+            )
+        }
     }
 
     pub fn is_reassignable(&self) -> bool {
@@ -91,9 +97,15 @@ pub struct Declaration {
     pub span: Span,
     pub mutability: Mutability,
     pub kind: DeclarationKind,
+    pub is_public: bool,
 }
 
 impl Declaration {
+    pub fn public(mut self, is_public: bool) -> Self {
+        self.is_public = is_public;
+        self
+    }
+
     // TODO use when adding mutability to variables.
     #[allow(dead_code)]
     pub fn variable(name: Symbol, type_info: Type, span: Span) -> Self {
@@ -103,6 +115,7 @@ impl Declaration {
             span,
             mutability: Mutability::Immutable,
             kind: DeclarationKind::Variable,
+            is_public: false,
         }
     }
 
@@ -113,6 +126,7 @@ impl Declaration {
             span,
             mutability: Mutability::Mutable,
             kind: DeclarationKind::Variable,
+            is_public: false,
         }
     }
 
@@ -124,6 +138,7 @@ impl Declaration {
             span,
             mutability: Mutability::Immutable,
             kind: DeclarationKind::Binding,
+            is_public: false,
         }
     }
 
@@ -134,6 +149,7 @@ impl Declaration {
             span,
             mutability: Mutability::Unique,
             kind: DeclarationKind::Parameter,
+            is_public: false,
         }
     }
 
@@ -144,6 +160,7 @@ impl Declaration {
             span,
             mutability: Mutability::Unique,
             kind: DeclarationKind::Function,
+            is_public: false,
         }
     }
     pub fn function(name: Symbol, type_info: Type, span: Span) -> Self {
@@ -153,16 +170,7 @@ impl Declaration {
             span,
             mutability: Mutability::Immutable,
             kind: DeclarationKind::Function,
-        }
-    }
-
-    pub fn method(name: Symbol, type_info: Type, span: Span) -> Self {
-        Declaration {
-            name,
-            type_info,
-            span,
-            mutability: Mutability::Unique,
-            kind: DeclarationKind::Method,
+            is_public: false,
         }
     }
 }

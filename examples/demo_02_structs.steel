@@ -1,0 +1,83 @@
+// ─────────────────────────────────────────────
+//  Steel Language Demo — 02: Structs & Interfaces
+//  Structs · Impl Blocks · Interface Polymorphism
+// ─────────────────────────────────────────────
+
+// ── Interface definition ───────────────────────
+interface Shape {
+    func area(self): number;
+    func perimeter(self): number;
+    func describe(self): string;
+}
+
+// ── Circle ─────────────────────────────────────
+struct Circle {
+    radius: number,
+}
+
+impl Circle : Shape {
+    func area(self): number {
+        return 3.14159 * self.radius * self.radius;
+    }
+    func perimeter(self): number {
+        return 2 * 3.14159 * self.radius;
+    }
+    func describe(self): string {
+        return "Circle(r=${self.radius})";
+    }
+}
+
+// ── Rectangle ──────────────────────────────────
+struct Rectangle {
+    width: number,
+    height: number,
+}
+
+impl Rectangle : Shape {
+    func area(self): number {
+        return self.width * self.height;
+    }
+    func perimeter(self): number {
+        return 2 * (self.width + self.height);
+    }
+    func describe(self): string {
+        return "Rectangle(${self.width} × ${self.height})";
+    }
+}
+
+// ── Triangle ───────────────────────────────────
+struct Triangle {
+    base: number,
+    height: number,
+    side_a: number,
+    side_b: number,
+    side_c: number,
+}
+
+impl Triangle : Shape {
+    func area(self): number {
+        return 0.5 * self.base * self.height;
+    }
+    func perimeter(self): number {
+        return self.side_a + self.side_b + self.side_c;
+    }
+    func describe(self): string {
+        return "Triangle(base=${self.base}, h=${self.height})";
+    }
+}
+
+// ── Polymorphic function ───────────────────────
+func print_shape(s: Shape): void {
+    println("${s.describe()}  area=${s.area()}  perimeter=${s.perimeter()}");
+}
+
+let c = Circle(radius: 5);
+let r = Rectangle(width: 8, height: 3);
+let t = Triangle(base: 6, height: 4, side_a: 5, side_b: 5, side_c: 6);
+
+print_shape(c);
+print_shape(r);
+print_shape(t);
+
+// Methods are first-class on the concrete type too
+println("Circle alone: area = ${c.area()}");

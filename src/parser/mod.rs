@@ -115,7 +115,7 @@ impl<'src> Parser<'src> {
     pub fn parse(&mut self) -> Result<Vec<Stmt<'src>>, Vec<ParserError<'src>>> {
         let mut statements = vec![];
         while !self.scanner.is_at_end() {
-            match self.declaration() {
+            match self.declaration(true) {
                 Ok(stmt) => statements.push(stmt),
                 Err(e) => {
                     self.errors.push(e);
@@ -158,10 +158,10 @@ impl<'src> Parser<'src> {
 #[cfg(test)]
 mod tests {
     use crate::parser::Parser;
-    use crate::scanner::Scanner;
+    use crate::scanner::{FileId, Scanner};
 
     fn parse_snapshot(source: &str) -> String {
-        let scanner = Scanner::new(source, 0);
+        let scanner = Scanner::new(source, FileId(0));
         let mut parser = Parser::new(scanner);
         match parser.parse() {
             Ok(stmts) => stmts
@@ -502,7 +502,7 @@ mod tests {
     #[test]
     fn test_parser_error_missing_semicolon() {
         let source = "let a = 10";
-        let scanner = Scanner::new(source, 0);
+        let scanner = Scanner::new(source, FileId(0));
         let mut parser = Parser::new(scanner);
         let res = parser.parse();
         assert!(res.is_err(), "Parser should error on missing semicolon");
@@ -511,7 +511,7 @@ mod tests {
     #[test]
     fn test_parser_error_missing_right_paren() {
         let source = "let a = (10 + 2;";
-        let scanner = Scanner::new(source, 0);
+        let scanner = Scanner::new(source, FileId(0));
         let mut parser = Parser::new(scanner);
         assert!(
             parser.parse().is_err(),
@@ -529,8 +529,70 @@ mod tests {
         } else {
             println("a is equal to 0");
         }"#;
-        let scanner = Scanner::new(source, 0);
+        let scanner = Scanner::new(source, FileId(0));
         let mut parser = Parser::new(scanner);
         let _ast = parser.parse().expect("Failed to parse.");
+    }
+
+    fn parse_errors(source: &str) -> usize {
+        let scanner = Scanner::new(source, FileId(0));
+        let mut parser = Parser::new(scanner);
+        parser.parse().err().map_or(0, |e| e.len())
+    }
+
+    #[test]
+    fn test_public_struct_fields_and_interface_parse() {
+        let source = "public struct P { public x: number, y: number } public interface I { func f(self): void; }";
+        let output = parse_snapshot(source);
+        assert!(output.contains("public x"));
+        assert!(output.contains("public interface I"));
+        assert_eq!(parse_errors(source), 0);
+    }
+
+    #[test]
+    fn test_public_declarations_display_with_space() {
+        let source =
+            "public func f() {} public extern func g(); public struct S {} public enum E { A }";
+        let output = parse_snapshot(source);
+        for expected in [
+            "public func f",
+            "public extern func g",
+            "public struct S",
+            "public enum E",
+        ] {
+            assert!(
+                output.contains(expected),
+                "missing `{expected}` in:
+{output}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_public_in_block_is_error() {
+        assert_eq!(parse_errors("func f(): void { public let x = 1; }"), 1);
+    }
+
+    #[test]
+    fn test_public_impl_is_error() {
+        assert_eq!(parse_errors("struct P {} public impl P {}"), 1);
+    }
+
+    #[test]
+    fn test_public_import_is_error() {
+        assert_eq!(parse_errors("public import a/b;"), 1);
+    }
+
+    #[test]
+    fn test_public_enum_variant_is_error() {
+        assert_eq!(parse_errors("enum E { public A }"), 1);
+    }
+
+    #[test]
+    fn test_public_interface_method_is_error() {
+        assert_eq!(
+            parse_errors("interface I { public func f(self): void; }"),
+            1
+        );
     }
 }

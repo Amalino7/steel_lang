@@ -1,1 +1,32 @@
+# Build output
 /target
+**/*.rs.bk
+*.pdb
+
+# IDEs / editor tooling
+.idea/
+.junie/
+.vscode/
+*.iml
+*.swp
+*~
+
+# Local MCP / agent configuration (per-machine)
+.mcp.json
+.claude/settings.local.json
+CLAUDE.local.md
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Profiling and benchmark output
+/criterion/
+flamegraph.svg
+perf.data*
+*.profraw
+
+# Scratch files
+*.log
+*.tmp

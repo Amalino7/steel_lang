@@ -14,10 +14,12 @@ use system::TypeSystem;
 
 mod check;
 pub mod core;
-mod exports;
 mod flow_analysis;
 pub mod id_issuer;
 pub(crate) mod inference;
+pub(crate) mod method_table;
+mod methods;
+mod modules;
 mod refinements;
 pub(crate) mod resolver;
 pub(crate) mod scope;
@@ -26,7 +28,7 @@ pub(crate) mod system;
 #[cfg(test)]
 mod tests;
 
-use crate::resolver::{Exports, ModuleGraph};
+use crate::resolver::{Exports, FileId, ModuleGraph};
 use crate::typechecker::core::ast::FunctionBody;
 use crate::typechecker::core::types::Type;
 pub use crate::typechecker::id_issuer::{GlobalId, GlobalIdGenerator};
@@ -42,7 +44,12 @@ pub struct TypeChecker<'ctx> {
     errors: Vec<TypeCheckerError>,
     warnings: Vec<TypeCheckerWarning>,
     infer_ctx: InferenceContext,
+    file_id: FileId,
 }
+
+/// On failure the exports are still returned (boxed: they are large) so dependents can keep checking.
+pub type CheckResult =
+    Result<(TypedFile, Vec<TypeCheckerWarning>), (Vec<TypeCheckerError>, Box<Exports>)>;
 
 #[derive(Debug)]
 pub struct TypedFile {
@@ -58,6 +65,7 @@ impl<'ctx> TypeChecker<'ctx> {
         sys: &'ctx mut TypeSystem,
         id_generator: &'ctx GlobalIdGenerator,
         module_graph: &'ctx ModuleGraph,
+        file_id: FileId,
     ) -> Self {
         let mut ty_manager = TypeScopeManager::new();
         ty_manager
@@ -77,18 +85,15 @@ impl<'ctx> TypeChecker<'ctx> {
             infer_ctx: InferenceContext::new(),
             id_generator,
             module_graph,
+            file_id,
         }
     }
 
-    pub fn check(
-        &mut self,
-        ast: &[Stmt<'ctx>],
-        exports: Option<&Exports>,
-    ) -> Result<(TypedFile, Vec<TypeCheckerWarning>), (Vec<TypeCheckerError>, Exports)> {
+    pub fn check(&mut self, ast: &[Stmt<'ctx>], exports: Option<&Exports>) -> CheckResult {
         self.scopes.begin_scope(ScopeKind::Global);
 
         if let Some(exports) = exports {
-            self.import_all(exports);
+            self.import_all(exports, system::PRELUDE_FILE, None);
         }
 
         let mut typed_ast = vec![];
@@ -119,9 +124,12 @@ impl<'ctx> TypeChecker<'ctx> {
         self.check_unreachable(&typed_ast);
 
         let exports = self.get_exports();
+        if self.errors.is_empty() {
+            self.check_leaks(&exports);
+        }
 
         if !self.errors.is_empty() {
-            Err((take(&mut self.errors), exports))
+            Err((take(&mut self.errors), Box::new(exports)))
         } else {
             Ok((
                 TypedFile {
@@ -150,7 +158,9 @@ impl<'ctx> TypeChecker<'ctx> {
         let mut slots = vec![];
         for native in self.natives.iter() {
             if let Some(ty) = &native.type_ {
-                let decl = Declaration::function(native.name.into(), ty.clone(), Span::default());
+                // Natives are part of the prelude surface; their default span is file 0.
+                let decl = Declaration::function(native.name.into(), ty.clone(), Span::default())
+                    .public(true);
                 let resolved = self
                     .scopes
                     .declare(decl)

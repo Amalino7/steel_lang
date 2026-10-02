@@ -61,29 +61,17 @@ pub(super) fn natives() -> Vec<NativeDef> {
         NativeDef {
             name: "number.pow",
             type_: None,
-            func: |args, _| {
-                Ok(Value::Number(
-                    as_number(&args[0]).powf(as_number(&args[1])),
-                ))
-            },
+            func: |args, _| Ok(Value::Number(as_number(&args[0]).powf(as_number(&args[1])))),
         },
         NativeDef {
             name: "number.min",
             type_: None,
-            func: |args, _| {
-                Ok(Value::Number(
-                    as_number(&args[0]).min(as_number(&args[1])),
-                ))
-            },
+            func: |args, _| Ok(Value::Number(as_number(&args[0]).min(as_number(&args[1])))),
         },
         NativeDef {
             name: "number.max",
             type_: None,
-            func: |args, _| {
-                Ok(Value::Number(
-                    as_number(&args[0]).max(as_number(&args[1])),
-                ))
-            },
+            func: |args, _| Ok(Value::Number(as_number(&args[0]).max(as_number(&args[1])))),
         },
     ]
 }

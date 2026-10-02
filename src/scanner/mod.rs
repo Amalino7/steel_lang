@@ -1,3 +1,4 @@
+pub use crate::scanner::span::FileId;
 pub(crate) use crate::scanner::span::Span;
 pub use crate::scanner::token::{Token, TokenType};
 use std::collections::HashMap;
@@ -10,7 +11,7 @@ pub struct Scanner<'src> {
     key_words: HashMap<&'static str, TokenType>,
     start: usize,
     current: usize,
-    file_id: u32,
+    file_id: FileId,
     line: u32,
     context_stack: Vec<InterpolationFrame>,
 }
@@ -22,7 +23,7 @@ struct InterpolationFrame {
 }
 
 impl<'src> Scanner<'src> {
-    pub fn new(src: &'src str, file_id: u32) -> Self {
+    pub fn new(src: &'src str, file_id: FileId) -> Self {
         Scanner {
             src,
             key_words: keywords(),

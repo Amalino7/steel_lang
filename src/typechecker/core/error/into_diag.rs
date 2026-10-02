@@ -208,16 +208,13 @@ impl IntoDiagnostic for TypeCheckerError {
                     "Invalid operand types here.",
                 ).with_help(err.help)
             }
-            TypeCheckerError::PrimitiveTypeShadowing { .. } => {
-                todo!()
-            }
             TypeCheckerError::Duplicate(err) => {
                 DiagBuilder::error(
                     err.span,
                     code,
                     format!("Duplicate definition of {} {}", err.kind.noun(), err.name),
                     format!("Duplicate {} here.", err.kind.noun()),
-                ).with_origin(err.original, "First defined here.")
+                ).with_optional_origin(err.original, "First defined here.")
             }
             TypeCheckerError::CallParam(err) => {
                 let title = match err.kind {
@@ -340,7 +337,7 @@ impl IntoDiagnostic for TypeCheckerError {
                 ).with_optional_origin(err.type_origin, "Type defined here.")
                     .with_suggestion(&err.suggestions)
             }
-            TypeCheckerError::ImportNotFound { name, span, suggestions } => {
+            TypeCheckerError::ImportNotFound { name, span, suggestions, note } => {
                 DiagBuilder::error(
                     span,
                     code,
@@ -348,6 +345,95 @@ impl IntoDiagnostic for TypeCheckerError {
                     "Could not find this Item.",
                 )
                     .with_suggestion(&suggestions)
+                    .with_optional_note(note)
+            }
+            TypeCheckerError::PrivateImport { name, module, span, definition } => {
+                DiagBuilder::error(
+                    span,
+                    code,
+                    format!("'{}' is private to module '{}'", name, module),
+                    "This item is not public.",
+                )
+                    .with_origin(definition, "Defined here.")
+                    .with_help(format!("Mark '{}' as `public` to import it.", name))
+            }
+            TypeCheckerError::PrivateField { struct_name, field_name, module, span, definition } => {
+                DiagBuilder::error(
+                    span,
+                    code,
+                    format!("Field '{}' of '{}' is private to module '{}'", field_name, struct_name, module),
+                    "This field is not public.",
+                )
+                    .with_origin(definition, "Field declared here.")
+                    .with_help(format!("Mark '{}' as `public` in the struct declaration.", field_name))
+            }
+            TypeCheckerError::PrivateConstructor { struct_name, private_fields, module, span } => {
+                let names: Vec<&str> = private_fields.iter().map(|(name, _)| name.as_str()).collect();
+                let diag = DiagBuilder::error(
+                    span,
+                    code,
+                    format!("Cannot construct '{}': it has private fields ({}) in module '{}'", struct_name, names.join(", "), module),
+                    "Constructor is not accessible here.",
+                );
+                private_fields
+                    .into_iter()
+                    .fold(diag, |diag, (name, field_span)| {
+                        diag.with_origin(field_span, format!("Private field '{name}' declared here."))
+                    })
+                    .with_help("Mark all fields `public`, or provide a constructor function in the defining module.")
+            }
+            TypeCheckerError::PrivateMethod { method_name, module, span, definition } => {
+                DiagBuilder::error(
+                    span,
+                    code,
+                    format!("Method '{}' is private to module '{}'", method_name, module),
+                    "This method is not public.",
+                )
+                    .with_origin(definition, "Method defined here.")
+                    .with_help(format!("Mark '{}' as `public` to call it from other modules.", method_name))
+            }
+            TypeCheckerError::InterfaceMethodNotPublic { method_name, interface_name, span } => {
+                DiagBuilder::error(
+                    span,
+                    code,
+                    format!("Method '{}' implements interface '{}' and must be `public`", method_name, interface_name),
+                    "This method is not public.",
+                )
+                    .with_help(format!("Write `public func {}`.", method_name))
+            }
+            TypeCheckerError::PrivateTypeInPublicApi { item, private_type, span, type_origin } => {
+                DiagBuilder::error(
+                    span,
+                    code,
+                    format!("Private type '{}' is exposed by public item '{}'", private_type, item),
+                    "This public item mentions a private type.",
+                )
+                    .with_origin(type_origin, "Private type defined here.")
+                    .with_help(format!("Mark '{}' as `public`, or make '{}' private.", private_type, item))
+            }
+            TypeCheckerError::ExtensionShadowsInherent { method_name, type_name, span, inherent_origin } => {
+                DiagBuilder::error(
+                    span,
+                    code,
+                    format!("Extension method '{}' shadows an inherent method of '{}'", method_name, type_name),
+                    "This extension method is never reachable.",
+                )
+                    .with_origin(inherent_origin, "Inherent method defined here.")
+                    .with_help("Rename the extension method.")
+            }
+            TypeCheckerError::ConflictingExtension { method_name, type_name, span, first, second } => {
+                let diag = DiagBuilder::error(
+                    span,
+                    code,
+                    format!("Conflicting extension methods named '{}' on '{}'", method_name, type_name),
+                    "Both extensions are in scope here.",
+                )
+                    .with_origin(first, "First extension defined here.");
+                if second != span {
+                    diag.with_secondary(second, "Conflicting extension defined here.")
+                } else {
+                    diag
+                }
             }
         }
             .build()

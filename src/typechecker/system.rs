@@ -1,13 +1,17 @@
 use crate::compiler::analysis::ResolvedVar;
-use crate::scanner::{Span, Token};
+use crate::scanner::{FileId, Span, Token};
 use crate::typechecker::core::types::type_defs::{
-    EnumType, GenericType, InterfaceType, StructType,
+    EnumType, FieldDef, GenericType, InterfaceType, StructType,
 };
 use crate::typechecker::core::types::{
     EnumId, GenericTypeId, InterfaceId, NameTypeId, PrimitiveTypeId, Type,
 };
 use crate::typechecker::core::types::{StructId, Symbol};
+use crate::typechecker::method_table::MethodTable;
 use std::collections::HashMap;
+
+/// File id of the prelude. Builtin types also count as prelude-defined.
+pub const PRELUDE_FILE: FileId = FileId(0);
 
 /// Metadata about a method declared inside an impl block.
 pub struct ImplMethod {
@@ -18,6 +22,7 @@ pub struct ImplMethod {
     pub func_type: Type,
     pub location: ResolvedVar,
     pub origin: Span,
+    pub is_public: bool,
 }
 
 pub struct TypeSystem {
@@ -25,11 +30,11 @@ pub struct TypeSystem {
     interfaces: HashMap<InterfaceId, InterfaceType>,
     enums: HashMap<EnumId, EnumType>,
     generics: HashMap<GenericTypeId, GenericType>,
-
     builtins: BuiltinTypes,
 
-    impls: HashMap<(NameTypeId, InterfaceId), u32>,
+    inherent_methods: MethodTable,
     methods: HashMap<MethodId, ImplMethod>,
+    impls: HashMap<(NameTypeId, InterfaceId), u32>,
 }
 pub struct BuiltinTypes {
     pub list_id: StructId,
@@ -55,6 +60,7 @@ impl TypeSystem {
             impls: HashMap::new(),
             enums: HashMap::new(),
             methods: HashMap::new(),
+            inherent_methods: MethodTable::new(),
         }
     }
     fn built_in_structs() -> (
@@ -79,7 +85,7 @@ impl TypeSystem {
 
         structs.insert(
             list_id,
-            StructType::new(list_id, "List".into(), Span::default(), vec![val_id]),
+            StructType::new(list_id, "List".into(), Span::default(), vec![val_id], true),
         );
 
         let key_id = GenericTypeId(generics.len());
@@ -104,7 +110,13 @@ impl TypeSystem {
         let map_id = StructId(structs.len());
         structs.insert(
             map_id,
-            StructType::new(map_id, "Map".into(), Span::default(), vec![key_id, val_id]),
+            StructType::new(
+                map_id,
+                "Map".into(),
+                Span::default(),
+                vec![key_id, val_id],
+                true,
+            ),
         );
         let builtin = BuiltinTypes { list_id, map_id };
         (structs, builtin, generics)
@@ -128,51 +140,51 @@ impl TypeSystem {
         make_substitution_map(&params, args)
     }
 
-    /// Builds a substitution map from a concrete [`Type`].
-    pub fn get_generics_map(&self, ty: &Type) -> HashMap<GenericTypeId, Type> {
-        // TODO maybe excessive
-        let type_id: Option<NameTypeId> = match *ty {
-            Type::Struct(id, _) => Some(id.into()),
-            Type::Interface(id) => Some(id.into()),
-            Type::Enum(id, _) => Some(id.into()),
-            _ => None,
-        };
-        type_id
-            .map(|id| self.make_generics_map(id, ty.generic_args()))
-            .unwrap_or_default()
-    }
-
     #[must_use]
     pub fn declare_struct(
         &mut self,
         origin: Span,
         name: Symbol,
         generic_params: &[Token],
+        is_public: bool,
     ) -> StructId {
         let id = StructId(self.structs.len());
         let ids = self.declare_ids(generic_params);
         self.structs
-            .insert(id, StructType::new(id, name, origin, ids));
+            .insert(id, StructType::new(id, name, origin, ids, is_public));
         id
     }
 
     #[must_use]
-    pub fn declare_enum(&mut self, origin: Span, name: Symbol, generic_params: &[Token]) -> EnumId {
+    pub fn declare_enum(
+        &mut self,
+        origin: Span,
+        name: Symbol,
+        generic_params: &[Token],
+        is_public: bool,
+    ) -> EnumId {
         let ids = self.declare_ids(generic_params);
 
         let id = EnumId(self.enums.len());
-        self.enums.insert(id, EnumType::new(id, name, origin, ids));
+        self.enums
+            .insert(id, EnumType::new(id, name, origin, ids, is_public));
         id
     }
 
     #[must_use]
-    pub fn declare_interface(&mut self, name: Symbol, origin: Span) -> InterfaceId {
+    pub fn declare_interface(
+        &mut self,
+        name: Symbol,
+        origin: Span,
+        is_public: bool,
+    ) -> InterfaceId {
         let id = InterfaceId(self.interfaces.len());
         self.interfaces.insert(
             id,
             InterfaceType {
                 id,
                 origin,
+                is_public,
                 name,
                 methods: HashMap::new(),
             },
@@ -194,23 +206,14 @@ impl TypeSystem {
             .collect()
     }
 
-    pub fn define_struct(&mut self, id: StructId, fields_map: HashMap<Symbol, (usize, Type)>) {
+    pub fn define_struct(&mut self, id: StructId, ordered_fields: Vec<FieldDef>) {
         if let Some(s) = self.structs.get_mut(&id) {
-            let fields = fields_map
+            let fields = ordered_fields
                 .iter()
-                .map(|(k, (idx, _))| (k.clone(), *idx))
+                .map(|def| (def.name.clone(), def.index))
                 .collect();
 
-            let mut vec_fields = vec![None; fields_map.len()];
-            for (k, (idx, t)) in fields_map {
-                if idx < vec_fields.len() {
-                    vec_fields[idx] = Some((k, t));
-                }
-            }
-            s.init(
-                fields,
-                vec_fields.into_iter().map(|opt| opt.unwrap()).collect(),
-            );
+            s.init(fields, ordered_fields);
         }
     }
     pub fn define_enum(&mut self, id: &EnumId, variants: HashMap<Symbol, (usize, Type)>) {
@@ -295,8 +298,43 @@ impl TypeSystem {
         method_id
     }
 
+    /// Registers an inherent method; `Err(old)` if one with that name already exists.
+    pub fn declare_inherent_method(
+        &mut self,
+        ty_id: NameTypeId,
+        name: Symbol,
+        method_id: MethodId,
+    ) -> Result<(), MethodId> {
+        self.inherent_methods.declare(ty_id, name, method_id)
+    }
+
+    pub fn lookup_inherent_method(&self, ty_id: NameTypeId, name: &str) -> Option<MethodId> {
+        self.inherent_methods.lookup(ty_id, name)
+    }
+
+    pub fn inherent_method_names(&self, ty_id: NameTypeId) -> Vec<Symbol> {
+        self.inherent_methods.names_of(ty_id).cloned().collect()
+    }
+
+    pub fn inherent_methods_of(&self, ty_id: NameTypeId) -> Vec<MethodId> {
+        self.inherent_methods
+            .methods_of(ty_id)
+            .map(|(_, id)| id)
+            .collect()
+    }
+
     pub fn get_method_info(&self, method_id: MethodId) -> &ImplMethod {
         self.methods.get(&method_id).expect("Invalid Id issued!")
+    }
+
+    pub fn is_public(&self, id: NameTypeId) -> bool {
+        match id {
+            NameTypeId::Struct(id) => self.get_struct(id).is_public,
+            NameTypeId::Enum(id) => self.get_enum(id).is_public,
+            NameTypeId::Interface(id) => self.get_interface(id).is_public,
+            NameTypeId::Generic(_) => true,
+            NameTypeId::Primitive(_) => true,
+        }
     }
 
     pub fn get_origin(&self, id: NameTypeId) -> Option<Span> {
@@ -313,6 +351,16 @@ impl TypeSystem {
             NameTypeId::Interface(id) => Some(self.get_interface(id).origin),
             NameTypeId::Generic(id) => Some(self.get_generic(id).origin),
             NameTypeId::Primitive(_) => None,
+        }
+    }
+
+    pub fn defining_file(&self, id: NameTypeId) -> FileId {
+        match id {
+            NameTypeId::Struct(id) => self.get_struct(id).origin.file_id,
+            NameTypeId::Enum(id) => self.get_enum(id).origin.file_id,
+            NameTypeId::Interface(id) => self.get_interface(id).origin.file_id,
+            NameTypeId::Generic(id) => self.get_generic(id).origin.file_id,
+            NameTypeId::Primitive(_) => PRELUDE_FILE,
         }
     }
 

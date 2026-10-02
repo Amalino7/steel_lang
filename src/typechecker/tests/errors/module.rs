@@ -12,7 +12,7 @@ fn test_error_undefined_method_on_imported_type() {
     .with_module(
         "geometry",
         r#"
-        struct Point { x: number, y: number }
+        public struct Point { public x: number, public y: number }
         "#,
     )
     .expect_error(|e| matches!(e, TypeCheckerError::UndefinedMethod(_)))
@@ -30,7 +30,7 @@ fn test_error_type_mismatch_imported_function() {
     .with_module(
         "math",
         r#"
-        func add(a: number, b: number): number { return a + b; }
+        public func add(a: number, b: number): number { return a + b; }
         "#,
     )
     .expect_error(|e| {
@@ -54,9 +54,9 @@ fn test_error_type_mismatch_imported_method() {
     .with_module(
         "geometry",
         r#"
-        struct Point { x: number, y: number }
+        public struct Point { public x: number, public y: number }
         impl Point {
-            func add(self, other: Point): Point { return other; }
+            public func add(self, other: Point): Point { return other; }
         }
         "#,
     )
@@ -80,7 +80,7 @@ fn test_error_unimported_type_usage() {
     .with_module(
         "math",
         r#"
-        func add(a: number, b: number): number { return a + b; }
+        public func add(a: number, b: number): number { return a + b; }
         "#,
     )
     .expect_error(|e| matches!(e, TypeCheckerError::UndefinedType { .. }))
@@ -99,9 +99,9 @@ fn test_error_static_method_on_imported_instance() {
     .with_module(
         "geometry",
         r#"
-        struct Point { x: number, y: number }
+        public struct Point { public x: number, public y: number }
         impl Point {
-            func new(x: number, y: number): Point { return Point(x: x, y: y); }
+            public func new(x: number, y: number): Point { return Point(x: x, y: y); }
         }
         "#,
     )
@@ -121,7 +121,7 @@ fn test_error_imported_interface_missing_method() {
     .with_module(
         "contracts",
         r#"
-        interface Printable {
+        public interface Printable {
             func print(self): void;
         }
         "#,
@@ -141,7 +141,7 @@ fn test_item_does_not_exist() {
     .with_module(
         "outside",
         r#"
-        let meaning = "hello";
+        public let meaning = "hello";
     "#,
     )
     .expect_error(|e| {
@@ -166,7 +166,7 @@ fn test_item_close_name() {
     .with_module(
         "outside",
         r#"
-        let name = "James";
+        public let name = "James";
     "#,
     )
     .expect_error(|e| {

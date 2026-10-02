@@ -1,6 +1,6 @@
 use crate::parser::ast::{Binding, Expr, ExprMatchArm, Literal, Pattern, Stmt};
 use crate::parser::error::ParserError;
-use crate::parser::{check_next_token_type, check_token_type, match_token_type, Parser, TokT};
+use crate::parser::{Parser, TokT, check_next_token_type, check_token_type, match_token_type};
 
 impl<'src> Parser<'src> {
     pub(super) fn parse_block_expr(&mut self) -> Result<Expr<'src>, ParserError<'src>> {
@@ -15,7 +15,7 @@ impl<'src> Parser<'src> {
 
             // Items that are only ever statements — delegate to the full declaration path.
             if self.is_stmt_start() {
-                match self.declaration() {
+                match self.declaration(false) {
                     Ok(stmt) => body.push(stmt),
                     Err(e) => {
                         self.synchronize();

@@ -81,6 +81,12 @@ impl DiagBuilder {
         self.inner.notes.push(msg.into());
         self
     }
+    pub fn with_optional_note(self, msg: Option<String>) -> Self {
+        match msg {
+            Some(msg) => self.with_note(msg),
+            None => self,
+        }
+    }
     pub fn with_suggestion(self, suggestions: &[String]) -> Self {
         if suggestions.is_empty() {
             self

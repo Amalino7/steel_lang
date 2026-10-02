@@ -12,8 +12,8 @@ fn test_basic_module() {
     .with_module(
         "random.garbage",
         r#"
-        let one = 10;
-        let two = 20;
+        public let one = 10;
+        public let two = 20;
         "#,
     )
     .assert_runs()
@@ -31,7 +31,7 @@ fn test_module_alias_import() {
     .with_module(
         "math",
         r#"
-        func add(a: number, b: number): number { return a + b; }
+        public func add(a: number, b: number): number { return a + b; }
         "#,
     )
     .assert_runs()
@@ -49,8 +49,8 @@ fn test_module_glob_import() {
     .with_module(
         "values",
         r#"
-        let one = 10;
-        let two = 20;
+        public let one = 10;
+        public let two = 20;
         "#,
     )
     .assert_runs()
@@ -68,8 +68,8 @@ fn test_nested_module_imports() {
     .with_module(
         "package.math",
         r#"
-        let one = 10;
-        let two = 20;
+        public let one = 10;
+        public let two = 20;
         "#,
     )
     .assert_runs()
@@ -93,15 +93,15 @@ fn test_imported_struct_and_methods() {
     .with_module(
         "geometry",
         r#"
-        struct Point { x: number, y: number }
+        public struct Point { public x: number, public y: number }
         impl Point {
-            func new(x: number, y: number): Point {
+            public func new(x: number, y: number): Point {
                 return Point(x: x, y: y);
             }
-            func distance_squared(self): number {
+            public func distance_squared(self): number {
                 return self.x * self.x + self.y * self.y;
             }
-            func add(self, other: Point): Point {
+            public func add(self, other: Point): Point {
                 return Point(x: self.x + other.x, y: self.y + other.y);
             }
         }
@@ -123,9 +123,9 @@ fn test_imported_struct_alias_and_methods() {
     .with_module(
         "geometry",
         r#"
-        struct Point { x: number, y: number }
+        public struct Point { public x: number, public y: number }
         impl Point {
-            func length_squared(self): number {
+            public func length_squared(self): number {
                 return self.x * self.x + self.y * self.y;
             }
         }
@@ -151,15 +151,15 @@ fn test_imported_enum_and_methods() {
     .with_module(
         "results",
         r#"
-        enum Outcome { Success(number), Failure(string) }
+        public enum Outcome { Success(number), Failure(string) }
         impl Outcome {
-            func is_ok(self): boolean {
+            public func is_ok(self): boolean {
                 match self {
                     Outcome.Success(_) => { return true; }
                     Outcome.Failure(_) => { return false; }
                 }
             }
-            func unwrap_or(self, default_val: number): number {
+            public func unwrap_or(self, default_val: number): number {
                 match self {
                     Outcome.Success(val) => { return val; }
                     Outcome.Failure(_) => { return default_val; }
@@ -180,7 +180,7 @@ fn test_imported_interface_implementation() {
 
         struct User { name: string }
         impl User : Describable {
-            func describe(self): string {
+            public func describe(self): string {
                 return "User: " + self.name;
             }
         }
@@ -198,13 +198,13 @@ fn test_imported_interface_implementation() {
     .with_module(
         "types",
         r#"
-        interface Describable {
+        public interface Describable {
             func describe(self): string;
         }
 
-        struct Item { title: string }
+        public struct Item { public title: string }
         impl Item : Describable {
-            func describe(self): string {
+            public func describe(self): string {
                 return "Item: " + self.title;
             }
         }
@@ -229,19 +229,19 @@ fn test_glob_imported_types_and_methods() {
     .with_module(
         "models",
         r#"
-        struct Account { balance: number }
+        public struct Account { public balance: number }
         impl Account {
-            func create(initial: number): Account {
+            public func create(initial: number): Account {
                 return Account(balance: initial);
             }
-            func deposit(self, amount: number): void {
+            public func deposit(self, amount: number): void {
                 self.balance += amount;
             }
         }
 
-        enum Status { Inactive, Active }
+        public enum Status { Inactive, Active }
         impl Status {
-            func code(self): number {
+            public func code(self): number {
                 match self {
                     Status.Inactive => { return 0; }
                     Status.Active => { return 1; }
@@ -267,15 +267,15 @@ fn test_nested_module_types_and_methods() {
     .with_module(
         "data.collections",
         r#"
-        struct Stack { items: List<number> }
+        public struct Stack { public items: List<number> }
         impl Stack {
-            func new(): Stack {
+            public func new(): Stack {
                 return Stack(items: []);
             }
-            func push(self, val: number): void {
+            public func push(self, val: number): void {
                 self.items.push(val);
             }
-            func peek(self): number {
+            public func peek(self): number {
                 return self.items[self.items.len() - 1];
             }
         }
@@ -297,13 +297,175 @@ fn test_generic_type_methods_imported() {
     .with_module(
         "containers",
         r#"
-        struct Box<T> { value: T }
+        public struct Box<T> { public value: T }
         impl<T> Box<T> {
-            func get(self): T {
+            public func get(self): T {
                 return self.value;
             }
         }
         "#,
     )
+    .assert_runs();
+}
+
+#[test]
+fn test_inherent_method_without_importing_type() {
+    TestBuilder::new(
+        "main",
+        r#"
+        import factory/make;
+        let p = make();
+        assert(p.norm(), 3);
+        "#,
+    )
+    .with_module(
+        "factory",
+        r#"
+        public struct Point { public x: number }
+        impl Point {
+            public func norm(self): number { return self.x; }
+        }
+        public func make(): Point { return Point(x: 3); }
+        "#,
+    )
+    .assert_runs();
+}
+
+#[test]
+fn test_visibility_end_to_end() {
+    TestBuilder::new(
+        "main",
+        r#"
+        import shapes/{make, Shape};
+        import units/{*};
+
+        let s = make(3);
+        assert(s.side, 3);
+        assert(s.area(), 9);
+
+        let shape: Shape = s;
+        assert(shape.describe(), 9);
+
+        assert(2.km(), 2000);
+        "#,
+    )
+    .with_module(
+        "shapes",
+        r#"
+        public interface Shape { func describe(self): number; }
+        public struct Square { public side: number }
+        impl Square : Shape {
+            public func describe(self): number { return self.area(); }
+            public func area(self): number { return self.side * self.side; }
+        }
+        public func make(side: number): Square { return Square(side: side); }
+        "#,
+    )
+    .with_module(
+        "units",
+        r#"
+        impl number {
+            public func km(self): number { return self * 1000; }
+        }
+        "#,
+    )
+    .assert_runs();
+}
+
+#[test]
+fn test_enum_variants_from_other_module() {
+    TestBuilder::new(
+        "main",
+        r#"
+        import shapes/Shape;
+        let a = Shape.Unit;
+        let b = Shape.Circle(2);
+        let c = Shape.Rect(w: 2, h: 3);
+        func area(s: Shape): number {
+            match s {
+                Shape.Unit => { return 0; }
+                Shape.Circle(r) => { return r; }
+                Shape.Rect(:w, :h) => { return w * h; }
+            }
+        }
+        assert(area(a) + area(b) + area(c), 8);
+        "#,
+    )
+    .with_module(
+        "shapes",
+        "public enum Shape { Unit, Circle(number), Rect { w: number, h: number } }",
+    )
+    .assert_runs();
+}
+
+#[test]
+fn test_interface_dispatch_without_importing_impl() {
+    TestBuilder::new(
+        "main",
+        r#"
+        import api/{Named, make};
+        let n: Named = make();
+        assert(n.name(), "bob");
+        "#,
+    )
+    .with_module(
+        "api",
+        r#"
+        public interface Named { func name(self): string; }
+        public struct Person { n: string }
+        impl Person : Named { public func name(self): string { return self.n; } }
+        public func make(): Person { return Person(n: "bob"); }
+        "#,
+    )
+    .assert_runs();
+}
+
+#[test]
+fn test_prelude_api_reachable_without_imports() {
+    TestBuilder::new(
+        "main",
+        r#"
+        let xs = [1, 2, 3];
+        assert(xs.len(), 3);
+        println("hi");
+        "#,
+    )
+    .assert_runs();
+}
+
+#[test]
+fn test_closure_keeps_module_access_rights() {
+    TestBuilder::new(
+        "main",
+        r#"
+        import a/counter;
+        let f = counter();
+        assert(f(), 1);
+        "#,
+    )
+    .with_module(
+        "a",
+        r#"
+        struct Hidden { n: number }
+        public func counter(): func(): number {
+            let h = Hidden(n: 1);
+            return || h.n;
+        }
+        "#,
+    )
+    .assert_runs();
+}
+
+#[test]
+fn test_public_global_read_and_assign_from_importer() {
+    TestBuilder::new(
+        "main",
+        r#"
+        import a/counter;
+        counter = counter + 1;
+        assert(counter, 6);
+        "#,
+    )
+    .with_module("a", "public let counter = 5;")
     .assert_runs();
 }

@@ -25,13 +25,20 @@ impl TypeCheckerError {
             TypeCheckerError::InvalidIsUsage { .. } => "E024",
             TypeCheckerError::InterfaceMethodTypeMismatch { .. } => "E028",
             TypeCheckerError::InvalidOperandTypes { .. } => "E030",
-            TypeCheckerError::PrimitiveTypeShadowing { .. } => "E035",
             TypeCheckerError::Duplicate(d) => d.code(),
             TypeCheckerError::CallParam(c) => c.code(),
             TypeCheckerError::Call(c) => c.code(),
             TypeCheckerError::Generic(g) => g.code(),
             TypeCheckerError::Binding(b) => b.code(),
             TypeCheckerError::ImportNotFound { .. } => "E070",
+            TypeCheckerError::PrivateImport { .. } => "E071",
+            TypeCheckerError::PrivateField { .. } => "E072",
+            TypeCheckerError::PrivateConstructor { .. } => "E073",
+            TypeCheckerError::PrivateMethod { .. } => "E074",
+            TypeCheckerError::InterfaceMethodNotPublic { .. } => "E077",
+            TypeCheckerError::PrivateTypeInPublicApi { .. } => "E078",
+            TypeCheckerError::ExtensionShadowsInherent { .. } => "E075",
+            TypeCheckerError::ConflictingExtension { .. } => "E076",
         }
     }
 }

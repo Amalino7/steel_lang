@@ -26,6 +26,12 @@ pub enum TypeCheckerWarning {
         span: Span,
         message: String,
     },
+    /// `import m/T as U;` only brings `m`'s extensions on `T`; the alias binds nothing.
+    UnboundExtensionAlias {
+        alias: String,
+        name: String,
+        span: Span,
+    },
 }
 
 impl IntoDiagnostic for TypeCheckerWarning {
@@ -56,6 +62,11 @@ impl IntoDiagnostic for TypeCheckerWarning {
             TypeCheckerWarning::UnreachablePattern { .. } => {
                 builder.with_help("Consider removing this pattern")
             }
+            TypeCheckerWarning::UnboundExtensionAlias { name, .. } => {
+                builder.with_help(format!(
+                    "Import '{name}' from the module that defines it to bind its name; the alias does not rename the extensions."
+                ))
+            }
         }.build()
     }
 }
@@ -69,6 +80,7 @@ impl TypeCheckerWarning {
             TypeCheckerWarning::ShadowedVariable { .. } => "Shadowed variable",
             TypeCheckerWarning::UnreachableCode { .. } => "Unreachable code",
             TypeCheckerWarning::UnreachablePattern { .. } => "Unreachable pattern",
+            TypeCheckerWarning::UnboundExtensionAlias { .. } => "Unbound extension alias",
         }
     }
 
@@ -80,6 +92,7 @@ impl TypeCheckerWarning {
             TypeCheckerWarning::ShadowedVariable { span, .. } => *span,
             TypeCheckerWarning::UnreachableCode { span } => *span,
             TypeCheckerWarning::UnreachablePattern { span, .. } => *span,
+            TypeCheckerWarning::UnboundExtensionAlias { span, .. } => *span,
         }
     }
 
@@ -101,6 +114,11 @@ impl TypeCheckerWarning {
                 "This code will never be executed".to_string()
             }
             TypeCheckerWarning::UnreachablePattern { message, .. } => message.clone(),
+            TypeCheckerWarning::UnboundExtensionAlias { alias, name, .. } => {
+                format!(
+                    "Alias '{alias}' is not bound: importing '{name}' here only brings extension methods"
+                )
+            }
         }
     }
 }

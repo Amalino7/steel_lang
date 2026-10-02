@@ -10,3 +10,4 @@ mod structs;
 mod tuples;
 mod types;
 mod variables;
+mod visibility;

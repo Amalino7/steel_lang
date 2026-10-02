@@ -43,7 +43,7 @@ pub fn debug_size<T>() {
     println!(
         "Size of {}: {} bytes, alignment: {} bytes",
         std::any::type_name::<T>(),
-        std::mem::size_of::<T>(),
+        size_of::<T>(),
         align_of::<T>()
     );
 }
