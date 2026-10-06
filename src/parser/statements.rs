@@ -1,6 +1,6 @@
 use crate::parser::ast::{ImportSegment, ImportStmt, ImportType, Stmt};
 use crate::parser::error::ParserError;
-use crate::parser::{Parser, TokT, check_token_type, match_token_type};
+use crate::parser::{Parser, TokT, check_next_token_type, check_token_type, match_token_type};
 use crate::scanner::Token;
 
 impl<'src> Parser<'src> {
@@ -23,8 +23,13 @@ impl<'src> Parser<'src> {
         } else if match_token_type!(self, TokT::Func) {
             self.func_declaration(is_public, false)
         } else if match_token_type!(self, TokT::Import) {
-            self.public_err(report, prev_token, "re-exports are not supported.");
-            self.import_statement()
+            // Imports are parsed only initially.
+            let keyword = self.previous_token.clone();
+            self.import_statement()?;
+            Err(ParserError::ParseError {
+                token: keyword,
+                message: "imports must come before all other declarations".to_string(),
+            })
         } else if match_token_type!(self, TokT::Struct) {
             self.struct_declaration(is_public)
         } else if match_token_type!(self, TokT::Impl) {
@@ -69,49 +74,116 @@ impl<'src> Parser<'src> {
             Ok(Stmt::Expression(expr))
         }
     }
-    fn import_statement(&mut self) -> Result<Stmt<'src>, ParserError<'src>> {
-        let import = self.previous_token.clone();
-        let segment = self.import_segment()?;
-        self.consume(TokT::Semicolon, "Expected ';' after import statement")?;
-        Ok(Stmt::Import(ImportStmt {
-            keyword: import,
-            segment,
-        }))
+
+    /// Parses the import header: every leading `import`. A malformed import is reported and skipped, so the
+    /// well-formed ones around it are still returned.
+    pub fn parse_imports(&mut self) -> Vec<ImportStmt<'src>> {
+        let mut imports = vec![];
+        while self.at_import() {
+            match self.header_import() {
+                Ok(import) => imports.push(import),
+                Err(e) => {
+                    self.errors.push(e);
+                    self.synchronize();
+                }
+            }
+        }
+        imports
     }
 
-    fn import_segment(&mut self) -> Result<ImportSegment<'src>, ParserError<'src>> {
-        self.consume(TokT::Identifier, "Expected import name")?;
-        let mut path = vec![];
-        path.push(self.previous_token.clone());
+    fn at_import(&self) -> bool {
+        check_token_type!(self, TokT::Import)
+            || (check_token_type!(self, TokT::Public) && check_next_token_type!(self, TokT::Import))
+    }
 
-        while match_token_type!(self, TokT::Slash) && match_token_type!(self, TokT::Identifier) {
-            path.push(self.previous_token.clone());
+    fn header_import(&mut self) -> Result<ImportStmt<'src>, ParserError<'src>> {
+        if match_token_type!(self, TokT::Public) {
+            self.errors.push(ParserError::ParseError {
+                token: self.previous_token.clone(),
+                message: "`public` is not allowed here: re-exports are not supported.".to_string(),
+            });
         }
+        self.consume(TokT::Import, "Expected 'import'.")?;
+        self.import_statement()
+    }
 
-        let import_type = if match_token_type!(self, TokT::LeftBrace) {
+    fn import_statement(&mut self) -> Result<ImportStmt<'src>, ParserError<'src>> {
+        let keyword = self.previous_token.clone();
+        let segment = self.import_segment(true)?;
+        self.consume(TokT::Semicolon, "Expected ';' after import statement")?;
+        Ok(ImportStmt { keyword, segment })
+    }
+
+    /// `top_level` segments (the ones directly after `import`) must name an item: `module/item`.
+    /// Segments inside a `{ }` group may be a bare item.
+    fn import_segment(
+        &mut self,
+        top_level: bool,
+    ) -> Result<ImportSegment<'src>, ParserError<'src>> {
+        self.consume(TokT::Identifier, "Expected import name")?;
+        let mut path = vec![self.previous_token.clone()];
+
+        while match_token_type!(self, TokT::Slash) {
+            if match_token_type!(self, TokT::Identifier) {
+                path.push(self.previous_token.clone());
+            } else if check_token_type!(self, TokT::LeftBrace) {
+                break;
+            } else {
+                return Err(self.error_current("Expected an identifier or '{' after '/'."));
+            }
+        }
+        let after_slash = self.previous_token.token_type == TokT::Slash;
+
+        let import_type = if check_token_type!(self, TokT::LeftBrace) {
+            if !after_slash {
+                return Err(self.error_current("Expected '/' before '{' in import."));
+            }
+            self.advance()?;
             if match_token_type!(self, TokT::Star) {
+                let star = self.previous_token.clone();
                 self.consume(TokT::RightBrace, "Expected '}' after wildcard import.")?;
-                ImportType::Wildcard
+                ImportType::Wildcard(star)
             } else {
                 let mut options = vec![];
                 while !check_token_type!(self, TokT::RightBrace) {
-                    options.push(self.import_segment()?);
-                    match_token_type!(self, TokT::Comma);
+                    options.push(self.import_segment(false)?);
+                    if !match_token_type!(self, TokT::Comma) {
+                        break;
+                    }
                 }
-                self.consume(TokT::RightBrace, "Expected '}' after group import.")?;
+                if options.is_empty() {
+                    // Consume the brace so recovery doesn't stop on it.
+                    let err = self.error_current("Import group must not be empty.");
+                    self.advance()?;
+                    return Err(err);
+                }
+                self.consume(TokT::RightBrace, "Expected ',' or '}' in import group.")?;
                 ImportType::Group { options }
             }
-        } else if match_token_type!(self, TokT::As) {
-            self.consume(TokT::Identifier, "Expected alias after 'as'.")?;
-            let term = path.pop().unwrap();
-            ImportType::Alias {
-                terminator: term,
-                alias: self.previous_token.clone(),
-            }
         } else {
-            let term = path.pop().unwrap();
-            ImportType::Simple { terminator: term }
+            if top_level && path.len() < 2 {
+                return Err(self.error_previous("Expected 'module/item' in import."));
+            }
+            let terminator = path.pop().expect("path starts with an identifier");
+            if match_token_type!(self, TokT::As) {
+                self.consume(TokT::Identifier, "Expected alias after 'as'.")?;
+                ImportType::Alias {
+                    terminator,
+                    alias: self.previous_token.clone(),
+                }
+            } else {
+                ImportType::Simple { terminator }
+            }
         };
+
+        for element in path.iter() {
+            if !element.lexeme.is_ascii() {
+                self.errors.push(ParserError::ParseError {
+                    token: element.clone(),
+                    message: "Expected ASCII identifier in import path.".to_string(),
+                })
+            }
+        }
 
         Ok(ImportSegment { path, import_type })
     }

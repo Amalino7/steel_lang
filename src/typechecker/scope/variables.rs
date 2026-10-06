@@ -2,6 +2,7 @@ use crate::compiler::analysis::ResolvedVar;
 use crate::scanner::Span;
 use crate::typechecker::Symbol;
 use crate::typechecker::core::types::Type;
+use crate::typechecker::scope::binding::Origin;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct VariableContext {
@@ -10,12 +11,13 @@ pub struct VariableContext {
     pub(crate) mutability: Mutability,
     pub(crate) kind: DeclarationKind,
     pub(crate) index: usize,
-    pub(crate) span: Span,
+    /// Where the binding came from; for an import its span is the import site.
+    pub(crate) origin: Origin,
+    /// The definition, which for an imported binding is in another module.
+    pub(crate) def_span: Span,
     pub(crate) was_read: bool,
     pub(crate) was_written: bool,
     pub(crate) original_type: Option<(ResolvedVar, Type)>,
-    /// Declared `public` in this module; imported copies are always private.
-    pub(crate) is_public: bool,
 }
 /// Describes whether a variable can be reassigned.
 /// Unique means it cannot be neither shadowed nor reassigned in the current scope.
@@ -50,39 +52,30 @@ impl DeclarationKind {
 }
 
 impl VariableContext {
-    pub(crate) fn new(
-        name: Symbol,
-        type_info: Type,
-        index: usize,
-        span: Span,
-        mutability: Mutability,
-        kind: DeclarationKind,
-    ) -> Self {
+    pub(crate) fn from_declaration(index: usize, decl: Declaration) -> Self {
         VariableContext {
-            name,
-            type_info,
+            name: decl.name,
+            type_info: decl.type_info,
             index,
-            span,
-            mutability,
-            kind,
+            origin: Origin::Defined {
+                span: decl.span,
+                public: decl.is_public,
+            },
+            def_span: decl.span,
+            mutability: decl.mutability,
+            kind: decl.kind,
             was_read: false,
             was_written: false,
             original_type: None,
-            is_public: false,
         }
     }
 
-    pub(crate) fn from_declaration(index: usize, decl: Declaration) -> Self {
-        VariableContext {
-            is_public: decl.is_public,
-            ..VariableContext::new(
-                decl.name,
-                decl.type_info,
-                index,
-                decl.span,
-                decl.mutability,
-                decl.kind,
-            )
+    /// Where this name was bound: the import site for an imported binding. For every other
+    /// binding it is the definition, so `def_span` is the same span.
+    pub fn binding_span(&self) -> Span {
+        match self.origin {
+            Origin::Imported { import_span: span } => span,
+            Origin::Defined { .. } | Origin::Builtin => self.def_span,
         }
     }
 

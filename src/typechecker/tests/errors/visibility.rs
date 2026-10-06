@@ -76,7 +76,7 @@ fn test_import_reexport_not_supported() {
         .with_module("a", "public let x = 1;")
         .with_module("b", "import a/x;")
         .expect_error(|e| {
-            matches!(e, TypeCheckerError::ImportNotFound { name, note: Some(_), .. } if name == "x")
+            matches!(e, TypeCheckerError::PrivateImport { name, note: Some(_), .. } if name == "x")
         })
         .run();
 }
@@ -374,7 +374,7 @@ fn test_import_public_items_of_every_kind() {
         public struct S { public v: number }
         public enum E { A }
         public interface I { func m(self): void; }
-        public extern func now(): number;
+        public func now(): number { return 1; }
         "#,
     )
     .run();
@@ -663,7 +663,7 @@ fn test_failed_reexport_type_import_does_not_cascade() {
     )
     .with_module("a", "public struct P { public x: number }")
     .with_module("b", "import a/P;")
-    .expect_error(|e| matches!(e, TypeCheckerError::ImportNotFound { name, .. } if name == "P"))
+    .expect_error(|e| matches!(e, TypeCheckerError::PrivateImport { name, .. } if name == "P"))
     .run();
 }
 
@@ -723,7 +723,7 @@ fn test_extensions_not_transitive() {
         "#,
     )
     .with_module("b", "import a/P; import ext/P; public let k = 1;")
-    .expect_error(|e| matches!(e, TypeCheckerError::ImportNotFound { .. }))
+    .expect_error(|e| matches!(e, TypeCheckerError::PrivateImport { .. }))
     .expect_error(|e| matches!(e, TypeCheckerError::UndefinedMethod(_)))
     .run();
 }
@@ -884,5 +884,50 @@ fn test_named_extension_conflict_is_reported_at_the_import() {
         matches!(e, TypeCheckerError::ConflictingExtension { span, first, second, .. }
             if span.file_id != first.file_id && span.file_id != second.file_id)
     })
+    .run();
+}
+
+const UNITS: &str = r#"
+    impl number {
+        public func km(self): number { return self * 1000; }
+        func cm(self): number { return self / 100; }
+    }
+"#;
+
+#[test]
+fn test_private_extension_is_not_imported() {
+    // Only exported extensions are bound in the importer, so the call is undefined, not private.
+    Tester::new(
+        r#"
+        import units/number;
+        let d = (5).cm();
+        "#,
+    )
+    .with_module("units", UNITS)
+    .expect_error(
+        |e| matches!(e, TypeCheckerError::UndefinedMethod(err) if err.method_name.as_ref() == "cm"),
+    )
+    .run();
+}
+
+#[test]
+fn test_private_extensions_do_not_conflict_in_importer() {
+    Tester::new(
+        r#"
+        import units/{*};
+        import more_units/{*};
+        let d = (5).km();
+        "#,
+    )
+    .with_module("units", UNITS)
+    .with_module(
+        "more_units",
+        r#"
+        impl number {
+            public func m(self): number { return self; }
+            func cm(self): number { return self; }
+        }
+        "#,
+    )
     .run();
 }

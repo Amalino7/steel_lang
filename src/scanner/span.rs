@@ -1,9 +1,6 @@
 use std::ops::Range;
-
-/// Identifies a source file. `FileId(0)` is the prelude.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Default, PartialOrd, Ord)]
-pub struct FileId(pub u32);
-
+/// `Span::default()` is a placeholder for spans that are synthetic or not yet available. Use `Span::builtin()`
+/// for items that really are builtin.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Span {
     pub start: usize,
@@ -11,6 +8,13 @@ pub struct Span {
     pub line: u32,
     pub file_id: FileId,
 }
+
+/// Identifies a source file.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Default, PartialOrd, Ord)]
+pub struct FileId(pub u32);
+
+/// The file id of the standard library module. Builtin items carry a span in this file.
+pub const PRELUDE_FILE: FileId = FileId(0);
 
 impl Span {
     pub const fn new(start: usize, end: usize, line: u32, file_id: FileId) -> Self {
@@ -20,6 +24,15 @@ impl Span {
             line,
             file_id,
         }
+    }
+
+    /// The span of items that exist without source text: builtin types and vararg natives. They belong to `std`.
+    pub const fn builtin() -> Self {
+        Self::new(0, 0, 0, PRELUDE_FILE)
+    }
+
+    pub fn is_builtin(&self) -> bool {
+        *self == Self::builtin()
     }
 
     /// Extends this span to cover another span (useful for combining start/end tokens of an expression)

@@ -1,6 +1,5 @@
 use crate::diagnostics::{Diagnostic, LabelKind, Level};
-use crate::resolver::{FileId, ModuleGraph};
-use crate::typechecker::system::PRELUDE_FILE;
+use crate::resolver::{FileId, ModuleGraph, ModuleInfo};
 use ariadne::{Cache, Color, Config, Label, Report, ReportKind, sources};
 use std::ops::Range;
 
@@ -66,14 +65,23 @@ pub fn cache(graph: &ModuleGraph) -> impl Cache<String> {
         graph
             .modules
             .iter()
-            .map(|info| (info.name.clone(), &info.source)),
+            .map(|info| (module_label(info), &info.source)),
     )
 }
 
-fn file_id_to_name(file_id: FileId, module_graph: &ModuleGraph) -> String {
-    if file_id == PRELUDE_FILE {
-        return "prelude".to_string();
+/// How a module is named in rendered diagnostics. It uses the module_path.steel and <std> for standard library.
+fn module_label(module: &ModuleInfo) -> String {
+    if module.is_std {
+        return "<std>".to_owned();
     }
-    let mod_id = *module_graph.file_to_module_id.get(&file_id).unwrap();
-    module_graph.modules[mod_id.0 as usize].name.clone()
+    let mut name = module.name.clone();
+    name.push_str(".steel");
+    name
+}
+
+fn file_id_to_name(file_id: FileId, module_graph: &ModuleGraph) -> String {
+    module_graph.file_to_module_id.get(&file_id).map_or_else(
+        || "<unknown>".to_string(),
+        |id| module_label(&module_graph.modules[id.0 as usize]),
+    )
 }

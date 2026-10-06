@@ -328,13 +328,13 @@ pub enum TypeCheckerError {
         name: String,
         span: Span,
         suggestions: Vec<String>,
-        note: Option<String>,
     },
     PrivateImport {
         name: String,
         module: String,
         span: Span,
         definition: Span,
+        note: Option<String>,
     },
     PrivateField {
         struct_name: Symbol,
@@ -378,6 +378,17 @@ pub enum TypeCheckerError {
         span: Span,
         first: Span,
         second: Span,
+    },
+    TooManyLocals {
+        span: Span,
+        count: usize,
+    },
+    ExternOutsideStd {
+        span: Span,
+    },
+    UnknownNative {
+        name: String,
+        span: Span,
     },
 }
 #[derive(Debug, Clone)]

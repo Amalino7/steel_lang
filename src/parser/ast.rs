@@ -255,7 +255,6 @@ pub enum Stmt<'src> {
         methods: Vec<Stmt<'src>>,
         generics: Vec<Token<'src>>,
     },
-    Import(ImportStmt<'src>),
     Interface {
         is_public: bool,
         name: Token<'src>,
@@ -268,6 +267,13 @@ pub enum Stmt<'src> {
         variants: Vec<(Token<'src>, VariantType<'src>)>,
         generics: Vec<Token<'src>>,
     },
+}
+
+/// A parsed source file: the import header followed by the declarations.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ParsedFile<'src> {
+    pub imports: Vec<ImportStmt<'src>>,
+    pub body: Vec<Stmt<'src>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -294,7 +300,50 @@ pub enum ImportType<'src> {
     Group {
         options: Vec<ImportSegment<'src>>,
     },
-    Wildcard,
+    Wildcard(Token<'src>),
+}
+
+impl Display for ImportStmt<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        fn print_segment(f: &mut Formatter<'_>, segment: &ImportSegment) -> fmt::Result {
+            for path in segment.path.iter() {
+                write!(f, "{}", path.lexeme)?;
+                write!(f, "/")?;
+            }
+            match &segment.import_type {
+                ImportType::Simple { terminator } => write!(f, "{}", terminator.lexeme),
+                ImportType::Alias { terminator, alias } => {
+                    write!(f, "{}", terminator.lexeme)?;
+                    write!(f, "as {}", alias.lexeme)
+                }
+                ImportType::Group { options } => {
+                    write!(f, "{{")?;
+                    for option in options {
+                        print_segment(f, option)?;
+                    }
+                    write!(f, "}}")
+                }
+                ImportType::Wildcard(_) => {
+                    write!(f, "*")
+                }
+            }
+        }
+        write!(f, "import ")?;
+        print_segment(f, &self.segment)?;
+        write!(f, ";")
+    }
+}
+
+impl ImportStmt<'_> {
+    pub fn span(&self) -> Span {
+        self.keyword.span.merge(
+            self.segment
+                .path
+                .last()
+                .map(|last| last.span)
+                .unwrap_or(self.keyword.span),
+        )
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -754,36 +803,6 @@ impl Display for Stmt<'_> {
                 }
                 write!(f, "}}")
             }
-            Stmt::Import(import) => {
-                fn print_segment(f: &mut Formatter<'_>, segment: &ImportSegment) -> fmt::Result {
-                    for path in segment.path.iter() {
-                        write!(f, "{}", path.lexeme)?;
-                        write!(f, "/")?;
-                    }
-                    match &segment.import_type {
-                        ImportType::Simple { terminator } => write!(f, "{}", terminator.lexeme),
-                        ImportType::Alias { terminator, alias } => {
-                            write!(f, "{}", terminator.lexeme)?;
-                            write!(f, "as {}", alias.lexeme)
-                        }
-                        ImportType::Group { options } => {
-                            write!(f, "{{")?;
-                            for option in options {
-                                print_segment(f, option)?;
-                            }
-                            write!(f, "}}")
-                        }
-                        ImportType::Wildcard => {
-                            write!(f, "*")
-                        }
-                    }
-                }
-                write!(f, "import ")?;
-
-                print_segment(f, &import.segment)?;
-
-                write!(f, ";")
-            }
         }
     }
 }
@@ -902,14 +921,6 @@ impl Stmt<'_> {
                 .last()
                 .map(|last| name.span.merge(last.name.span))
                 .unwrap_or(name.span),
-            Stmt::Import(import) => import.keyword.span.merge(
-                import
-                    .segment
-                    .path
-                    .last()
-                    .map(|last| last.span)
-                    .unwrap_or(import.keyword.span),
-            ),
             Stmt::Enum { name, variants, .. } => variants
                 .last()
                 .map(|(variant, _)| name.span.merge(variant.span))

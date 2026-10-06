@@ -1,18 +1,19 @@
-use crate::parser::ast::{ImportSegment, ImportType, Stmt};
-use crate::resolver::Exports;
-use crate::scanner::{FileId, Span, Token};
+use crate::parser::ast::{ImportSegment, ImportStmt, ImportType};
+use crate::resolver::ModuleInfo;
+use crate::scanner::{Span, Token};
+use crate::typechecker::Exports;
 use crate::typechecker::core::error::{Recoverable, TypeCheckerError, TypeCheckerWarning};
-use crate::typechecker::core::types::Type;
+use crate::typechecker::core::types::{NameTypeId, PrimitiveTypeId, Type};
+use crate::typechecker::modules::exports::{TypeLookup, VarLookup};
+use crate::typechecker::scope::binding::{Binding, Origin};
 use crate::typechecker::scope::variables::{Declaration, VariableContext};
 use crate::typechecker::similarity::find_similar;
 use crate::typechecker::{Symbol, TypeChecker};
 
 impl<'src> TypeChecker<'src> {
-    pub fn imports(&mut self, ast: &[Stmt<'src>]) {
-        for stmt in ast {
-            if let Stmt::Import(import) = stmt {
-                self.handle_import(None, &import.segment)
-            }
+    pub fn imports(&mut self, imports: &[ImportStmt<'src>]) {
+        for import in imports {
+            self.handle_import(None, &import.segment)
         }
     }
 
@@ -23,7 +24,7 @@ impl<'src> TypeChecker<'src> {
             path_segments.insert(0, prefix);
         }
 
-        let path = path_segments.join(".");
+        let path = path_segments.join("/");
 
         match &import.import_type {
             ImportType::Simple { terminator } => {
@@ -37,91 +38,130 @@ impl<'src> TypeChecker<'src> {
                     self.handle_import(Some(&path), option);
                 }
             }
-            ImportType::Wildcard => {
-                let Some(module_info) = self.module_graph.module_by_name(&path) else {
+            ImportType::Wildcard(star) => {
+                let Some((_, exports)) = self.import_target(&path) else {
                     return;
                 };
-                let import_span = import
-                    .path
-                    .first()
-                    .zip(import.path.last())
-                    .map(|(first, last)| first.span.merge(last.span));
-                self.import_all(&module_info.exports, module_info.file_id, import_span);
+                self.import_all(exports, star.span);
             }
         }
     }
-    fn import_named(&mut self, path: &str, terminator: &Token, target: &Token) {
-        enum ImportStatus {
-            Success,
-            Private(Span),
-            NotReexported,
-            NotFound,
+    /// The module imported as `path` by the current module, with its surface.
+    /// None for failed imports.
+    fn import_target(&self, path: &str) -> Option<(&'src ModuleInfo, &'src Exports)> {
+        let current_mod_id = *self.module_graph.file_to_module_id.get(&self.file_id)?;
+        let current_mod = self.module_graph.modules.get(current_mod_id.0 as usize)?;
+        let target_mod = self.module_graph.module_by_name(path)?;
+
+        // Prevents modules not imported due to cycles.
+        if !current_mod.imports.contains(&target_mod.id) {
+            return None;
         }
 
-        let Some(module_info) = self.module_graph.module_by_name(path) else {
+        let exports = self.surfaces.get(target_mod.id.0 as usize)?.as_ref()?;
+
+        Some((target_mod, exports))
+    }
+
+    fn import_named(&mut self, path: &str, terminator: &Token, target: &Token) {
+        let Some((module_info, exports)) = self.import_target(path) else {
+            self.bind_unavailable(target);
             return;
         };
-        let exports = &module_info.exports;
-        let m_file = module_info.file_id;
 
-        let mut status = ImportStatus::NotFound;
-
-        if let Some(&id) = exports.types.get(terminator.lexeme) {
-            // Re-export guard: `is_public` is the type's own flag, so imported types would pass.
-            let local_export = self.sys.defining_file(id) == m_file;
-            let has_extensions = exports.extensions.has_methods_for(id);
-
-            if local_export && self.sys.is_public(id) {
-                let res = self.type_scopes.declare_global(target.lexeme.into(), id);
-                self.redeclaration_type(res, target.span);
-                status = ImportStatus::Success;
-            } else if local_export {
-                status = ImportStatus::Private(self.sys.get_origin(id).unwrap_or_default());
-            } else if has_extensions && self.sys.is_public(id) {
-                status = ImportStatus::Success;
-                if target.lexeme != terminator.lexeme {
-                    self.warn(TypeCheckerWarning::UnboundExtensionAlias {
-                        alias: target.lexeme.to_string(),
-                        name: terminator.lexeme.to_string(),
-                        span: target.span,
-                    });
-                }
-                let methods = exports.extensions.methods_of(id);
-                for (_, name, method_id) in self.sorted_by_origin(methods.map(|(n, m)| (id, n, m)))
-                {
-                    let res = self.type_scopes.declare_method(id, name.clone(), method_id);
-                    let origin = self.sys.get_method_info(method_id).origin;
-                    // Reported at the import that brings in the second method.
-                    self.extension_conflict(res, id, name, origin, target.span);
-                }
-            } else {
-                status = ImportStatus::NotReexported;
+        let type_lookup = exports.lookup_type(terminator.lexeme);
+        if let TypeLookup::Found {
+            binding,
+            extension_only,
+        } = type_lookup
+        {
+            if !extension_only {
+                let imported = Binding::new(
+                    binding.target,
+                    Origin::Imported {
+                        import_span: target.span,
+                    },
+                );
+                let res = self
+                    .type_scopes
+                    .declare_global(target.lexeme.into(), imported);
+                self.redeclaration_type(res, target.lexeme, target.span);
             }
+            self.import_extensions(binding.target, exports, extension_only, terminator, target)
         }
 
-        if let Some(ctx) = exports.vars.get(terminator.lexeme) {
-            // Re-export guard: an imported copy; distinguishes "not exported" from "private".
-            if ctx.span.file_id != m_file {
-                status = ImportStatus::NotReexported
-            } else if !ctx.is_public {
-                status = ImportStatus::Private(ctx.span);
-            } else {
-                status = ImportStatus::Success;
-                self.scopes
-                    .declare_existing(&VariableContext {
-                        name: target.lexeme.into(),
-                        type_info: ctx.type_info.clone(),
-                        original_type: ctx.original_type.clone(),
-                        ..*ctx
-                    })
-                    .ok_or_report(&mut self.errors);
-            }
+        let var_lookup = exports.lookup_var(terminator.lexeme);
+
+        if let VarLookup::Found(var) = var_lookup {
+            self.declare_imported(var, target.lexeme.into(), target.span);
         }
 
-        if matches!(status, ImportStatus::Success) {
+        if type_lookup.has_succeeded() || var_lookup.has_succeeded() {
             return;
         }
+        // Error cases
+        let private_err = |span, reexport: bool| {
+            let note = reexport.then(|| {
+                format!(
+                    "`{}` imports `{}` but does not export it; re-exports are not supported",
+                    module_info.name, terminator.lexeme
+                )
+            });
 
+            TypeCheckerError::PrivateImport {
+                name: terminator.lexeme.into(),
+                module: module_info.name.clone(),
+                span: terminator.span,
+                definition: span,
+                note,
+            }
+        };
+
+        if let TypeLookup::Private {
+            binding,
+            is_reexport,
+            span,
+        } = type_lookup
+        {
+            let imported = Binding::new(
+                binding.target,
+                Origin::Imported {
+                    import_span: target.span,
+                },
+            );
+            let _ = self
+                .type_scopes
+                .declare_global(target.lexeme.into(), imported);
+            self.import_extensions(binding.target, exports, false, terminator, target);
+            self.report(private_err(span, is_reexport));
+        }
+
+        if let VarLookup::Private {
+            var,
+            is_reexport,
+            span,
+        } = var_lookup
+        {
+            self.declare_imported(var, target.lexeme.into(), target.span);
+            self.report(private_err(span, is_reexport));
+        }
+
+        if TypeLookup::NotFound == type_lookup && VarLookup::NotFound == var_lookup {
+            self.bind_unavailable(target);
+
+            let visible_names = Self::public_names(exports);
+            let candidates = visible_names.iter().map(|name| name.as_ref());
+            let suggestions = find_similar(terminator.lexeme, candidates, 3);
+            self.report(TypeCheckerError::ImportNotFound {
+                name: terminator.lexeme.into(),
+                span: terminator.span,
+                suggestions,
+            });
+        }
+    }
+
+    /// Adds fallback bindings for missing items and unavailable modules.
+    fn bind_unavailable(&mut self, target: &Token) {
         let _ = self
             .scopes
             .declare(Declaration::variable(
@@ -130,90 +170,96 @@ impl<'src> TypeChecker<'src> {
                 target.span,
             ))
             .ok_or_report(&mut self.errors);
-        // The type does exist, so bind its name too: otherwise every use in a type position
-        // would add a misleading "type not defined" error on top of the import error.
-        if let Some(&id) = exports.types.get(terminator.lexeme)
-            && self.type_scopes.lookup_type(target.lexeme).is_none()
-        {
-            let _ = self.type_scopes.declare_global(target.lexeme.into(), id);
-        }
 
-        if let ImportStatus::Private(definition) = status {
-            self.report(TypeCheckerError::PrivateImport {
-                name: terminator.lexeme.into(),
-                module: module_info.name.clone(),
-                span: terminator.span,
-                definition,
+        let binding = Binding::new(
+            PrimitiveTypeId::Error.into(),
+            Origin::Imported {
+                import_span: target.span,
+            },
+        );
+        let _ = self
+            .type_scopes
+            .declare_global(target.lexeme.into(), binding);
+    }
+
+    /// Imports the extensions a module defines on an external type.
+    fn import_extensions(
+        &mut self,
+        id: NameTypeId,
+        exports: &Exports,
+        is_extension_only: bool,
+        terminator: &Token,
+        target: &Token,
+    ) {
+        if target.lexeme != terminator.lexeme && is_extension_only {
+            self.warn(TypeCheckerWarning::UnboundExtensionAlias {
+                alias: target.lexeme.to_string(),
+                name: terminator.lexeme.to_string(),
+                span: target.span,
             });
-            return;
         }
-
-        let visible_names = self.public_names(exports, m_file);
-        let candidates = visible_names.iter().map(|name| name.as_ref());
-        let suggestions = find_similar(terminator.lexeme, candidates, 3);
-        let note = if matches!(status, ImportStatus::NotReexported) {
-            Some(format!(
-                "`{}` imports `{}` but does not export it; re-exports are not supported",
-                module_info.name, terminator.lexeme
-            ))
-        } else {
-            None
-        };
-
-        self.report(TypeCheckerError::ImportNotFound {
-            name: terminator.lexeme.into(),
-            span: terminator.span,
-            suggestions,
-            note,
-        });
+        let methods = exports.extensions().methods_of(id);
+        for (_, name, method) in self.sorted_by_origin(methods.map(|(n, m)| (id, n, m))) {
+            let imported = Binding::new(
+                method.target,
+                Origin::Imported {
+                    import_span: target.span,
+                },
+            );
+            let res = self.type_scopes.declare_method(id, name.clone(), imported);
+            let origin = self.sys.get_method_info(method.target).origin;
+            // Reported at the import that brings in the second method.
+            self.extension_conflict(res, id, name, origin, target.span);
+        }
     }
 
     /// Names a module defines and marks `public` for suggestions
-    fn public_names(&self, exports: &Exports, m_file: FileId) -> Vec<Symbol> {
-        let types = exports
-            .types
-            .iter()
-            // Re-export guard: skip types the module imported.
-            .filter(|(_, id)| self.sys.defining_file(**id) == m_file && self.sys.is_public(**id))
-            .map(|(name, _)| name.clone());
-        let vars = exports
-            .vars
-            .iter()
-            // Re-export guard: imported vars are already private; kept in step with the types.
-            .filter(|(_, ctx)| ctx.span.file_id == m_file && ctx.is_public)
-            .map(|(name, _)| name.clone());
-        types.chain(vars).collect()
+    fn public_names(exports: &Exports) -> Vec<Symbol> {
+        let types = exports.exported_types().map(|(name, _)| name.clone());
+        let vars = exports.exported_vars().map(|(name, _)| name.clone());
+        let mut names: Vec<Symbol> = types.chain(vars).collect();
+        // Hash order must not leak into the suggestions.
+        names.sort();
+        names
+    }
+
+    /// Binds the exported `var` as `binding`, imported at `span`.
+    fn declare_imported(&mut self, var: &VariableContext, name: Symbol, span: Span) {
+        let imported = VariableContext {
+            name,
+            origin: Origin::Imported { import_span: span },
+            ..var.clone()
+        };
+        let _ = self
+            .scopes
+            .declare_existing(imported)
+            .ok_or_report(&mut self.errors);
     }
 
     /// Used by wildcard imports and prelude. Brings all public items from the module in scope.
-    ///
-    /// `import_span` is where extension clashes are reported; `None` (the prelude) falls back to
-    /// the clashing method's own definition.
-    pub fn import_all(&mut self, exports: &Exports, m_file: FileId, import_span: Option<Span>) {
-        for (name, id) in exports.types.iter() {
-            // Re-export guard: skip types the module imported.
-            if self.sys.defining_file(*id) != m_file || !self.sys.is_public(*id) {
-                continue;
-            }
-            let res = self.type_scopes.declare_global(name.clone(), *id);
-            self.redeclaration_type(res, self.sys.get_origin(*id).unwrap_or_default())
+    pub fn import_all(&mut self, exports: &Exports, import_span: Span) {
+        let mut types: Vec<_> = exports.exported_types().collect();
+        types.sort_by(|a, b| a.0.cmp(b.0));
+
+        for (name, binding) in types {
+            let imported = Binding::new(binding.target, Origin::Imported { import_span });
+            let res = self.type_scopes.declare_global(name.clone(), imported);
+            self.redeclaration_type(res, name, import_span)
         }
 
-        for (id, method_name, method_id) in self.sorted_by_origin(exports.extensions.iter()) {
+        for (id, method_name, method) in self.sorted_by_origin(exports.extensions().iter()) {
+            let origin = self.sys.get_method_info(method.target).origin;
+            let imported = Binding::new(method.target, Origin::Imported { import_span });
             let res = self
                 .type_scopes
-                .declare_method(id, method_name.clone(), method_id);
-            let origin = self.sys.get_method_info(method_id).origin;
-            self.extension_conflict(res, id, method_name, origin, import_span.unwrap_or(origin));
+                .declare_method(id, method_name.clone(), imported);
+            self.extension_conflict(res, id, method_name, origin, import_span);
         }
 
-        for var in exports.vars.values() {
-            // Re-export guard: imported vars are already private; kept in step with the types.
-            if var.span.file_id == m_file && var.is_public {
-                self.scopes
-                    .declare_existing(var)
-                    .ok_or_report(&mut self.errors);
-            }
+        let mut vars: Vec<_> = exports.exported_vars().collect();
+        vars.sort_by(|a, b| a.0.cmp(b.0));
+        for (name, var) in vars {
+            self.declare_imported(var, name.clone(), import_span);
         }
     }
 }

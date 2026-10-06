@@ -1,5 +1,5 @@
-pub use crate::scanner::span::FileId;
 pub(crate) use crate::scanner::span::Span;
+pub use crate::scanner::span::{FileId, PRELUDE_FILE};
 pub use crate::scanner::token::{Token, TokenType};
 use std::collections::HashMap;
 

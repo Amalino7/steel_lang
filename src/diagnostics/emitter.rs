@@ -27,6 +27,10 @@ impl DiagnosticEmitter {
         self.error_count > 0
     }
 
+    pub fn error_count(&self) -> usize {
+        self.error_count
+    }
+
     pub fn take_diagnostics(&mut self) -> Vec<Diagnostic> {
         self.error_count = 0;
         self.warning_count = 0;

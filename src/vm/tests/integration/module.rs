@@ -10,7 +10,7 @@ fn test_basic_module() {
         "#,
     )
     .with_module(
-        "random.garbage",
+        "random/garbage",
         r#"
         public let one = 10;
         public let two = 20;
@@ -66,7 +66,7 @@ fn test_nested_module_imports() {
         "#,
     )
     .with_module(
-        "package.math",
+        "package/math",
         r#"
         public let one = 10;
         public let two = 20;
@@ -265,7 +265,7 @@ fn test_nested_module_types_and_methods() {
         "#,
     )
     .with_module(
-        "data.collections",
+        "data/collections",
         r#"
         public struct Stack { public items: List<number> }
         impl Stack {
@@ -468,4 +468,82 @@ fn test_public_global_read_and_assign_from_importer() {
     )
     .with_module("a", "public let counter = 5;")
     .assert_runs();
+}
+
+#[test]
+fn test_type_error_in_imported_module_is_compile_error() {
+    TestBuilder::new(
+        "main",
+        r#"
+        import bad/{x};
+        let y = x;
+        "#,
+    )
+    .with_module("bad", r#"public let x: number = "text";"#)
+    .assert_compile_error()
+}
+
+#[test]
+fn test_missing_module_is_a_compile_error() {
+    TestBuilder::new("main", "import nope/thing;").assert_compile_error()
+}
+
+#[test]
+fn test_missing_wildcard_module_is_a_compile_error() {
+    TestBuilder::new("main", "import nope/{*};").assert_compile_error()
+}
+
+#[test]
+fn test_import_cycle_is_a_compile_error() {
+    TestBuilder::new("a", "import b/f; public func g(): number { return 1; }")
+        .with_module("b", "import a/g; public func f(): number { return 2; }")
+        .assert_compile_error()
+}
+
+#[test]
+fn test_syntax_error_in_imported_module_is_a_compile_error() {
+    TestBuilder::new("main", "import bad/f; f();")
+        .with_module("bad", "public func f(): void { let = ; }")
+        .assert_compile_error()
+}
+
+#[test]
+fn test_imports_still_see_dependency_exports() {
+    TestBuilder::new("main", "import a/x; import b/y; assert(x + y, 3);")
+        .with_module("a", "public let x = 1;")
+        .with_module("b", "import a/x; public let y = x + 1;")
+        .assert_runs()
+}
+
+#[test]
+fn test_std_function_is_callable_from_an_imported_module() {
+    TestBuilder::new(
+        "main",
+        r#"
+        import util/describe;
+        assert(describe(7), "7");
+        "#,
+    )
+    .with_module(
+        "util",
+        "public func describe(n: number): string { return to_str(n); }",
+    )
+    .assert_runs();
+}
+
+#[test]
+fn test_redefining_a_std_function_is_a_compile_error() {
+    TestBuilder::new("main", "func assert(a: number): number { return a; }").assert_compile_error()
+}
+
+#[test]
+fn test_importing_std_is_a_compile_error() {
+    TestBuilder::new("main", "import std/core;")
+        .with_module("std.core", "")
+        .assert_compile_error()
+}
+
+#[test]
+fn test_entry_module_named_std_is_a_compile_error() {
+    TestBuilder::new("std", "").assert_compile_error()
 }

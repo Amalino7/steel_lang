@@ -1,13 +1,18 @@
 use crate::scanner::{Span, Token};
 use crate::typechecker::core::error::{BindingError, TypeCheckerError};
 use crate::typechecker::core::types::NameTypeId;
+use crate::typechecker::scope::binding::{Binding, Origin};
 use crate::typechecker::scope::variables::DeclarationKind;
 use crate::typechecker::system::MethodId;
 use crate::typechecker::{Symbol, TypeChecker};
 
 impl<'src> TypeChecker<'src> {
     /// Inherent methods first, then extensions in scope.
-    pub(crate) fn lookup_method(&self, type_id: NameTypeId, name: &str) -> Option<MethodId> {
+    pub(crate) fn lookup_method(
+        &self,
+        type_id: NameTypeId,
+        name: &str,
+    ) -> Option<Binding<MethodId>> {
         self.sys
             .lookup_inherent_method(type_id, name)
             .or_else(|| self.type_scopes.lookup_method(type_id, name))
@@ -20,7 +25,7 @@ impl<'src> TypeChecker<'src> {
         // Private methods of other modules are never suggested.
         names.retain(|name| {
             self.lookup_method(type_id, name)
-                .is_none_or(|id| self.is_method_visible(id))
+                .is_none_or(|binding| self.is_method_visible(binding))
         });
         names
     }
@@ -29,11 +34,11 @@ impl<'src> TypeChecker<'src> {
     /// regardless of hash order.
     pub(crate) fn sorted_by_origin<'a>(
         &self,
-        methods: impl Iterator<Item = (NameTypeId, &'a Symbol, MethodId)>,
-    ) -> Vec<(NameTypeId, &'a Symbol, MethodId)> {
+        methods: impl Iterator<Item = (NameTypeId, &'a Symbol, Binding<MethodId>)>,
+    ) -> Vec<(NameTypeId, &'a Symbol, Binding<MethodId>)> {
         let mut methods: Vec<_> = methods.collect();
-        methods.sort_by_key(|(_, _, id)| {
-            let origin = self.sys.get_method_info(*id).origin;
+        methods.sort_by_key(|(_, _, binding)| {
+            let origin = self.sys.get_method_info(binding.target).origin;
             (origin.file_id, origin.start)
         });
         methods
@@ -41,16 +46,16 @@ impl<'src> TypeChecker<'src> {
 
     pub(crate) fn extension_conflict(
         &mut self,
-        res: Result<(), MethodId>,
+        res: Result<(), Binding<MethodId>>,
         type_id: NameTypeId,
         name: &str,
         second: Span,
         span: Span,
     ) {
-        let Err(old_id) = res else { return };
-        let first = self.sys.get_method_info(old_id).origin;
+        let Err(old) = res else { return };
+        let first = self.sys.get_method_info(old.target).origin;
         if first.file_id == second.file_id {
-            self.redeclaration_method(Err(old_id), name, span);
+            self.redeclaration_method(Err(old), name, span);
         } else {
             self.report(TypeCheckerError::ConflictingExtension {
                 method_name: name.into(),
@@ -64,32 +69,35 @@ impl<'src> TypeChecker<'src> {
 
     pub(crate) fn redeclaration_method(
         &mut self,
-        res: Result<(), MethodId>,
+        res: Result<(), Binding<MethodId>>,
         name: &str,
         new_location: Span,
     ) {
-        if let Err(id) = res {
-            let method_info = self.sys.get_method_info(id);
+        if let Err(old) = res {
+            let definition = self.sys.get_method_info(old.target).origin;
             self.report(TypeCheckerError::Binding(BindingError::Redeclaration {
                 name: name.into(),
                 span: new_location,
-                original: method_info.origin,
+                original: old.origin.span().unwrap_or(definition),
                 original_kind: DeclarationKind::Method,
             }));
         }
     }
 
-    /// Public methods are visible everywhere, private ones only in their own module.
-    fn is_method_visible(&self, method_id: MethodId) -> bool {
-        let info = self.sys.get_method_info(method_id);
-        info.is_public || info.origin.file_id == self.file_id
+    /// Public methods are visible everywhere, private ones only in their own module. An imported
+    /// extension is callable: being bound in this module's table is the access.
+    fn is_method_visible(&self, binding: Binding<MethodId>) -> bool {
+        match binding.origin {
+            Origin::Defined { span, public } => public || span.file_id == self.file_id,
+            Origin::Imported { .. } | Origin::Builtin => true,
+        }
     }
 
-    pub(crate) fn check_method_access(&mut self, method_id: MethodId, name: &Token) {
-        if self.is_method_visible(method_id) {
+    pub(crate) fn check_method_access(&mut self, binding: Binding<MethodId>, name: &Token) {
+        if self.is_method_visible(binding) {
             return;
         }
-        let info = self.sys.get_method_info(method_id);
+        let info = self.sys.get_method_info(binding.target);
         let error = TypeCheckerError::PrivateMethod {
             method_name: name.lexeme.into(),
             module: self.module_graph.module_name_of_file(info.origin.file_id),

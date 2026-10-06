@@ -1,8 +1,10 @@
 use crate::typechecker::Symbol;
 use crate::typechecker::core::types::{GenericTypeId, NameTypeId, PrimitiveTypeId, Type};
 use crate::typechecker::method_table::MethodTable;
+use crate::typechecker::scope::binding::{Binding, Origin};
 use crate::typechecker::system::MethodId;
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 
 #[derive(PartialEq)]
 pub enum TypeScopeKind {
@@ -18,8 +20,8 @@ struct TypeScope {
 }
 
 pub struct TypeScopeManager {
-    globals: HashMap<Symbol, NameTypeId>,
-    /// Extension methods in scope for the module being checked.
+    globals: HashMap<Symbol, Binding<NameTypeId>>,
+    /// Extension methods in scope.
     extensions: MethodTable,
     scopes: Vec<TypeScope>,
 }
@@ -93,13 +95,20 @@ impl TypeScopeManager {
         self.scopes.iter().rev().find_map(|s| s.self_type.as_ref())
     }
 
-    pub fn declare_global(&mut self, name: Symbol, id: NameTypeId) -> Result<(), NameTypeId> {
-        if let Some(old_id) = self.globals.insert(name, id)
-            && old_id != id
-        {
-            Err(old_id)
-        } else {
-            Ok(())
+    /// Binds `name`; rebinding it to a different type returns the old binding for error handling.
+    /// The old binding wins.
+    pub fn declare_global(
+        &mut self,
+        name: Symbol,
+        binding: Binding<NameTypeId>,
+    ) -> Result<(), Binding<NameTypeId>> {
+        match self.globals.entry(name) {
+            Entry::Occupied(old) if old.get().target != binding.target => Err(*old.get()),
+            Entry::Occupied(_) => Ok(()),
+            Entry::Vacant(slot) => {
+                slot.insert(binding);
+                Ok(())
+            }
         }
     }
 
@@ -109,10 +118,10 @@ impl TypeScopeManager {
                 return Some((*id).into());
             }
         }
-        self.globals.get(name).cloned()
+        self.globals.get(name).map(|binding| binding.target)
     }
 
-    pub fn lookup_method(&self, ty_id: NameTypeId, method_name: &str) -> Option<MethodId> {
+    pub fn lookup_method(&self, ty_id: NameTypeId, method_name: &str) -> Option<Binding<MethodId>> {
         self.extensions.lookup(ty_id, method_name)
     }
 
@@ -120,17 +129,20 @@ impl TypeScopeManager {
         &mut self,
         ty_id: NameTypeId,
         method_name: Symbol,
-        method_id: MethodId,
-    ) -> Result<(), MethodId> {
-        self.extensions.declare(ty_id, method_name, method_id)
+        binding: Binding<MethodId>,
+    ) -> Result<(), Binding<MethodId>> {
+        self.extensions.declare(ty_id, method_name, binding)
     }
 
     /// Get all method names for a given type (for suggestions)
     pub fn get_methods_for_type(&self, type_name: NameTypeId) -> Vec<Symbol> {
-        self.extensions.names_of(type_name).cloned().collect()
+        self.extensions
+            .method_names_of(type_name)
+            .cloned()
+            .collect()
     }
 
-    pub fn export_types(&mut self) -> HashMap<Symbol, NameTypeId> {
+    pub fn export_types(&mut self) -> HashMap<Symbol, Binding<NameTypeId>> {
         std::mem::take(&mut self.globals)
     }
 
@@ -138,14 +150,17 @@ impl TypeScopeManager {
         std::mem::take(&mut self.extensions)
     }
 
-    fn primitives() -> HashMap<Symbol, NameTypeId> {
-        HashMap::from([
-            ("number".into(), PrimitiveTypeId::Number.into()),
-            ("string".into(), PrimitiveTypeId::String.into()),
-            ("boolean".into(), PrimitiveTypeId::Boolean.into()),
-            ("any".into(), PrimitiveTypeId::Any.into()),
-            ("never".into(), PrimitiveTypeId::Never.into()),
-            ("void".into(), PrimitiveTypeId::Void.into()),
-        ])
+    fn primitives() -> HashMap<Symbol, Binding<NameTypeId>> {
+        [
+            ("number", PrimitiveTypeId::Number),
+            ("string", PrimitiveTypeId::String),
+            ("boolean", PrimitiveTypeId::Boolean),
+            ("any", PrimitiveTypeId::Any),
+            ("never", PrimitiveTypeId::Never),
+            ("void", PrimitiveTypeId::Void),
+        ]
+        .into_iter()
+        .map(|(name, id)| (name.into(), Binding::new(id.into(), Origin::Builtin)))
+        .collect()
     }
 }

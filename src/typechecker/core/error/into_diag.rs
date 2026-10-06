@@ -1,5 +1,6 @@
 use crate::diagnostics::builder::DiagBuilder;
 use crate::diagnostics::{DiagnosticContext, IntoDiagnostic};
+use crate::typechecker::MAX_LOCALS;
 use crate::typechecker::core::error::{
     BindingError, CallError, CallParamKind, GenericError, Operand, TypeCheckerError,
     TypeRequirement, context_defined_at_message, context_short_message, kind_note,
@@ -337,7 +338,7 @@ impl IntoDiagnostic for TypeCheckerError {
                 ).with_optional_origin(err.type_origin, "Type defined here.")
                     .with_suggestion(&err.suggestions)
             }
-            TypeCheckerError::ImportNotFound { name, span, suggestions, note } => {
+            TypeCheckerError::ImportNotFound { name, span, suggestions } => {
                 DiagBuilder::error(
                     span,
                     code,
@@ -345,9 +346,8 @@ impl IntoDiagnostic for TypeCheckerError {
                     "Could not find this Item.",
                 )
                     .with_suggestion(&suggestions)
-                    .with_optional_note(note)
             }
-            TypeCheckerError::PrivateImport { name, module, span, definition } => {
+            TypeCheckerError::PrivateImport { name, module, span, definition, note } => {
                 DiagBuilder::error(
                     span,
                     code,
@@ -356,6 +356,7 @@ impl IntoDiagnostic for TypeCheckerError {
                 )
                     .with_origin(definition, "Defined here.")
                     .with_help(format!("Mark '{}' as `public` to import it.", name))
+                    .with_optional_note(note)
             }
             TypeCheckerError::PrivateField { struct_name, field_name, module, span, definition } => {
                 DiagBuilder::error(
@@ -435,6 +436,29 @@ impl IntoDiagnostic for TypeCheckerError {
                     diag
                 }
             }
+            TypeCheckerError::TooManyLocals { span, count } => {
+                DiagBuilder::error(
+                    span,
+                    code,
+                    format!("Too many local variables: {} (the limit is {})", count, MAX_LOCALS),
+                    "This function or block needs more local slots than a frame can address.",
+                )
+                    .with_help("Split the code into smaller functions.")
+            }
+            TypeCheckerError::ExternOutsideStd { span } => DiagBuilder::error(
+                span,
+                code,
+                "`extern func` outside the standard library",
+                "Only the standard library can declare native functions.",
+            )
+            .with_help("Write a normal function with a body."),
+            TypeCheckerError::UnknownNative { name, span } => DiagBuilder::error(
+                span,
+                code,
+                format!("No native function named '{name}'"),
+                "This `extern func` has nothing to bind to.",
+            )
+            .with_note("every `extern func` in std needs a matching native in the stdlib natives"),
         }
             .build()
     }

@@ -1,7 +1,8 @@
 use crate::compiler::analysis::ResolvedVar;
-use crate::parser::ast::Stmt;
+use crate::parser::ast::ParsedFile;
 use crate::scanner::Span;
 use crate::stdlib::NativeDef;
+use crate::typechecker::scope::binding::{Binding, Origin};
 use crate::typechecker::scope::types::TypeScopeManager;
 use crate::typechecker::scope::variables::Declaration;
 use core::ast::{StmtKind, TypedStmt};
@@ -19,7 +20,7 @@ pub mod id_issuer;
 pub(crate) mod inference;
 pub(crate) mod method_table;
 mod methods;
-mod modules;
+pub(crate) mod modules;
 mod refinements;
 pub(crate) mod resolver;
 pub(crate) mod scope;
@@ -28,10 +29,11 @@ pub(crate) mod system;
 #[cfg(test)]
 mod tests;
 
-use crate::resolver::{Exports, FileId, ModuleGraph};
+use crate::resolver::{FileId, ModuleGraph};
 use crate::typechecker::core::ast::FunctionBody;
 use crate::typechecker::core::types::Type;
 pub use crate::typechecker::id_issuer::{GlobalId, GlobalIdGenerator};
+pub use crate::typechecker::modules::exports::Exports;
 pub use core::types::Symbol;
 
 pub struct TypeChecker<'ctx> {
@@ -39,6 +41,7 @@ pub struct TypeChecker<'ctx> {
     scopes: ScopeManager<'ctx>,
     id_generator: &'ctx GlobalIdGenerator,
     module_graph: &'ctx ModuleGraph,
+    surfaces: &'ctx [Option<Exports>],
     type_scopes: TypeScopeManager,
     natives: &'ctx [NativeDef],
     errors: Vec<TypeCheckerError>,
@@ -54,7 +57,7 @@ pub type CheckResult =
 #[derive(Debug)]
 pub struct TypedFile {
     pub exports: Exports,
-    pub reserved: u16,
+    pub reserved: u8,
     pub file_ast: FunctionBody,
     pub extern_fns: Vec<(Box<str>, u16)>,
 }
@@ -65,15 +68,22 @@ impl<'ctx> TypeChecker<'ctx> {
         sys: &'ctx mut TypeSystem,
         id_generator: &'ctx GlobalIdGenerator,
         module_graph: &'ctx ModuleGraph,
+        surfaces: &'ctx [Option<Exports>],
         file_id: FileId,
     ) -> Self {
         let mut ty_manager = TypeScopeManager::new();
         ty_manager
-            .declare_global("List".into(), sys.view_builtins().list_id.into())
-            .expect("Map Should be empty!");
+            .declare_global(
+                "List".into(),
+                Binding::new(sys.view_builtins().list_id.into(), Origin::Builtin),
+            )
+            .expect("List is declared first, into an empty scope");
         ty_manager
-            .declare_global("Map".into(), sys.view_builtins().map_id.into())
-            .expect("Map Should be empty!");
+            .declare_global(
+                "Map".into(),
+                Binding::new(sys.view_builtins().map_id.into(), Origin::Builtin),
+            )
+            .expect("Map is declared right after List, which has a different name");
 
         TypeChecker {
             type_scopes: ty_manager,
@@ -85,22 +95,22 @@ impl<'ctx> TypeChecker<'ctx> {
             infer_ctx: InferenceContext::new(),
             id_generator,
             module_graph,
+            surfaces,
             file_id,
         }
     }
 
-    pub fn check(&mut self, ast: &[Stmt<'ctx>], exports: Option<&Exports>) -> CheckResult {
+    pub fn check(&mut self, file: &ParsedFile<'ctx>) -> CheckResult {
+        let ast = &file.body[..];
         self.scopes.begin_scope(ScopeKind::Global);
 
-        if let Some(exports) = exports {
-            self.import_all(exports, system::PRELUDE_FILE, None);
-        }
+        self.import_std();
 
         let mut typed_ast = vec![];
 
         let native_slots = self.register_globals();
 
-        self.imports(ast);
+        self.imports(&file.imports);
         // first types like structs and interfaces are declared
         let tasks = self.declare_global_types(ast);
         // define types, fields of structs and enums are defined and interface reqs
@@ -115,7 +125,13 @@ impl<'ctx> TypeChecker<'ctx> {
 
         self.define_global_functions(global_functions, &mut typed_ast);
 
-        let reserved = self.scopes.max_index() as u16;
+        let module_span = file
+            .imports
+            .first()
+            .map(|i| i.span())
+            .or_else(|| ast.first().map(|s| s.span()))
+            .unwrap_or_default();
+        let reserved = self.limit_locals(self.scopes.max_index(), module_span);
 
         let mut extern_fns = collect_extern_fns(&typed_ast);
         // Merge in name→slot pairs for vararg natives registered via register_globals.
@@ -152,14 +168,54 @@ impl<'ctx> TypeChecker<'ctx> {
         }
     }
 
+    fn import_std(&mut self) {
+        let Some(std) = self.module_graph.std_module() else {
+            return;
+        };
+        if std.file_id == self.file_id {
+            return;
+        }
+        let exports = self
+            .surfaces
+            .get(std.id.0 as usize)
+            .and_then(Option::as_ref)
+            .expect("the pipeline stops before user modules when std fails to compile");
+        self.import_all(exports, Span::new(0, 0, 0, self.file_id));
+    }
+
+    /// Whether the module being checked is the standard library.
+    fn is_std(&self) -> bool {
+        self.module_graph
+            .file_to_module_id
+            .get(&self.file_id)
+            .and_then(|id| self.module_graph.modules.get(id.0 as usize))
+            .is_some_and(|module| module.is_std)
+    }
+
+    /// An `extern func` is std-only and must name an existing native (`Type.method` for `impl` externs).
+    pub(crate) fn check_extern(&mut self, native_name: &str, span: Span) {
+        if !self.is_std() {
+            self.report(TypeCheckerError::ExternOutsideStd { span });
+        } else if !self.natives.iter().any(|native| native.name == native_name) {
+            self.report(TypeCheckerError::UnknownNative {
+                name: native_name.to_string(),
+                span,
+            });
+        }
+    }
+
     /// Registers only natives that carry an explicit type (e.g. vararg functions).
     /// Returns name->slot pairs so the VM can bind them by name.
     fn register_globals(&mut self) -> Vec<(Box<str>, u16)> {
+        if !self.is_std() {
+            return vec![];
+        }
+
         let mut slots = vec![];
         for native in self.natives.iter() {
             if let Some(ty) = &native.type_ {
-                // Natives are part of the prelude surface; their default span is file 0.
-                let decl = Declaration::function(native.name.into(), ty.clone(), Span::default())
+                // Natives are part of the prelude surface.
+                let decl = Declaration::function(native.name.into(), ty.clone(), Span::builtin())
                     .public(true);
                 let resolved = self
                     .scopes
@@ -185,6 +241,9 @@ impl<'ctx> TypeChecker<'ctx> {
         self.warnings.push(warning);
     }
 }
+
+/// Local slots a frame can address: the compiler emits slots and `Reserve` amounts as a `u8`.
+pub(crate) const MAX_LOCALS: usize = u8::MAX as usize;
 
 fn collect_extern_fns(stmts: &[TypedStmt]) -> Vec<(Box<str>, u16)> {
     let mut result = vec![];

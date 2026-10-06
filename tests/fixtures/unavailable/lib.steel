@@ -1,0 +1,7 @@
+func hidden(): number {
+    return 1;
+}
+
+public func shown(): number {
+    return 2;
+}

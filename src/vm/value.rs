@@ -237,7 +237,7 @@ impl Display for Value {
             Value::Function(func) => write!(f, "<fn {}>", func.name.as_str()),
             Value::NativeFunction(_) => write!(f, "<native fn>"),
             Value::Closure(closure) => write!(f, "<closure {} @>", closure.function.name.as_str()),
-            Value::Lazy(inner) => write!(f, "<lazy @{}>", inner),
+            Value::Lazy(_) => unreachable!("lazy marker escaped to user code"),
             Value::Instance(instance) => write!(f, "<instance {} @{}>", instance.name, instance),
             Value::BoundMethod(bound_method) => write!(
                 f,

@@ -1,7 +1,7 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::fs;
 use std::path::Path;
-use steel_lang::resolver::new_pipeline::pipeline;
+use steel_lang::pipeline::pipeline;
 use steel_lang::resolver::resolution::Source;
 use steel_lang::vm::VM;
 use steel_lang::{CompiledProgram, Mode, RunConfig};
@@ -34,7 +34,6 @@ fn bench_programs(c: &mut Criterion) {
 
         // compile once, outside the measured loop
         let program = pipeline(&RunConfig::new(
-            &name,
             Source::File {
                 name: &name,
                 source: &source,

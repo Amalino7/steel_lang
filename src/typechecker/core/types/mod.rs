@@ -95,6 +95,8 @@ pub enum PrimitiveTypeId {
     Any,
     Never,
     Void,
+    /// Bound to a name imported from an unavailable module, so its uses stay quiet. Never written in source.
+    Error,
 }
 
 #[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]

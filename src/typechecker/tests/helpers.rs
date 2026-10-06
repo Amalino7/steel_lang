@@ -4,12 +4,14 @@ use crate::resolver::ModuleResolver;
 use crate::scanner::Scanner;
 pub(super) use crate::typechecker::core::error::{TypeCheckerError, TypeCheckerWarning};
 use crate::typechecker::system::TypeSystem;
-use crate::typechecker::{GlobalIdGenerator, TypeChecker};
+use crate::typechecker::{Exports, GlobalIdGenerator, TypeChecker};
 use std::collections::HashMap;
 
 pub(super) struct TypeCheckerTest<'src> {
     sources: HashMap<String, &'src str>,
     entry: &'src str,
+    prelude: Option<&'src str>,
+    resolver_errors: usize,
     error_matchers: Vec<fn(&TypeCheckerError) -> bool>,
     warning_matchers: Vec<fn(&TypeCheckerWarning) -> bool>,
 }
@@ -20,6 +22,8 @@ impl<'src> TypeCheckerTest<'src> {
         let mut builder = Self {
             sources: Default::default(),
             entry: "test",
+            prelude: None,
+            resolver_errors: 0,
             error_matchers: vec![],
             warning_matchers: vec![],
         };
@@ -29,6 +33,18 @@ impl<'src> TypeCheckerTest<'src> {
     #[must_use = "Test builder must be run to execute the test"]
     pub fn with_module(mut self, name: &'src str, source: &'src str) -> Self {
         self.sources.insert(name.to_string(), source);
+        self
+    }
+    /// Checks the source against `prelude` as the `std` module, imported into the test module like the real one.
+    #[must_use = "Test builder must be run to execute the test"]
+    pub fn with_prelude(mut self, prelude: &'src str) -> Self {
+        self.prelude = Some(prelude);
+        self
+    }
+    /// Expects the resolver to report `count` errors (unavailable modules); the checker still runs.
+    #[must_use = "Test builder must be run to execute the test"]
+    pub fn expect_resolver_errors(mut self, count: usize) -> Self {
+        self.resolver_errors = count;
         self
     }
     #[must_use = "Test builder must be run to execute the test"]
@@ -43,14 +59,26 @@ impl<'src> TypeCheckerTest<'src> {
     }
 
     pub fn run(self) {
-        let mut resolver = ModuleResolver::new();
-        assert!(resolver.errors.is_empty(), "Resolution should pass.");
-        let mut graph = resolver.resolve_mock(self.entry.to_string(), &self.sources);
+        let mut resolver = match self.prelude {
+            Some(prelude) => ModuleResolver::new_with_prelude(prelude),
+            None => ModuleResolver::new(),
+        };
+        let graph = resolver
+            .resolve_mock(self.entry.to_string(), &self.sources)
+            .unwrap_or_else(|err| panic!("Entry module failed to load: {err}"));
+        assert_eq!(
+            resolver.errors.len(),
+            self.resolver_errors,
+            "Resolver error count mismatch.
+Found: {:#?}",
+            resolver.errors
+        );
 
         let mut warnings = vec![];
         let mut errors = vec![];
         let mut sys = TypeSystem::new();
         let id_generator = GlobalIdGenerator::new();
+        let mut surfaces: Vec<Option<Exports>> = vec![];
 
         for id in 0..graph.modules.len() {
             let src = &graph.modules[id].source;
@@ -58,10 +86,18 @@ impl<'src> TypeCheckerTest<'src> {
 
             let scanner = Scanner::new(src, file_id);
             let mut parser = Parser::new(scanner);
-            let mut ast = parser.parse().expect("Parser failed");
+            let ast = match parser.parse() {
+                Ok(ast) => ast,
+                Err(errs) => panic!(
+                    "Parser failed in module '{}':
+{:#?}",
+                    graph.modules[id].name, errs
+                ),
+            };
 
-            let mut checker = TypeChecker::new(&[], &mut sys, &id_generator, &graph, file_id);
-            let res = checker.check(ast.as_mut_slice(), None);
+            let mut checker =
+                TypeChecker::new(&[], &mut sys, &id_generator, &graph, &surfaces, file_id);
+            let res = checker.check(&ast);
 
             let exports = match res {
                 Ok((file, warn)) => {
@@ -74,7 +110,7 @@ impl<'src> TypeCheckerTest<'src> {
                     *exports
                 }
             };
-            graph.modules[id].exports = exports;
+            surfaces.push(Some(exports));
         }
 
         self.verify_errors(errors);

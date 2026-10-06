@@ -1,7 +1,7 @@
 //! Private-type leak pass (E078): a type private to this module must not appear in its public API.
 
-use crate::resolver::Exports;
 use crate::scanner::Span;
+use crate::typechecker::Exports;
 use crate::typechecker::core::error::TypeCheckerError;
 use crate::typechecker::core::types::{NameTypeId, Type};
 use crate::typechecker::{Symbol, TypeChecker};
@@ -36,21 +36,15 @@ impl<'ctx> TypeChecker<'ctx> {
     fn public_surface(&self, exports: &Exports) -> Vec<(Symbol, Span, Type)> {
         let mut surface = Vec::new();
 
-        for (name, var) in &exports.vars {
-            // Re-export guard: imported items are not part of this module's API.
-            if var.is_public && var.span.file_id == self.file_id {
-                surface.push((name.clone(), var.span, var.type_info.clone()));
-            }
+        for (name, var) in exports.exported_vars() {
+            surface.push((name.clone(), var.def_span, var.type_info.clone()));
         }
 
-        for &type_id in exports.types.values() {
+        for (_, binding) in exports.exported_types() {
+            let type_id = binding.target;
             let Some(origin) = self.sys.get_origin(type_id) else {
                 continue;
             };
-            // Re-export guard: imported items are not part of this module's API.
-            if origin.file_id != self.file_id || !self.sys.is_public(type_id) {
-                continue;
-            }
             let name = self.sys.get_name(type_id);
             match type_id {
                 NameTypeId::Struct(id) => {
@@ -82,18 +76,17 @@ impl<'ctx> TypeChecker<'ctx> {
                 NameTypeId::Generic(_) | NameTypeId::Primitive(_) => {}
             }
             for method in self.sys.inherent_methods_of(type_id) {
-                let info = self.sys.get_method_info(method);
-                if info.is_public {
+                if method.origin.is_exported() {
+                    let info = self.sys.get_method_info(method.target);
                     surface.push((name.clone(), info.origin, info.func_type.clone()));
                 }
             }
         }
 
-        for (_, method_name, method) in exports.extensions.iter() {
-            let info = self.sys.get_method_info(method);
-            if info.is_public {
-                surface.push((method_name.clone(), info.origin, info.func_type.clone()));
-            }
+        // `Exports::extensions` holds only exported extensions.
+        for (_, method_name, method) in exports.extensions().iter() {
+            let info = self.sys.get_method_info(method.target);
+            surface.push((method_name.clone(), info.origin, info.func_type.clone()));
         }
 
         surface

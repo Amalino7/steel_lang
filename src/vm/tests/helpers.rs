@@ -1,6 +1,6 @@
 use crate::RunResult;
 use crate::parser::Parser;
-use crate::resolver::new_pipeline::pipeline;
+use crate::pipeline::pipeline;
 use crate::resolver::resolution::Source;
 use crate::scanner::{FileId, Scanner};
 use crate::vm::VM;
@@ -11,7 +11,6 @@ use std::collections::HashMap;
 /// Execute source and verify it runs successfully
 pub fn assert_runs(source: &str) {
     let res = pipeline(&RunConfig::new(
-        "test.steel",
         Source::File {
             name: "test.steel",
             source,
@@ -43,7 +42,6 @@ impl TestBuilder {
     }
     pub fn assert_runs(self) {
         let res = pipeline(&RunConfig::new(
-            "test.steel",
             Source::SourceMap {
                 entry: self.entry,
                 map: self.sources,
@@ -53,16 +51,28 @@ impl TestBuilder {
         ));
         assert_eq!(res.result, RunResult::Ok)
     }
+    /// Verify the pipeline stops with a compile error (resolver, parser or typechecker).
+    pub fn assert_compile_error(self) {
+        let res = pipeline(&RunConfig::new(
+            Source::SourceMap {
+                entry: self.entry,
+                map: self.sources,
+            },
+            Mode::Run,
+            true,
+        ));
+        assert_eq!(res.result, RunResult::CompileError)
+    }
 }
 
 /// Execute source and verify a global variable has expected value
 pub fn assert_global(source: &str, global_index: usize, expected: Value) {
     let res = pipeline(&RunConfig {
-        file_name: "main",
         source: Source::File {
             name: "main",
             source,
         },
+        portable: false,
         mode: Mode::Compile,
         debug: false,
         include_prelude: false,
@@ -86,11 +96,11 @@ pub fn assert_global(source: &str, global_index: usize, expected: Value) {
 /// Execute source and verify a global variable holds a string with the given content.
 pub fn assert_global_string(source: &str, global_index: usize, expected: &str) {
     let res = pipeline(&RunConfig {
-        file_name: "main",
         source: Source::File {
             name: "main",
             source,
         },
+        portable: false,
         mode: Mode::Compile,
         debug: false,
         include_prelude: false,
@@ -132,7 +142,6 @@ pub fn assert_parse_fails(source: &str) {
 /// Does not check the error message - just that an error happened.
 pub fn assert_panics(source: &str) {
     let res = pipeline(&RunConfig::new(
-        "test.steel",
         Source::File {
             name: "test.steel",
             source,

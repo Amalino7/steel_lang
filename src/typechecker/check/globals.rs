@@ -34,6 +34,7 @@ impl<'src> TypeChecker<'src> {
                     is_public,
                     ..
                 } => {
+                    self.check_extern(name.lexeme, name.span);
                     let mut guard = TypeScopeGuard::new_function(self, generics);
                     let func_ty = guard
                         .res()

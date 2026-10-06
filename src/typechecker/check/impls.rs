@@ -5,6 +5,7 @@ use crate::typechecker::check::globals::GlobalFn;
 use crate::typechecker::core::ast::{StmtKind, TypedStmt};
 use crate::typechecker::core::error::{Mismatch, Recoverable, TypeCheckerError};
 use crate::typechecker::core::types::{NameTypeId, Type};
+use crate::typechecker::scope::binding::{Binding, Origin};
 use crate::typechecker::scope::guards::TypeScopeGuard;
 use crate::typechecker::system::ImplMethod;
 use crate::typechecker::{Symbol, TypeChecker};
@@ -78,6 +79,7 @@ impl<'src> TypeChecker<'src> {
                 func_types.push((func_name, signature, body, ty.clone(), location.clone()));
             } else if let Stmt::ExternFunction { .. } = method {
                 let mangled_name: Symbol = format!("{}.{}", name.0.lexeme, func_name.lexeme).into();
+                inner_guard.check_extern(&mangled_name, func_name.span);
 
                 typed_ast.push(TypedStmt {
                     kind: StmtKind::ExternFunction {
@@ -121,10 +123,16 @@ impl<'src> TypeChecker<'src> {
             impl_generic_count,
             func_type,
             origin: func_name.span,
-            is_public,
             self_type,
             location,
         });
+        let binding = Binding::new(
+            method_id,
+            Origin::Defined {
+                span: func_name.span,
+                public: is_public,
+            },
+        );
 
         let Some(type_name_id) = self.type_scopes.lookup_type(type_name.lexeme) else {
             return;
@@ -132,7 +140,7 @@ impl<'src> TypeChecker<'src> {
         if self.sys.defining_file(type_name_id) == self.file_id {
             let res =
                 self.sys
-                    .declare_inherent_method(type_name_id, func_name.lexeme.into(), method_id);
+                    .declare_inherent_method(type_name_id, func_name.lexeme.into(), binding);
             self.redeclaration_method(res, func_name.lexeme, func_name.span);
             return;
         }
@@ -140,7 +148,7 @@ impl<'src> TypeChecker<'src> {
             .sys
             .lookup_inherent_method(type_name_id, func_name.lexeme)
         {
-            let inherent_origin = self.sys.get_method_info(inherent).origin;
+            let inherent_origin = self.sys.get_method_info(inherent.target).origin;
             let type_name = self.sys.get_name(type_name_id);
             self.report(TypeCheckerError::ExtensionShadowsInherent {
                 method_name: func_name.lexeme.into(),
@@ -151,7 +159,7 @@ impl<'src> TypeChecker<'src> {
         }
         let res = self
             .type_scopes
-            .declare_method(type_name_id, func_name.lexeme.into(), method_id);
+            .declare_method(type_name_id, func_name.lexeme.into(), binding);
         self.extension_conflict(
             res,
             type_name_id,
@@ -204,11 +212,11 @@ impl<'src> TypeChecker<'src> {
         let mut missing_methods = vec![];
 
         for (method_name, (location, method_type)) in interface_type.methods.iter() {
-            let Some(method_id) = self.lookup_method(type_id, method_name) else {
+            let Some(method) = self.lookup_method(type_id, method_name) else {
                 missing_methods.push(method_name.clone());
                 continue;
             };
-            let method_info = self.sys.get_method_info(method_id);
+            let method_info = self.sys.get_method_info(method.target);
             if let Err(err) = self
                 .infer_ctx
                 .unify_types(method_type, &method_info.func_type)
@@ -227,7 +235,10 @@ impl<'src> TypeChecker<'src> {
                 };
                 self.errors.push(full_err);
             } else {
-                if interface_type.is_public && !method_info.is_public {
+                // A public interface needs public methods. An imported extension was exported, so
+                // it is public; only a method defined here without `public` fails.
+                let is_private = matches!(method.origin, Origin::Defined { public: false, .. });
+                if interface_type.is_public && is_private {
                     self.errors
                         .push(TypeCheckerError::InterfaceMethodNotPublic {
                             method_name: method_name.to_string(),

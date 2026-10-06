@@ -1,22 +1,17 @@
+pub mod collisions;
 pub mod error;
-pub mod new_pipeline;
 pub mod resolution;
 
-pub use error::ResolverError;
+pub use error::{EntryError, ResolverError};
 pub use resolution::ModuleResolver;
 use std::collections::HashMap;
 
-use crate::typechecker::Symbol;
-use crate::typechecker::core::types::NameTypeId;
-use crate::typechecker::method_table::MethodTable;
 use std::path::PathBuf;
-
-use crate::typechecker::scope::variables::VariableContext;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub struct ModuleId(pub u32);
 
-pub use crate::scanner::FileId;
+pub use crate::scanner::{FileId, PRELUDE_FILE};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModuleGraph {
@@ -31,32 +26,12 @@ pub struct ModuleInfo {
     pub name: String,
     pub path: PathBuf,
     pub source: String,
-    pub dependencies: Vec<ModuleId>,
-    pub exports: Exports,
+    pub imports: Vec<ModuleId>,
+    pub is_std: bool,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct Exports {
-    pub types: HashMap<Symbol, NameTypeId>,
-    pub extensions: MethodTable,
-    pub vars: HashMap<Symbol, VariableContext>,
-}
-
-impl Exports {
-    pub fn new() -> Self {
-        Exports {
-            types: Default::default(),
-            extensions: Default::default(),
-            vars: Default::default(),
-        }
-    }
-}
-
-impl Default for Exports {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+/// The reserved name of the standard library module.
+pub const STD_MODULE: &str = "std";
 
 impl ModuleGraph {
     pub fn new() -> Self {
@@ -65,6 +40,11 @@ impl ModuleGraph {
             name_to_id_map: HashMap::new(),
             file_to_module_id: HashMap::new(),
         }
+    }
+
+    /// The standard library module, if the graph has one (`--no-stdlib` and most unit tests have none).
+    pub fn std_module(&self) -> Option<&ModuleInfo> {
+        self.modules.iter().find(|module| module.is_std)
     }
 
     pub fn module_by_name(&self, name: &str) -> Option<&ModuleInfo> {

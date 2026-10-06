@@ -1,10 +1,11 @@
 use crate::parser::ast::{Stmt, StructField, VariantType};
-use crate::scanner::Span;
+use crate::scanner::{Span, Token};
 use crate::typechecker::core::error::{
     DuplicateDefinition, DuplicateKind, Recoverable, TypeCheckerError,
 };
 use crate::typechecker::core::types::type_defs::FieldDef;
 use crate::typechecker::core::types::{EnumId, InterfaceId, NameTypeId, StructId, Type};
+use crate::typechecker::scope::binding::{Binding, Origin};
 use crate::typechecker::scope::guards::TypeScopeGuard;
 use crate::typechecker::{Symbol, TypeChecker};
 use std::collections::HashMap;
@@ -32,11 +33,7 @@ impl<'src> TypeChecker<'src> {
                         *is_public,
                     );
 
-                    let res = self
-                        .type_scopes
-                        .declare_global(name.lexeme.into(), id.into());
-                    self.redeclaration_type(res, name.span);
-
+                    self.declare_local_type(name, id.into(), stmt.span(), *is_public);
                     tasks.push((id.into(), stmt))
                 }
                 Stmt::Interface {
@@ -45,12 +42,7 @@ impl<'src> TypeChecker<'src> {
                     let id =
                         self.sys
                             .declare_interface(name.lexeme.into(), stmt.span(), *is_public);
-                    let res = self
-                        .type_scopes
-                        .declare_global(name.lexeme.into(), id.into());
-
-                    self.redeclaration_type(res, name.span);
-
+                    self.declare_local_type(name, id.into(), stmt.span(), *is_public);
                     tasks.push((id.into(), stmt))
                 }
                 Stmt::Enum {
@@ -65,11 +57,7 @@ impl<'src> TypeChecker<'src> {
                         generics,
                         *is_public,
                     );
-                    let res = self
-                        .type_scopes
-                        .declare_global(name.lexeme.into(), id.into());
-
-                    self.redeclaration_type(res, name.span);
+                    self.declare_local_type(name, id.into(), stmt.span(), *is_public);
                     tasks.push((id.into(), stmt))
                 }
                 _ => {}
@@ -78,18 +66,27 @@ impl<'src> TypeChecker<'src> {
         tasks
     }
 
+    /// Binds a type declared in this module. The binding's `public` repeats the definition's flag.
+    fn declare_local_type(&mut self, name: &Token, id: NameTypeId, span: Span, public: bool) {
+        debug_assert_eq!(self.sys.is_public(id), public);
+        let binding = Binding::new(id, Origin::Defined { span, public });
+        let res = self.type_scopes.declare_global(name.lexeme.into(), binding);
+        self.redeclaration_type(res, name.lexeme, name.span);
+    }
+
+    /// Reports a clash between `name`'s previous binding and a new one at `new_location`.
     pub(crate) fn redeclaration_type(
         &mut self,
-        old_id: Result<(), NameTypeId>,
+        old: Result<(), Binding<NameTypeId>>,
+        name: &str,
         new_location: Span,
     ) {
-        if let Err(old_id) = old_id {
-            let origin = self.sys.get_origin(old_id);
+        if let Err(old) = old {
             self.report(TypeCheckerError::Duplicate(DuplicateDefinition {
                 kind: DuplicateKind::Type,
-                name: self.sys.get_name(old_id).to_string(),
+                name: name.to_string(),
                 span: new_location,
-                original: origin,
+                original: old.origin.span(),
             }))
         }
     }

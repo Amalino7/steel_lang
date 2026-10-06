@@ -1,3 +1,3 @@
-mod exports;
+pub(crate) mod exports;
 mod imports;
 mod leaks;

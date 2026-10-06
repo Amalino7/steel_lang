@@ -56,10 +56,11 @@ impl<'src> TypeChecker<'src> {
         let old_closures = guard.scopes.get_closures();
         drop(guard);
 
+        let reserved = self.limit_locals(reserved, span);
         let captures = self.resolve_captures(old_closures);
 
         FunctionDecl {
-            reserved: reserved as u8,
+            reserved,
             body,
             captures,
         }
@@ -224,6 +225,19 @@ impl<'src> TypeChecker<'src> {
             ty: final_func_type,
             kind: ExprKind::Lambda(fn_decl),
             span,
+        }
+    }
+
+    /// Reports `TooManyLocals` when `count` exceeds what a frame can address. Returns the count to
+    /// reserve (0 after an error, since the program is not compiled then).
+    pub(crate) fn limit_locals(&mut self, count: usize, span: Span) -> u8 {
+        match u8::try_from(count) {
+            Ok(count) => count,
+            Err(_) => {
+                self.errors
+                    .push(TypeCheckerError::TooManyLocals { span, count });
+                0
+            }
         }
     }
 }

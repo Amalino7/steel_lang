@@ -69,7 +69,9 @@ impl<'src> TypeChecker<'src> {
             };
 
             let definition_span = if let ExprKind::GetVar(_, ref name) = callee_typed.kind {
-                self.scopes.lookup(name.as_ref()).map(|(ctx, _)| ctx.span)
+                self.scopes
+                    .lookup(name.as_ref())
+                    .map(|(ctx, _)| ctx.def_span)
             } else if let ExprKind::MethodGet { ref origin, .. } = callee_typed.kind {
                 Some(*origin)
             } else {

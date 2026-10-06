@@ -4,6 +4,7 @@ pub mod cli;
 pub mod compiler;
 mod diagnostics;
 pub mod parser;
+pub mod pipeline;
 pub mod resolver;
 pub mod scanner;
 pub mod stdlib;
@@ -69,10 +70,10 @@ impl RunResult {
 
 /// Configuration for running a Steel program.
 pub struct RunConfig<'a> {
-    pub file_name: &'a str,
     pub source: Source<'a>,
     pub mode: Mode,
     pub debug: bool,
+    pub portable: bool,
     pub include_prelude: bool,
     pub diagnostics: bool,
     pub color: ColorChoice,
@@ -81,17 +82,12 @@ pub struct RunConfig<'a> {
 }
 
 impl<'a> RunConfig<'a> {
-    pub fn new(
-        file_name: &'a str,
-        source: Source<'a>,
-        mode: Mode,
-        diagnostics: bool,
-    ) -> RunConfig<'a> {
+    pub fn new(source: Source<'a>, mode: Mode, diagnostics: bool) -> RunConfig<'a> {
         RunConfig {
-            file_name,
             source,
             mode,
             debug: false,
+            portable: false,
             include_prelude: true,
             diagnostics,
             color: ColorChoice::Auto,

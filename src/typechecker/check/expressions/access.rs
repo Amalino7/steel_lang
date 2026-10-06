@@ -301,7 +301,7 @@ impl<'src> TypeChecker<'src> {
 
         let lookup_result = self.lookup_method(type_id, method_token.lexeme);
 
-        let Some(method_id) = lookup_result else {
+        let Some(method) = lookup_result else {
             let mut candidates = self.method_names_for_type(type_id);
             // Add field names if this is a struct type
             if let NameTypeId::Struct(id) = type_id {
@@ -326,8 +326,8 @@ impl<'src> TypeChecker<'src> {
             )));
         };
 
-        self.check_method_access(method_id, method_token);
-        let method_info = self.sys.get_method_info(method_id);
+        self.check_method_access(method, method_token);
+        let method_info = self.sys.get_method_info(method.target);
 
         let definition_span = method_info.origin;
         let method_type = method_info.func_type.clone();

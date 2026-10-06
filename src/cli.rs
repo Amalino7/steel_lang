@@ -1,9 +1,10 @@
+use crate::pipeline::pipeline;
 use crate::resolver::ModuleResolver;
-use crate::resolver::new_pipeline::pipeline;
 use crate::resolver::resolution::Source;
 use crate::{ColorChoice, EmitTarget, Mode, RunConfig};
 use clap::{Parser, ValueEnum};
 use notify::{EventKind, RecursiveMode, Watcher};
+use std::path::PathBuf;
 use std::sync::mpsc;
 
 /// The Steel language runtime
@@ -16,10 +17,6 @@ pub struct Cli {
     /// Execution mode
     #[arg(value_enum, default_value_t = CliMode::Run)]
     mode: CliMode,
-
-    /// Suppress error reporting and continue past parse/type errors.
-    #[arg(short, long)]
-    force: bool,
 
     /// Show debug output (AST, disassembly, typed AST). Equivalent to --emit ast,bytecode,types.
     #[arg(short, long)]
@@ -48,6 +45,9 @@ pub struct Cli {
     /// Re-run the program whenever the source file changes
     #[arg(short = 'w', long)]
     watch: bool,
+    /// Check the root folder for incompatible files on other OSes
+    #[arg(long, default_value_t = false)]
+    portable: bool,
 }
 
 #[derive(ValueEnum, Clone, PartialEq)]
@@ -109,26 +109,59 @@ impl From<CliEmit> for EmitTarget {
 
 fn build_config(cli: &Cli) -> RunConfig<'_> {
     RunConfig {
-        file_name: &cli.file,
         source: Source::EntryFile(cli.file.as_ref()),
         mode: cli.mode.clone().into(),
         debug: cli.debug,
         include_prelude: !cli.no_stdlib,
         color: cli.color.into(),
         diagnostics: true,
+        portable: cli.portable,
         emit: cli.emit.iter().copied().map(EmitTarget::from).collect(),
         error_limit: cli.error_limit,
     }
 }
 
+/// Makes `watched` match `wanted`. A failure is reported with the failing path and the watcher keeps
+/// running: a module may vanish between the resolver reading it and us watching it.
+fn sync_watches(watcher: &mut impl Watcher, watched: &mut Vec<PathBuf>, wanted: &[PathBuf]) {
+    watched.retain(|path| {
+        if wanted.contains(path) {
+            return true;
+        }
+        if let Err(e) = watcher.unwatch(path.as_path()) {
+            eprintln!("steel: cannot stop watching '{}': {}", path.display(), e);
+        }
+        false
+    });
+    for path in wanted {
+        if watched.contains(path) {
+            continue;
+        }
+        match watcher.watch(path.as_path(), RecursiveMode::NonRecursive) {
+            Ok(()) => watched.push(path.clone()),
+            Err(e) => eprintln!("steel: cannot watch '{}': {}", path.display(), e),
+        }
+    }
+}
+
+/// The module files to watch after a run, the entry included. If not even the entry file could be read, keep
+/// watching it by its own binding so that fixing it triggers a rerun.
+fn files_to_watch(cli: &Cli, config: &RunConfig) -> Vec<PathBuf> {
+    // Resolve again without the prelude: std has no file to watch, and only import headers are parsed.
+    match ModuleResolver::new().resolve_source(&config.source) {
+        Ok(graph) if !graph.modules.is_empty() => graph
+            .modules
+            .into_iter()
+            .map(|module| module.path)
+            .collect(),
+        _ => vec![PathBuf::from(&cli.file)],
+    }
+}
+
 pub fn watch_loop(cli: &Cli) {
     let config = build_config(cli);
-    let graph = ModuleResolver::new().resolve_source(&config.source);
-
-    let mut paths: Vec<_> = graph.modules.iter().map(|info| info.path.clone()).collect();
 
     let output = pipeline(&config);
-
     if cli.time {
         output.timings.print();
     }
@@ -139,14 +172,8 @@ pub fn watch_loop(cli: &Cli) {
         std::process::exit(1);
     });
 
-    for path in paths.iter() {
-        watcher
-            .watch(path.as_path(), RecursiveMode::NonRecursive)
-            .unwrap_or_else(|e| {
-                eprintln!("steel: cannot watch '{}': {}", cli.file, e);
-                std::process::exit(1);
-            });
-    }
+    let mut watched = vec![];
+    sync_watches(&mut watcher, &mut watched, &files_to_watch(cli, &config));
 
     loop {
         match rx.recv() {
@@ -154,31 +181,9 @@ pub fn watch_loop(cli: &Cli) {
                 // Drain any rapid follow-up events (editors often emit several on save).
                 std::thread::sleep(std::time::Duration::from_millis(50));
                 while rx.try_recv().is_ok() {}
-                let graph = ModuleResolver::new().resolve_source(&config.source);
-
-                let new_paths: Vec<_> =
-                    graph.modules.iter().map(|info| info.path.clone()).collect();
-
-                if new_paths != paths {
-                    for path in paths.iter() {
-                        watcher.unwatch(path.as_path()).unwrap_or_else(|e| {
-                            eprintln!("steel: cannot watch '{}': {}", cli.file, e);
-                            std::process::exit(1);
-                        });
-                    }
-
-                    for new_path in new_paths.iter() {
-                        watcher
-                            .watch(new_path.as_path(), RecursiveMode::NonRecursive)
-                            .unwrap_or_else(|e| {
-                                eprintln!("steel: cannot watch '{}': {}", cli.file, e);
-                                std::process::exit(1);
-                            });
-                    }
-                    paths = new_paths;
-                }
 
                 let output = pipeline(&config);
+                sync_watches(&mut watcher, &mut watched, &files_to_watch(cli, &config));
 
                 if cli.time {
                     output.timings.print();

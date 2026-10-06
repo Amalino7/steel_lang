@@ -250,11 +250,11 @@ pub enum StmtKind {
     Let {
         binding: TypedBinding,
         value: TypedExpr,
-        reserved: u16,
+        reserved: u8,
     },
     Block {
         body: Vec<TypedStmt>,
-        reserved: u16,
+        reserved: u8,
     },
     While {
         condition: TypedExpr,

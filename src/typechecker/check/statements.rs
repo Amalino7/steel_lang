@@ -13,7 +13,6 @@ use std::rc::Rc;
 impl<'src> TypeChecker<'src> {
     pub(crate) fn check_stmt(&mut self, stmt: &Stmt<'src>) -> TypedStmt {
         match stmt {
-            Stmt::Import(import) => TypedStmt::new_blank(import.keyword.span),
             Stmt::Expression(expr) => {
                 let typed_expr = self.check_expression(expr, &Type::Unknown);
 
@@ -53,13 +52,17 @@ impl<'src> TypeChecker<'src> {
                     type_annotation_span,
                 );
 
-                let reserved = if is_global {
+                let max_index = if is_global {
                     guard.scopes.max_index()
                 } else {
                     0
                 };
 
                 drop(guard);
+                let reserved = self.limit_locals(max_index, binding.span());
+                // A binding without globals (`let _ = ...`) is initialized inline in the module script, whose
+                // frame has to hold the initializer's locals too.
+                self.scopes.reserve_at_least(reserved as usize);
 
                 let final_type = if declared_type == Type::Error || declared_type == Type::Unknown {
                     coerced_value.ty.clone()
@@ -73,7 +76,7 @@ impl<'src> TypeChecker<'src> {
 
                 let kind = if let Some(tb) = typed_binding {
                     StmtKind::Let {
-                        reserved: reserved as u16,
+                        reserved,
                         binding: tb,
                         value: coerced_value,
                     }

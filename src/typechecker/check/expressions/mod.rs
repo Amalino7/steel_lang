@@ -128,7 +128,7 @@ impl<'src> TypeChecker<'src> {
                     let is_closure = matches!(&resolved, ResolvedVar::Closure(_));
                     let is_reassignable = ctx.is_reassignable();
                     let ctx_name = ctx.name.to_string();
-                    let ctx_span = ctx.span;
+                    let ctx_span = ctx.def_span;
                     let ctx_kind = ctx.kind;
                     let original_type = ctx.original_type.clone();
                     let type_info = ctx.type_info.clone();

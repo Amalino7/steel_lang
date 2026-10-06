@@ -1,0 +1,5 @@
+func f(): number {
+    return 1;
+    let x = 2;
+}
+f();

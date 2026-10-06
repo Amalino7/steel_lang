@@ -84,7 +84,10 @@ impl<'ctx> ScopeManager<'ctx> {
     pub fn end_scope(&mut self) -> usize {
         let finished_scope = self.scopes.pop().expect("No scope to end");
         let max = finished_scope.max_index;
-        if let Some(parent) = self.scopes.last_mut() {
+        // A function's locals live in its own frame, so they don't count towards the enclosing scope.
+        if finished_scope.kind != ScopeKind::Function
+            && let Some(parent) = self.scopes.last_mut()
+        {
             parent.max_index = parent.max_index.max(max);
         }
 
@@ -107,7 +110,15 @@ impl<'ctx> ScopeManager<'ctx> {
         self.scopes.last().map(|s| s.max_index).unwrap_or(0)
     }
 
-    pub fn declare_existing(&mut self, ctx: &VariableContext) -> Result<(), TypeCheckerError> {
+    /// Makes the current scope reserve at least `count` slots.
+    pub fn reserve_at_least(&mut self, count: usize) {
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.max_index = scope.max_index.max(count);
+        }
+    }
+
+    /// Binds an already allocated global (an import) in the module scope.
+    pub fn declare_existing(&mut self, ctx: VariableContext) -> Result<(), TypeCheckerError> {
         let scope = &mut self.scopes[0];
         if let Some(prev) = scope.variables.get(&ctx.name)
             && (prev.mutability == Mutability::Unique || scope.kind == ScopeKind::Global)
@@ -115,17 +126,13 @@ impl<'ctx> ScopeManager<'ctx> {
         {
             return Err(TypeCheckerError::Binding(BindingError::Redeclaration {
                 name: ctx.name.to_string(),
-                span: ctx.span,
-                original: prev.span,
+                span: ctx.binding_span(),
+                original: prev.binding_span(),
                 original_kind: prev.kind,
             }));
         }
 
-        let imported = VariableContext {
-            is_public: false,
-            ..ctx.clone()
-        };
-        scope.variables.insert(ctx.name.clone(), imported);
+        scope.variables.insert(ctx.name.clone(), ctx);
         Ok(())
     }
 
@@ -138,7 +145,7 @@ impl<'ctx> ScopeManager<'ctx> {
             return Err(TypeCheckerError::Binding(BindingError::Redeclaration {
                 name: decl.name.to_string(),
                 span: decl.span,
-                original: prev.span,
+                original: prev.binding_span(),
                 original_kind: prev.kind,
             }));
         }
@@ -322,9 +329,11 @@ impl<'ctx> ScopeManager<'ctx> {
                     )
                     && !ctx.name.starts_with('_')
                     && ctx.name.as_ref() != "self"
-                    && ctx.span != Span::default()
+                    // Imported globals are the exporter's to use.
+                    && ctx.origin.is_local()
+                    && ctx.def_span != Span::default()
             })
-            .map(|ctx| (ctx.name.to_string(), ctx.span))
+            .map(|ctx| (ctx.name.to_string(), ctx.def_span))
             .collect()
     }
 }

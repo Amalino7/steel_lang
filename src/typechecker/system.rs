@@ -8,10 +8,11 @@ use crate::typechecker::core::types::{
 };
 use crate::typechecker::core::types::{StructId, Symbol};
 use crate::typechecker::method_table::MethodTable;
+use crate::typechecker::scope::binding::Binding;
 use std::collections::HashMap;
 
 /// File id of the prelude. Builtin types also count as prelude-defined.
-pub const PRELUDE_FILE: FileId = FileId(0);
+pub use crate::scanner::PRELUDE_FILE;
 
 /// Metadata about a method declared inside an impl block.
 pub struct ImplMethod {
@@ -22,7 +23,6 @@ pub struct ImplMethod {
     pub func_type: Type,
     pub location: ResolvedVar,
     pub origin: Span,
-    pub is_public: bool,
 }
 
 pub struct TypeSystem {
@@ -79,13 +79,13 @@ impl TypeSystem {
             GenericType {
                 id: val_id,
                 name: "Val".into(),
-                origin: Default::default(),
+                origin: Span::builtin(),
             },
         );
 
         structs.insert(
             list_id,
-            StructType::new(list_id, "List".into(), Span::default(), vec![val_id], true),
+            StructType::new(list_id, "List".into(), Span::builtin(), vec![val_id], true),
         );
 
         let key_id = GenericTypeId(generics.len());
@@ -94,7 +94,7 @@ impl TypeSystem {
             GenericType {
                 id: key_id,
                 name: "Key".into(),
-                origin: Default::default(),
+                origin: Span::builtin(),
             },
         );
         let val_id = GenericTypeId(generics.len());
@@ -103,7 +103,7 @@ impl TypeSystem {
             GenericType {
                 id: val_id,
                 name: "Val".into(),
-                origin: Default::default(),
+                origin: Span::builtin(),
             },
         );
 
@@ -113,7 +113,7 @@ impl TypeSystem {
             StructType::new(
                 map_id,
                 "Map".into(),
-                Span::default(),
+                Span::builtin(),
                 vec![key_id, val_id],
                 true,
             ),
@@ -282,6 +282,7 @@ impl TypeSystem {
                     PrimitiveTypeId::Any => Type::Any,
                     PrimitiveTypeId::Never => Type::Never,
                     PrimitiveTypeId::Void => Type::Void,
+                    PrimitiveTypeId::Error => Type::Error,
                 };
                 TypeBlueprint::Primitive(ty)
             }
@@ -303,23 +304,30 @@ impl TypeSystem {
         &mut self,
         ty_id: NameTypeId,
         name: Symbol,
-        method_id: MethodId,
-    ) -> Result<(), MethodId> {
-        self.inherent_methods.declare(ty_id, name, method_id)
+        binding: Binding<MethodId>,
+    ) -> Result<(), Binding<MethodId>> {
+        self.inherent_methods.declare(ty_id, name, binding)
     }
 
-    pub fn lookup_inherent_method(&self, ty_id: NameTypeId, name: &str) -> Option<MethodId> {
+    pub fn lookup_inherent_method(
+        &self,
+        ty_id: NameTypeId,
+        name: &str,
+    ) -> Option<Binding<MethodId>> {
         self.inherent_methods.lookup(ty_id, name)
     }
 
     pub fn inherent_method_names(&self, ty_id: NameTypeId) -> Vec<Symbol> {
-        self.inherent_methods.names_of(ty_id).cloned().collect()
+        self.inherent_methods
+            .method_names_of(ty_id)
+            .cloned()
+            .collect()
     }
 
-    pub fn inherent_methods_of(&self, ty_id: NameTypeId) -> Vec<MethodId> {
+    pub fn inherent_methods_of(&self, ty_id: NameTypeId) -> Vec<Binding<MethodId>> {
         self.inherent_methods
             .methods_of(ty_id)
-            .map(|(_, id)| id)
+            .map(|(_, binding)| binding)
             .collect()
     }
 
@@ -341,7 +349,7 @@ impl TypeSystem {
         match id {
             NameTypeId::Struct(id) => {
                 let origin = self.get_struct(id).origin;
-                if origin == Span::default() {
+                if origin.is_builtin() {
                     None
                 } else {
                     Some(origin)
@@ -377,6 +385,7 @@ impl TypeSystem {
                 PrimitiveTypeId::Any => "any".into(),
                 PrimitiveTypeId::Never => "never".into(),
                 PrimitiveTypeId::Void => "void".into(),
+                PrimitiveTypeId::Error => "<error>".into(),
             },
         }
     }

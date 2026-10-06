@@ -3,10 +3,11 @@ use crate::diagnostics::DiagnosticContext;
 use crate::diagnostics::ariadne::{cache, render};
 use crate::diagnostics::emitter::{DiagnosticEmitter, DiagnosticSink};
 use crate::parser::Parser;
-use crate::resolver::{Exports, FileId, ModuleGraph, ModuleResolver};
+use crate::resolver::{ModuleGraph, ModuleId, ModuleResolver};
 use crate::scanner::Scanner;
 use crate::stdlib::{NativeDef, get_natives, get_prelude};
-use crate::typechecker::system::{PRELUDE_FILE, TypeSystem};
+use crate::typechecker::Exports;
+use crate::typechecker::system::TypeSystem;
 use crate::typechecker::{GlobalIdGenerator, TypeChecker};
 use crate::vm::VM;
 use crate::vm::gc::{GarbageCollector, Gc};
@@ -21,7 +22,6 @@ struct GlobalCtx {
     id_generator: GlobalIdGenerator,
     diagnostics: DiagnosticEmitter,
     timings: PhaseTimings,
-    global_export: Option<Exports>,
     compiled_files: Vec<Gc<Function>>,
     extern_fns: Vec<(Box<str>, u16)>,
 }
@@ -34,79 +34,70 @@ pub fn pipeline(config: &RunConfig) -> RunOutput {
         id_generator: GlobalIdGenerator::new(),
         diagnostics: DiagnosticEmitter::new(),
         timings,
-        global_export: None,
         compiled_files: vec![],
         extern_fns: vec![],
     };
 
-    let mut res = ModuleResolver::new();
-    let mut graph_failed = false;
-    let mut graph = res.resolve_source(&config.source);
-    let errors = res.errors;
-
-    if !errors.is_empty() {
-        if config.diagnostics {
-            for err in errors {
-                eprintln!("{}", err.message());
+    let mut res = if config.include_prelude {
+        ModuleResolver::new_with_prelude(get_prelude())
+    } else {
+        ModuleResolver::new()
+    };
+    if config.portable {
+        res.portable();
+    }
+    let graph = match res.resolve_source(&config.source) {
+        Ok(graph) => graph,
+        Err(err) => {
+            if config.diagnostics {
+                eprintln!("error: {}", err.message());
             }
+            return RunOutput {
+                program: None,
+                result: RunResult::CompileError,
+                timings: ctx.timings,
+            };
         }
-        graph_failed = true;
+    };
+    for err in res.errors {
+        ctx.diagnostics.emit(
+            err,
+            &DiagnosticContext {
+                type_system: &ctx.sys,
+            },
+        );
     }
 
     let natives = get_natives();
 
-    ctx.global_export = if config.include_prelude {
-        let prelude = get_prelude();
-        Some(process_file(
-            config,
-            "prelude",
-            prelude,
-            PRELUDE_FILE,
-            &natives,
-            &mut ctx,
-            &graph,
-        ))
-    } else {
-        None
-    };
+    // One entry per module, in graph order: modules only import earlier ones, and std comes first.
+    let mut surfaces: Vec<Option<Exports>> = Vec::with_capacity(graph.modules.len());
 
-    for idx in 0..graph.modules.len() {
-        let exports = process_file(
-            config,
-            &graph.modules[idx].name,
-            &graph.modules[idx].source,
-            graph.modules[idx].file_id,
-            &[],
-            &mut ctx,
-            &graph,
-        );
-        graph.modules[idx].exports = exports;
+    for module in &graph.modules {
+        let errors_before = ctx.diagnostics.error_count();
+        let exports = process_file(config, module.id, &natives, &mut ctx, &graph, &surfaces);
+        surfaces.push(exports);
+
+        // User modules are never checked against a broken std.
+        if module.is_std && ctx.diagnostics.error_count() > errors_before {
+            if config.diagnostics {
+                render_diagnostics(config, &mut ctx, &graph);
+                eprintln!("internal error: standard library failed to compile");
+            }
+            return RunOutput {
+                program: None,
+                result: RunResult::CompileError,
+                timings: ctx.timings,
+            };
+        }
     }
 
-    let ariadne_config = Config::default()
-        .with_index_type(IndexType::Byte)
-        .with_color(config.color.should_color());
+    let has_errors = ctx.diagnostics.has_errors();
+    if config.diagnostics {
+        render_diagnostics(config, &mut ctx, &graph);
+    }
 
-    if ctx.diagnostics.has_errors() || graph_failed {
-        if config.diagnostics {
-            let mut cache = cache(&graph);
-
-            let limit = config.error_limit.unwrap_or(usize::MAX);
-            let diagnostics = ctx.diagnostics.take_diagnostics();
-            for (idx, diag) in diagnostics.iter().enumerate() {
-                if limit < idx {
-                    eprintln!(
-                        "... and {} more error(s) (--error-limit {})",
-                        diagnostics.len() - limit,
-                        limit
-                    );
-                }
-                render(diag, ariadne_config, &graph)
-                    .eprint(&mut cache)
-                    .unwrap();
-            }
-        }
-
+    if has_errors {
         return RunOutput {
             program: None,
             result: RunResult::CompileError,
@@ -171,24 +162,52 @@ pub fn pipeline(config: &RunConfig) -> RunOutput {
     }
 }
 
+/// Renders and clears every diagnostic collected so far, up to `--error-limit`.
+fn render_diagnostics(config: &RunConfig, ctx: &mut GlobalCtx, graph: &ModuleGraph) {
+    let ariadne_config = Config::default()
+        .with_index_type(IndexType::Byte)
+        .with_color(config.color.should_color());
+    let mut cache = cache(graph);
+
+    let limit = config.error_limit.unwrap_or(usize::MAX);
+    let diagnostics = ctx.diagnostics.take_diagnostics();
+    for diag in diagnostics.iter().take(limit) {
+        // A closed stderr must not panic the compiler.
+        let _ = render(diag, ariadne_config, graph).eprint(&mut cache);
+    }
+    if diagnostics.len() > limit {
+        eprintln!(
+            "... and {} more error(s) (--error-limit {})",
+            diagnostics.len() - limit,
+            limit
+        );
+    }
+}
+
 fn process_file(
     config: &RunConfig,
-    mod_name: &str,
-    src: &str,
-    file_id: FileId,
+    mod_id: ModuleId,
     natives: &[NativeDef],
     ctx: &mut GlobalCtx,
     graph: &ModuleGraph,
-) -> Exports {
-    let emit_ast = config.debug || config.emit.contains(&EmitTarget::Ast);
-    let emit_types = config.debug || config.emit.contains(&EmitTarget::Types);
+    surfaces: &[Option<Exports>],
+) -> Option<Exports> {
+    let info = &graph.modules[mod_id.0 as usize];
+    let mod_name = &info.name;
+    let src = &info.source;
+    let file_id = info.file_id;
+    let is_std = info.is_std;
+
+    // The standard library is only shown with `--debug`: every user would see it on every run.
+    let emit_ast = config.debug || (!is_std && config.emit.contains(&EmitTarget::Ast));
+    let emit_types = config.debug || (!is_std && config.emit.contains(&EmitTarget::Types));
 
     let t = Instant::now();
     let scanner = Scanner::new(src, file_id);
     let mut parser = Parser::new(scanner);
 
-    let ast = match parser.parse() {
-        Ok(ast) => ast,
+    let file = match parser.parse() {
+        Ok(file) => file,
         Err(errs) => {
             for err in errs {
                 ctx.diagnostics.emit(
@@ -198,7 +217,7 @@ fn process_file(
                     },
                 )
             }
-            vec![]
+            return None;
         }
     };
 
@@ -206,16 +225,25 @@ fn process_file(
 
     if emit_ast {
         println!("=== AST ===");
-        ast.iter().for_each(|e| println!("{}", e));
+        file.imports.iter().for_each(|i| println!("{}", i));
+        file.body.iter().for_each(|e| println!("{}", e));
         println!("===========");
     }
 
     let t = Instant::now();
-    let mut ty_checker = TypeChecker::new(natives, &mut ctx.sys, &ctx.id_generator, graph, file_id);
+    let mut ty_checker = TypeChecker::new(
+        natives,
+        &mut ctx.sys,
+        &ctx.id_generator,
+        graph,
+        surfaces,
+        file_id,
+    );
 
-    match ty_checker.check(&ast, ctx.global_export.as_ref()) {
+    match ty_checker.check(&file) {
         Ok((typed_file, warn)) => {
-            for warn in warn {
+            // Std warnings are noise for users; only `--debug` shows them.
+            for warn in warn.into_iter().filter(|_| !is_std || config.debug) {
                 ctx.diagnostics.emit(
                     warn,
                     &DiagnosticContext {
@@ -231,19 +259,20 @@ fn process_file(
                 println!("=================");
             }
 
-            if config.mode == Mode::Check {
-                return typed_file.exports;
+            // Nothing is compiled once anything failed, so a module never reaches the compiler next to errors.
+            if config.mode == Mode::Check || ctx.diagnostics.has_errors() {
+                return Some(typed_file.exports);
             }
 
             let t = Instant::now();
 
             let compiler = Compiler::new(mod_name.to_string(), &mut ctx.gc);
             ctx.compiled_files
-                .push(compiler.compile(typed_file.reserved as u8, &typed_file.file_ast));
+                .push(compiler.compile(typed_file.reserved, &typed_file.file_ast));
             ctx.extern_fns.extend(typed_file.extern_fns);
 
             ctx.timings.compilation += t.elapsed();
-            typed_file.exports
+            Some(typed_file.exports)
         }
         Err((errs, export)) => {
             for err in errs {
@@ -254,7 +283,7 @@ fn process_file(
                     },
                 )
             }
-            *export
+            Some(*export)
         }
     }
 }

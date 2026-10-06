@@ -10,7 +10,7 @@ use crate::parser::error::ParserError;
 use crate::scanner::Scanner;
 use crate::scanner::TokenType as TokT;
 use crate::scanner::{Token, TokenType};
-use ast::Stmt;
+use ast::ParsedFile;
 use std::mem;
 
 pub struct Parser<'src> {
@@ -112,7 +112,8 @@ impl<'src> Parser<'src> {
             message: message.into(),
         }
     }
-    pub fn parse(&mut self) -> Result<Vec<Stmt<'src>>, Vec<ParserError<'src>>> {
+    pub fn parse(&mut self) -> Result<ParsedFile<'src>, Vec<ParserError<'src>>> {
+        let imports = self.parse_imports();
         let mut statements = vec![];
         while !self.scanner.is_at_end() {
             match self.declaration(true) {
@@ -126,7 +127,10 @@ impl<'src> Parser<'src> {
         if !self.errors.is_empty() {
             Err(mem::take(&mut self.errors))
         } else {
-            Ok(statements)
+            Ok(ParsedFile {
+                imports,
+                body: statements,
+            })
         }
     }
 
@@ -147,6 +151,7 @@ impl<'src> Parser<'src> {
                 TokT::Enum,
                 TokT::Struct,
                 TokT::Impl,
+                TokT::Import,
             ) {
                 return;
             }
@@ -164,9 +169,11 @@ mod tests {
         let scanner = Scanner::new(source, FileId(0));
         let mut parser = Parser::new(scanner);
         match parser.parse() {
-            Ok(stmts) => stmts
+            Ok(file) => file
+                .imports
                 .iter()
-                .map(|s| format!("{}", s))
+                .map(|i| format!("{}", i))
+                .chain(file.body.iter().map(|s| format!("{}", s)))
                 .collect::<Vec<_>>()
                 .join("\n"),
             Err(errors) => errors
@@ -594,5 +601,89 @@ mod tests {
             parse_errors("interface I { public func f(self): void; }"),
             1
         );
+    }
+
+    #[test]
+    fn test_import_after_declaration_is_error() {
+        assert_eq!(parse_errors("let x = 1; import a/b;"), 1);
+    }
+
+    #[test]
+    fn test_nested_import_is_error() {
+        assert_eq!(parse_errors("func f(): void { import a/b; }"), 1);
+    }
+
+    #[test]
+    fn test_late_public_import_is_one_error() {
+        assert_eq!(parse_errors("let x = 1; public import a/b;"), 1);
+    }
+
+    #[test]
+    fn test_header_imports_survive_malformed_import_and_body_error() {
+        let source = "import a/b; import ; import d/e; let x = ;";
+        let mut parser = Parser::new(Scanner::new(source, FileId(0)));
+        let imports = parser.parse_imports();
+        let names: Vec<_> = imports.iter().map(|i| i.to_string()).collect();
+        assert_eq!(names, ["import a/b;", "import d/e;"]);
+        // the malformed import is reported, and the full parse also reports the body error
+        let errors = Parser::new(Scanner::new(source, FileId(0)))
+            .parse()
+            .expect_err("source has errors");
+        assert_eq!(errors.len(), 2);
+    }
+
+    #[test]
+    fn test_imports_are_returned_separately_from_body() {
+        let mut parser = Parser::new(Scanner::new("import a/b; let x = 1;", FileId(0)));
+        let file = parser.parse().expect("valid file");
+        assert_eq!(file.imports.len(), 1);
+        assert_eq!(file.body.len(), 1);
+    }
+
+    #[test]
+    fn test_import_without_module_is_error() {
+        assert_eq!(parse_errors("import foo;"), 1);
+        assert_eq!(parse_errors("import foo as f;"), 1);
+    }
+
+    #[test]
+    fn test_import_trailing_slash_is_error() {
+        assert_eq!(parse_errors("import a/;"), 1);
+        assert_eq!(parse_errors("import a/{b/};"), 1);
+    }
+
+    #[test]
+    fn test_import_empty_group_is_error() {
+        assert_eq!(parse_errors("import a/{};"), 1);
+    }
+
+    #[test]
+    fn test_import_group_requires_commas() {
+        assert_eq!(parse_errors("import a/{b c};"), 1);
+    }
+
+    #[test]
+    fn test_import_group_needs_slash() {
+        assert_eq!(parse_errors("import a{b};"), 1);
+    }
+
+    #[test]
+    fn test_valid_imports_parse() {
+        for source in [
+            "import a/{b, c,};",
+            "import a/b;",
+            "import a/b/c as d;",
+            "import a/{*};",
+            "import a/{b, c/d, e as f, g/{*}};",
+        ] {
+            assert_eq!(parse_errors(source), 0, "{source}");
+        }
+    }
+
+    #[test]
+    fn test_non_ascii_import_fails() {
+        assert_eq!(parse_errors("import a/dεfrœ;"), 0);
+        assert_eq!(parse_errors("import a/😎/b;"), 1);
+        assert_eq!(parse_errors("import a/œaʃðæ/b/;"), 1);
     }
 }

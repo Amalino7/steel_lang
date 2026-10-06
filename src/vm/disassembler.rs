@@ -111,20 +111,23 @@ pub fn disassemble_instruction(
             println!("SetLocal {}", bytecode[offset]);
         }
         Opcode::ResolveGlobal => {
-            offset += 1;
-            println!("ResolveGlobal {}", bytecode[offset]);
+            offset += 2;
+            println!(
+                "ResolveGlobal {}",
+                read_bytes(&bytecode[(offset - 1)..=offset])
+            );
         }
         Opcode::GetLocal => {
             offset += 1;
             println!("GetLocal {}", bytecode[offset]);
         }
         Opcode::SetGlobal => {
-            offset += 1;
-            println!("SetGlobal {}", bytecode[offset]);
+            offset += 2;
+            println!("SetGlobal {}", read_bytes(&bytecode[(offset - 1)..=offset]));
         }
         Opcode::GetGlobal => {
-            offset += 1;
-            println!("GetGlobal {}", bytecode[offset]);
+            offset += 2;
+            println!("GetGlobal {}", read_bytes(&bytecode[(offset - 1)..=offset]));
         }
         Opcode::Call => {
             offset += 1;

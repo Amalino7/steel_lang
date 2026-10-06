@@ -39,6 +39,9 @@ impl TypeCheckerError {
             TypeCheckerError::PrivateTypeInPublicApi { .. } => "E078",
             TypeCheckerError::ExtensionShadowsInherent { .. } => "E075",
             TypeCheckerError::ConflictingExtension { .. } => "E076",
+            TypeCheckerError::TooManyLocals { .. } => "E079",
+            TypeCheckerError::ExternOutsideStd { .. } => "E084",
+            TypeCheckerError::UnknownNative { .. } => "E085",
         }
     }
 }

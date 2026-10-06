@@ -201,7 +201,7 @@ fn test_nested_module_import() {
         "#,
     )
     .with_module(
-        "package.math",
+        "package/math",
         r#"
         public func add(a: number, b: number): number { return a + b; }
         "#,

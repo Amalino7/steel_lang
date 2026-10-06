@@ -77,7 +77,7 @@ impl<'a> Compiler<'a> {
             } => {
                 if *reserved != 0 {
                     self.emit_op(Opcode::Reserve, stmt.span.line);
-                    self.emit_byte(*reserved as u8, stmt.span.line);
+                    self.emit_byte(*reserved, stmt.span.line);
                 }
                 for stmt in stmts {
                     self.compile_stmt(stmt);
@@ -136,7 +136,7 @@ impl<'a> Compiler<'a> {
                     }
                     ResolvedVar::Global(idx) => {
                         self.emit_op(Opcode::SetGlobal, line);
-                        self.emit_byte(*idx as u8, line);
+                        self.emit_short(*idx, line);
                         self.emit_op(Opcode::Pop, line);
                     }
                     ResolvedVar::Closure(_) => {
@@ -184,14 +184,19 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    fn compile_global_let(&mut self, binding: &TypedBinding, value: &TypedExpr, reserved: u16) {
+    /// Compiles the lazy initializer of a global `let` and registers it for the bound globals.
+    /// A binding without globals (`let _ = ...`) has nobody to register with, so it is run inline instead.
+    fn compile_global_let(&mut self, binding: &TypedBinding, value: &TypedExpr, reserved: u8) {
         let mut vars = vec![];
         Self::collect_vars(binding, &mut vars);
+        if vars.is_empty() {
+            return;
+        }
         let line = value.span.line;
 
         let mut compiler = Compiler::new(format!("<lazy init {}>", binding), self.gc);
         compiler.emit_op(Opcode::Reserve, line);
-        compiler.emit_byte(reserved as u8, line);
+        compiler.emit_byte(reserved, line);
 
         {
             let lazy = compiler.gc.alloc(Lazy::Initializing);
@@ -305,7 +310,7 @@ impl<'a> Compiler<'a> {
             }
             ResolvedVar::Global(idx) => {
                 self.emit_op(Opcode::SetGlobal, line);
-                self.emit_byte(*idx as u8, line);
+                self.emit_short(*idx, line);
             }
             ResolvedVar::Closure(_) => {
                 unreachable!("Cannot set capture")
@@ -321,15 +326,21 @@ impl<'a> Compiler<'a> {
             }
             ResolvedVar::Global(idx) => {
                 self.emit_op(Opcode::ResolveGlobal, line);
-                self.emit_byte(*idx as u8, line);
+                self.emit_short(*idx, line);
                 self.emit_op(Opcode::GetGlobal, line);
-                self.emit_byte(*idx as u8, line);
+                self.emit_short(*idx, line);
             }
             ResolvedVar::Closure(idx) => {
                 self.emit_op(Opcode::GetCapture, line);
                 self.emit_byte(*idx, line);
             }
         }
+    }
+
+    /// Emits a 2-byte operand, high byte first (the order `read_16_bytes` expects).
+    fn emit_short(&mut self, value: u16, line: u32) {
+        self.emit_byte((value >> 8) as u8, line);
+        self.emit_byte((value & 0xff) as u8, line);
     }
 
     fn emit_jump(&mut self, op: Opcode, line: u32) -> usize {
@@ -577,7 +588,7 @@ impl<'a> Compiler<'a> {
                     }
                     ResolvedVar::Global(idx) => {
                         self.emit_op(Opcode::SetGlobal, line);
-                        self.emit_byte(*idx as u8, line);
+                        self.emit_short(*idx, line);
                     }
                     ResolvedVar::Closure(_) => {
                         unreachable!("Closures shouldn't be assigned to")

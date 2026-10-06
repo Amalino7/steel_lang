@@ -1,5 +1,6 @@
 use crate::typechecker::Symbol;
 use crate::typechecker::core::types::NameTypeId;
+use crate::typechecker::scope::binding::Binding;
 use crate::typechecker::system::MethodId;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
@@ -7,30 +8,32 @@ use std::collections::hash_map::Entry;
 /// Methods grouped by the type they belong to.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct MethodTable {
-    by_type: HashMap<NameTypeId, HashMap<Symbol, MethodId>>,
+    by_type: HashMap<NameTypeId, HashMap<Symbol, Binding<MethodId>>>,
 }
 
 impl MethodTable {
     pub fn new() -> Self {
         Self::default()
     }
+    /// Binds `name` on the type; `Err(old)` if it is already bound to a different method (the old
+    /// binding stays).
     pub fn declare(
         &mut self,
         ty_id: NameTypeId,
         name: Symbol,
-        method_id: MethodId,
-    ) -> Result<(), MethodId> {
+        binding: Binding<MethodId>,
+    ) -> Result<(), Binding<MethodId>> {
         match self.by_type.entry(ty_id).or_default().entry(name) {
-            Entry::Occupied(old) if *old.get() != method_id => Err(*old.get()),
+            Entry::Occupied(old) if old.get().target != binding.target => Err(*old.get()),
             Entry::Occupied(_) => Ok(()),
             Entry::Vacant(slot) => {
-                slot.insert(method_id);
+                slot.insert(binding);
                 Ok(())
             }
         }
     }
 
-    pub fn lookup(&self, ty_id: NameTypeId, name: &str) -> Option<MethodId> {
+    pub fn lookup(&self, ty_id: NameTypeId, name: &str) -> Option<Binding<MethodId>> {
         self.by_type.get(&ty_id)?.get(name).copied()
     }
 
@@ -39,27 +42,30 @@ impl MethodTable {
     }
 
     /// Methods of one type, in no particular order.
-    pub fn methods_of(&self, ty_id: NameTypeId) -> impl Iterator<Item = (&Symbol, MethodId)> {
+    pub fn methods_of(
+        &self,
+        ty_id: NameTypeId,
+    ) -> impl Iterator<Item = (&Symbol, Binding<MethodId>)> {
         self.by_type
             .get(&ty_id)
             .into_iter()
             .flat_map(|m| m.iter().map(|(name, id)| (name, *id)))
     }
 
-    pub fn names_of(&self, ty_id: NameTypeId) -> impl Iterator<Item = &Symbol> {
+    pub fn method_names_of(&self, ty_id: NameTypeId) -> impl Iterator<Item = &Symbol> {
         self.methods_of(ty_id).map(|(name, _)| name)
     }
 
     /// Every method of every type, in no particular order.
-    pub fn iter(&self) -> impl Iterator<Item = (NameTypeId, &Symbol, MethodId)> {
+    pub fn iter(&self) -> impl Iterator<Item = (NameTypeId, &Symbol, Binding<MethodId>)> {
         self.by_type
             .iter()
             .flat_map(|(ty, m)| m.iter().map(move |(name, id)| (*ty, name, *id)))
     }
 
-    pub fn retain(&mut self, mut keep: impl FnMut(MethodId) -> bool) {
+    pub fn retain(&mut self, mut keep: impl FnMut(&Binding<MethodId>) -> bool) {
         for methods in self.by_type.values_mut() {
-            methods.retain(|_, id| keep(*id));
+            methods.retain(|_, binding| keep(binding));
         }
         self.by_type.retain(|_, methods| !methods.is_empty());
     }
@@ -68,13 +74,16 @@ impl MethodTable {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scanner::Span;
     use crate::typechecker::core::types::PrimitiveTypeId;
+    use crate::typechecker::scope::binding::Origin;
     use crate::typechecker::system::{ImplMethod, TypeSystem};
 
-    fn ids() -> (NameTypeId, NameTypeId, MethodId, MethodId) {
+    type Method = Binding<MethodId>;
+
+    fn ids() -> (NameTypeId, NameTypeId, Method, Method) {
         // MethodIds can only be minted by a TypeSystem, so register two dummy methods.
         use crate::compiler::analysis::ResolvedVar;
-        use crate::scanner::Span;
         use crate::typechecker::core::types::Type;
         let mut sys = TypeSystem::new();
         let mut register = || {
@@ -84,10 +93,16 @@ mod tests {
                 func_type: Type::Void,
                 location: ResolvedVar::Global(0),
                 origin: Span::default(),
-                is_public: true,
             })
         };
-        let (a, b) = (register(), register());
+        let origin = Origin::Defined {
+            span: Span::default(),
+            public: true,
+        };
+        let (a, b) = (
+            Binding::new(register(), origin),
+            Binding::new(register(), origin),
+        );
         (
             PrimitiveTypeId::Number.into(),
             PrimitiveTypeId::String.into(),
@@ -113,7 +128,7 @@ mod tests {
         table.declare(num, "f".into(), a).unwrap();
         table.declare(string, "g".into(), b).unwrap();
 
-        let names: Vec<_> = table.names_of(num).map(|n| n.to_string()).collect();
+        let names: Vec<_> = table.method_names_of(num).map(|n| n.to_string()).collect();
         assert_eq!(names, ["f"]);
         assert_eq!(table.lookup(string, "f"), None);
         assert!(table.has_methods_for(string));
@@ -126,7 +141,7 @@ mod tests {
         let mut table = MethodTable::new();
         table.declare(num, "f".into(), a).unwrap();
         table.declare(string, "g".into(), b).unwrap();
-        table.retain(|id| id == a);
+        table.retain(|binding| *binding == a);
         assert!(table.has_methods_for(num));
         assert!(!table.has_methods_for(string));
     }
