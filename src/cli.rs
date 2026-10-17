@@ -121,7 +121,7 @@ fn build_config(cli: &Cli) -> RunConfig<'_> {
     }
 }
 
-/// Makes `watched` match `wanted`. A failure is reported with the failing path and the watcher keeps
+/// Makes `watched` match `wanted`. A failure is reported with the failing path, and the watcher keeps
 /// running: a module may vanish between the resolver reading it and us watching it.
 fn sync_watches(watcher: &mut impl Watcher, watched: &mut Vec<PathBuf>, wanted: &[PathBuf]) {
     watched.retain(|path| {
@@ -144,8 +144,7 @@ fn sync_watches(watcher: &mut impl Watcher, watched: &mut Vec<PathBuf>, wanted: 
     }
 }
 
-/// The module files to watch after a run, the entry included. If not even the entry file could be read, keep
-/// watching it by its own binding so that fixing it triggers a rerun.
+/// The module files to watch after a run, the entry included.
 fn files_to_watch(cli: &Cli, config: &RunConfig) -> Vec<PathBuf> {
     // Resolve again without the prelude: std has no file to watch, and only import headers are parsed.
     match ModuleResolver::new().resolve_source(&config.source) {

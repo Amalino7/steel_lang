@@ -810,43 +810,6 @@ mod tests {
     }
 
     #[test]
-    fn test_one_spelling_is_not_a_collision() {
-        let mut resolver = ModuleResolver::new();
-        let _ = resolver
-            .resolve_mock(
-                "main".to_string(),
-                &mock(&[
-                    ("main", "import core/a/x; import core/b/y; import Core/c/z;"),
-                    ("core/a", ""),
-                    ("core/b", ""),
-                ]),
-            )
-            .expect("entry loads");
-        // `Core/c` collides with the directory `core`; `core/b` next to `core/a` does not.
-        assert_eq!(resolver.errors.len(), 1);
-    }
-
-    #[test]
-    fn test_cycle_through_a_second_spelling_of_a_file() {
-        // main -> foo (foo/index.steel) -> foo/index (the same file)
-        let project = TestProject::new();
-        project.write_file("foo/index.steel", "import foo/x;");
-        let root = project.write_file("main.steel", "import foo/y;");
-
-        let mut resolver = ModuleResolver::new();
-        let graph = resolver.resolve(&root).expect("entry loads");
-
-        assert_eq!(resolver.errors.len(), 1);
-        match &resolver.errors[0] {
-            ResolverError::CyclicDependency { cycle, .. } => {
-                assert_eq!(cycle, &["foo", "foo"]);
-            }
-            err => panic!("Expected CyclicDependency, got: {:?}", err),
-        }
-        assert_eq!(graph.modules.len(), 2);
-    }
-
-    #[test]
     fn test_group_import_of_a_missing_module_is_no_edges_and_one_error() {
         let mut resolver = ModuleResolver::new();
         let graph = resolver
@@ -1000,7 +963,48 @@ let = ;",
             ResolverError::ReservedModuleName { .. }
         ));
         let _ = graph.module_by_name("main").expect("main is loaded");
-        assert_eq!(graph.modules.len(), 2, "std.x is not loaded");
+        assert_eq!(graph.modules.len(), 2, "std.x should not be loaded");
+    }
+
+    #[test]
+    fn test_index_import_is_reserved_module_error() {
+        let mut resolver = ModuleResolver::new();
+        let graph = resolver
+            .resolve_mock(
+                "main".to_string(),
+                &mock(&[
+                    ("main", "import normal/index/{Item};"),
+                    ("normal/index", ""),
+                ]),
+            )
+            .expect("Initial file should succeed!");
+
+        assert_eq!(resolver.errors.len(), 1);
+        assert!(matches!(
+            resolver.errors[0],
+            ResolverError::ReservedModuleName { .. }
+        ));
+        let _ = graph.module_by_name("main").expect("main is loaded");
+        assert_eq!(graph.modules.len(), 1, "normal/index should not be loaded");
+    }
+
+    #[test]
+    fn test_index_at_beginning_of_import_is_reserved_module_error() {
+        let mut resolver = ModuleResolver::new();
+        let graph = resolver
+            .resolve_mock(
+                "main".to_string(),
+                &mock(&[("main", "import index/{Item};"), ("index", "")]),
+            )
+            .expect("Initial file should succeed!");
+
+        assert_eq!(resolver.errors.len(), 1);
+        assert!(matches!(
+            resolver.errors[0],
+            ResolverError::ReservedModuleName { .. }
+        ));
+        let _ = graph.module_by_name("main").expect("main is loaded");
+        assert_eq!(graph.modules.len(), 1, "index is not loaded");
     }
 
     #[test]

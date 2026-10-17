@@ -331,8 +331,6 @@ fn test_private_type_in_public_global_and_extension() {
     .run();
 }
 
-// ---- coverage added by /test (see docs/features/visibility/tests.md) ----
-
 fn is_private_import(e: &TypeCheckerError, n: &str) -> bool {
     matches!(e, TypeCheckerError::PrivateImport { name, .. } if name == n)
 }

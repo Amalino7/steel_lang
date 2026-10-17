@@ -8,6 +8,7 @@ pub struct Collision {
     pub names: Vec<String>,
 }
 
+/// Walks a directory tree and returns a list of file name collisions on case-insensitive OSes.
 pub fn walk_tree(root: &Path) -> std::io::Result<Vec<Collision>> {
     let mut stack = vec![root.to_path_buf()];
     let mut collisions = vec![];
