@@ -903,7 +903,7 @@ let = ;",
         let a = graph.module_by_name("a").expect("a is loaded");
         let b = graph.module_by_name("b").expect("b is loaded");
         assert_eq!(a.imports[0], b.id);
-        assert_eq!(b.imports.get(0), None, "the back edge is dropped");
+        assert_eq!(b.imports.first(), None, "the back edge is dropped");
         assert_eq!(resolver.errors.len(), 1);
     }
 

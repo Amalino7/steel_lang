@@ -1,24 +1,24 @@
-use std::process::Command;
+use std::process::{Command, ExitStatus};
 
 fn steel() -> Command {
     Command::new(env!("CARGO_BIN_EXE_steel_lang"))
 }
 
+/// Runs the command and returns its exit status. Unlike `Command::status`, the child's stdout/stderr are
+/// piped rather than inherited, so they cannot leak past the test harness's output capture.
+fn exit_status(cmd: &mut Command) -> ExitStatus {
+    cmd.output().unwrap().status
+}
+
 #[test]
 fn run_mode_exits_zero() {
-    let status = steel()
-        .args(["tests/fixtures/hello.steel"])
-        .status()
-        .unwrap();
+    let status = exit_status(steel().args(["tests/fixtures/hello.steel"]));
     assert!(status.success());
 }
 
 #[test]
 fn check_mode_exits_zero() {
-    let status = steel()
-        .args(["tests/fixtures/hello.steel", "check"])
-        .status()
-        .unwrap();
+    let status = exit_status(steel().args(["tests/fixtures/hello.steel", "check"]));
     assert!(status.success());
 }
 
@@ -38,28 +38,19 @@ fn check_mode_debug_prints_ast() {
 
 #[test]
 fn type_error_exits_one() {
-    let status = steel()
-        .args(["tests/fixtures/type_error.steel"])
-        .status()
-        .unwrap();
+    let status = exit_status(steel().args(["tests/fixtures/type_error.steel"]));
     assert_eq!(status.code(), Some(1));
 }
 
 #[test]
 fn runtime_error_exits_two() {
-    let status = steel()
-        .args(["tests/fixtures/runtime_error.steel"])
-        .status()
-        .unwrap();
+    let status = exit_status(steel().args(["tests/fixtures/runtime_error.steel"]));
     assert_eq!(status.code(), Some(2));
 }
 
 #[test]
 fn missing_file_exits_one() {
-    let status = steel()
-        .args(["nonexistent_file_that_does_not_exist.steel"])
-        .status()
-        .unwrap();
+    let status = exit_status(steel().args(["nonexistent_file_that_does_not_exist.steel"]));
     assert_eq!(status.code(), Some(1));
 }
 

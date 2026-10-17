@@ -59,7 +59,7 @@ impl TestBuilder {
                 map: self.sources,
             },
             Mode::Run,
-            true,
+            false,
         ));
         assert_eq!(res.result, RunResult::CompileError)
     }

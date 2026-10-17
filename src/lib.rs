@@ -37,7 +37,7 @@ impl ColorChoice {
         match self {
             ColorChoice::Always => true,
             ColorChoice::Never => false,
-            ColorChoice::Auto => std::io::stdout().is_terminal(),
+            ColorChoice::Auto => std::io::stderr().is_terminal() && std::io::stdout().is_terminal(),
         }
     }
 }
