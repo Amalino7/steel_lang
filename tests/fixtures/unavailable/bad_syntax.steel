@@ -1,0 +1,5 @@
+public struct S {}
+
+public func f(x: S): number {
+    let = ;
+}

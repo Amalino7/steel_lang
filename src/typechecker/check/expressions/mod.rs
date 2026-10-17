@@ -10,16 +10,14 @@ use crate::compiler::analysis::ResolvedVar::Global;
 use crate::parser::ast::{Expr, Literal, StringPart};
 use crate::scanner::Span;
 use crate::scanner::TokenType;
-use crate::typechecker::core::ast::{
-    ExprKind, TypedExpr, TypedStringPart,
-};
+use crate::typechecker::TypeChecker;
+use crate::typechecker::core::ast::{ExprKind, TypedExpr, TypedStringPart};
 use crate::typechecker::core::error::{
     BindingError, GenericError, Mismatch, MismatchContext, Recoverable, TypeCheckerError,
 };
 use crate::typechecker::core::types::Type;
 use crate::typechecker::inference::{UnificationError, UnificationErrorKind};
 use crate::typechecker::similarity::find_similar;
-use crate::typechecker::TypeChecker;
 
 impl<'src> TypeChecker<'src> {
     pub(crate) fn check_expression(&mut self, expr: &Expr<'src>, expected: &Type) -> TypedExpr {
@@ -66,10 +64,10 @@ impl<'src> TypeChecker<'src> {
                         kind: ExprKind::GetVar(resolved, ctx.name.clone()),
                         span: name.span,
                     }
-                } else if let Some(type_name) = self.res().get_owned_name(name.lexeme) {
+                } else if let Some(type_id) = self.res().get_type_id(name.lexeme) {
                     TypedExpr {
-                        ty: Type::Metatype(type_name.clone(), vec![].into()),
-                        kind: ExprKind::GetVar(Global(0), type_name),
+                        ty: Type::Metatype(type_id, vec![].into()),
+                        kind: ExprKind::GetVar(Global(0), name.lexeme.into()),
                         span: name.span,
                     }
                 } else {
@@ -130,7 +128,7 @@ impl<'src> TypeChecker<'src> {
                     let is_closure = matches!(&resolved, ResolvedVar::Closure(_));
                     let is_reassignable = ctx.is_reassignable();
                     let ctx_name = ctx.name.to_string();
-                    let ctx_span = ctx.span;
+                    let ctx_span = ctx.def_span;
                     let ctx_kind = ctx.kind;
                     let original_type = ctx.original_type.clone();
                     let type_info = ctx.type_info.clone();
@@ -352,12 +350,12 @@ impl<'src> TypeChecker<'src> {
             (expected, false)
         };
 
-        if let (Type::Interface(iface_name), Some(name)) = (expected_type, provided.ty.get_name()) {
-            return if let Some(idx) = self.sys.get_vtable_idx(name, iface_name.clone()) {
+        if let (&Type::Interface(iface_id), Some(name)) = (expected_type, provided.ty.get_ty_id()) {
+            return if let Some(idx) = self.sys.get_vtable_idx(name, iface_id) {
                 let result_ty = if was_optional {
-                    Type::Optional(Box::new(Type::Interface(iface_name.clone())))
+                    Type::Optional(Box::new(Type::Interface(iface_id)))
                 } else {
-                    Type::Interface(iface_name.clone())
+                    Type::Interface(iface_id)
                 };
                 Ok(TypedExpr {
                     ty: result_ty,
@@ -370,7 +368,7 @@ impl<'src> TypeChecker<'src> {
             } else {
                 Err(UnificationError {
                     kind: UnificationErrorKind::InterfaceNotImplemented {
-                        interface: iface_name.clone(),
+                        interface: self.sys.get_interface(iface_id).name.clone(),
                     },
                     expected: expected_type.clone(),
                     found: provided.ty,
@@ -392,7 +390,7 @@ impl<'src> TypeChecker<'src> {
         match self.coerce(typed, expected) {
             Ok(coerced) => {
                 if !coerced.ty.is_concrete() {
-                    let uninferred = self.infer_ctx.uninferred_names(&coerced.ty);
+                    let uninferred = self.infer_ctx.uninferred_names(&coerced.ty, self.sys);
                     self.report(TypeCheckerError::Generic(GenericError::CannotInfer {
                         span,
                         uninferred_generics: uninferred,

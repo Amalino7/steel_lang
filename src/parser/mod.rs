@@ -1,7 +1,7 @@
 pub mod ast;
-pub mod error;
 mod control_flow;
 mod declarations;
+pub mod error;
 mod expressions;
 mod literals;
 mod statements;
@@ -10,7 +10,7 @@ use crate::parser::error::ParserError;
 use crate::scanner::Scanner;
 use crate::scanner::TokenType as TokT;
 use crate::scanner::{Token, TokenType};
-use ast::Stmt;
+use ast::ParsedFile;
 use std::mem;
 
 pub struct Parser<'src> {
@@ -112,10 +112,11 @@ impl<'src> Parser<'src> {
             message: message.into(),
         }
     }
-    pub fn parse(&mut self) -> Result<Vec<Stmt<'src>>, Vec<ParserError<'src>>> {
+    pub fn parse(&mut self) -> Result<ParsedFile<'src>, Vec<ParserError<'src>>> {
+        let imports = self.parse_imports();
         let mut statements = vec![];
         while !self.scanner.is_at_end() {
-            match self.declaration() {
+            match self.declaration(true) {
                 Ok(stmt) => statements.push(stmt),
                 Err(e) => {
                     self.errors.push(e);
@@ -126,7 +127,10 @@ impl<'src> Parser<'src> {
         if !self.errors.is_empty() {
             Err(mem::take(&mut self.errors))
         } else {
-            Ok(statements)
+            Ok(ParsedFile {
+                imports,
+                body: statements,
+            })
         }
     }
 
@@ -147,6 +151,7 @@ impl<'src> Parser<'src> {
                 TokT::Enum,
                 TokT::Struct,
                 TokT::Impl,
+                TokT::Import,
             ) {
                 return;
             }
@@ -158,15 +163,17 @@ impl<'src> Parser<'src> {
 #[cfg(test)]
 mod tests {
     use crate::parser::Parser;
-    use crate::scanner::Scanner;
+    use crate::scanner::{FileId, Scanner};
 
     fn parse_snapshot(source: &str) -> String {
-        let scanner = Scanner::new(source);
+        let scanner = Scanner::new(source, FileId(0));
         let mut parser = Parser::new(scanner);
         match parser.parse() {
-            Ok(stmts) => stmts
+            Ok(file) => file
+                .imports
                 .iter()
-                .map(|s| format!("{}", s))
+                .map(|i| format!("{}", i))
+                .chain(file.body.iter().map(|s| format!("{}", s)))
                 .collect::<Vec<_>>()
                 .join("\n"),
             Err(errors) => errors
@@ -502,7 +509,7 @@ mod tests {
     #[test]
     fn test_parser_error_missing_semicolon() {
         let source = "let a = 10";
-        let scanner = Scanner::new(source);
+        let scanner = Scanner::new(source, FileId(0));
         let mut parser = Parser::new(scanner);
         let res = parser.parse();
         assert!(res.is_err(), "Parser should error on missing semicolon");
@@ -511,7 +518,7 @@ mod tests {
     #[test]
     fn test_parser_error_missing_right_paren() {
         let source = "let a = (10 + 2;";
-        let scanner = Scanner::new(source);
+        let scanner = Scanner::new(source, FileId(0));
         let mut parser = Parser::new(scanner);
         assert!(
             parser.parse().is_err(),
@@ -529,8 +536,154 @@ mod tests {
         } else {
             println("a is equal to 0");
         }"#;
-        let scanner = Scanner::new(source);
+        let scanner = Scanner::new(source, FileId(0));
         let mut parser = Parser::new(scanner);
         let _ast = parser.parse().expect("Failed to parse.");
+    }
+
+    fn parse_errors(source: &str) -> usize {
+        let scanner = Scanner::new(source, FileId(0));
+        let mut parser = Parser::new(scanner);
+        parser.parse().err().map_or(0, |e| e.len())
+    }
+
+    #[test]
+    fn test_public_struct_fields_and_interface_parse() {
+        let source = "public struct P { public x: number, y: number } public interface I { func f(self): void; }";
+        let output = parse_snapshot(source);
+        assert!(output.contains("public x"));
+        assert!(output.contains("public interface I"));
+        assert_eq!(parse_errors(source), 0);
+    }
+
+    #[test]
+    fn test_public_declarations_display_with_space() {
+        let source =
+            "public func f() {} public extern func g(); public struct S {} public enum E { A }";
+        let output = parse_snapshot(source);
+        for expected in [
+            "public func f",
+            "public extern func g",
+            "public struct S",
+            "public enum E",
+        ] {
+            assert!(
+                output.contains(expected),
+                "missing `{expected}` in:
+{output}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_public_in_block_is_error() {
+        assert_eq!(parse_errors("func f(): void { public let x = 1; }"), 1);
+    }
+
+    #[test]
+    fn test_public_impl_is_error() {
+        assert_eq!(parse_errors("struct P {} public impl P {}"), 1);
+    }
+
+    #[test]
+    fn test_public_import_is_error() {
+        assert_eq!(parse_errors("public import a/b;"), 1);
+    }
+
+    #[test]
+    fn test_public_enum_variant_is_error() {
+        assert_eq!(parse_errors("enum E { public A }"), 1);
+    }
+
+    #[test]
+    fn test_public_interface_method_is_error() {
+        assert_eq!(
+            parse_errors("interface I { public func f(self): void; }"),
+            1
+        );
+    }
+
+    #[test]
+    fn test_import_after_declaration_is_error() {
+        assert_eq!(parse_errors("let x = 1; import a/b;"), 1);
+    }
+
+    #[test]
+    fn test_nested_import_is_error() {
+        assert_eq!(parse_errors("func f(): void { import a/b; }"), 1);
+    }
+
+    #[test]
+    fn test_late_public_import_is_one_error() {
+        assert_eq!(parse_errors("let x = 1; public import a/b;"), 1);
+    }
+
+    #[test]
+    fn test_header_imports_survive_malformed_import_and_body_error() {
+        let source = "import a/b; import ; import d/e; let x = ;";
+        let mut parser = Parser::new(Scanner::new(source, FileId(0)));
+        let imports = parser.parse_imports();
+        let names: Vec<_> = imports.iter().map(|i| i.to_string()).collect();
+        assert_eq!(names, ["import a/b;", "import d/e;"]);
+        // the malformed import is reported, and the full parse also reports the body error
+        let errors = Parser::new(Scanner::new(source, FileId(0)))
+            .parse()
+            .expect_err("source has errors");
+        assert_eq!(errors.len(), 2);
+    }
+
+    #[test]
+    fn test_imports_are_returned_separately_from_body() {
+        let mut parser = Parser::new(Scanner::new("import a/b; let x = 1;", FileId(0)));
+        let file = parser.parse().expect("valid file");
+        assert_eq!(file.imports.len(), 1);
+        assert_eq!(file.body.len(), 1);
+    }
+
+    #[test]
+    fn test_import_without_module_is_error() {
+        assert_eq!(parse_errors("import foo;"), 1);
+        assert_eq!(parse_errors("import foo as f;"), 1);
+    }
+
+    #[test]
+    fn test_import_trailing_slash_is_error() {
+        assert_eq!(parse_errors("import a/;"), 1);
+        assert_eq!(parse_errors("import a/{b/};"), 1);
+    }
+
+    #[test]
+    fn test_import_empty_group_is_error() {
+        assert_eq!(parse_errors("import a/{};"), 1);
+    }
+
+    #[test]
+    fn test_import_group_requires_commas() {
+        assert_eq!(parse_errors("import a/{b c};"), 1);
+    }
+
+    #[test]
+    fn test_import_group_needs_slash() {
+        assert_eq!(parse_errors("import a{b};"), 1);
+    }
+
+    #[test]
+    fn test_valid_imports_parse() {
+        for source in [
+            "import a/{b, c,};",
+            "import a/b;",
+            "import a/b/c as d;",
+            "import a/{*};",
+            "import a/{b, c/d, e as f, g/{*}};",
+        ] {
+            assert_eq!(parse_errors(source), 0, "{source}");
+        }
+    }
+
+    #[test]
+    fn test_non_ascii_import_fails() {
+        assert_eq!(parse_errors("import a/dεfrœ;"), 0);
+        assert_eq!(parse_errors("import a/😎/b;"), 1);
+        assert_eq!(parse_errors("import a/œaʃðæ/b/;"), 1);
     }
 }

@@ -3,6 +3,7 @@ pub mod type_defs;
 
 use crate::scanner::Span;
 use crate::typechecker::core::error::TypeCheckerWarning;
+use crate::typechecker::system::TypeSystem;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -13,7 +14,7 @@ pub struct FunctionType {
     pub is_vararg: bool,
     pub params: Vec<(Symbol, Type)>,
     pub return_type: Type,
-    pub type_params: Vec<Symbol>,
+    pub type_params: Vec<GenericTypeId>,
 }
 
 impl FunctionType {
@@ -65,54 +66,124 @@ pub enum Type {
     Unknown,
     Function(Rc<FunctionType>),
     Tuple(Rc<TupleType>),
-    GenericParam(Symbol),
-    Metatype(Symbol, GenericArgs),
-    Struct(Symbol, GenericArgs),
-    Interface(Symbol),
-    Enum(Symbol, GenericArgs),
+    GenericParam(GenericTypeId),
+
+    Metatype(NameTypeId, GenericArgs),
+
+    Struct(StructId, GenericArgs),
+    Interface(InterfaceId),
+    Enum(EnumId, GenericArgs),
+
     Any,
 }
 
+#[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
+pub enum NameTypeId {
+    Struct(StructId),
+    Enum(EnumId),
+    Interface(InterfaceId),
+    Generic(GenericTypeId),
+    Primitive(PrimitiveTypeId),
+}
+
+#[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
+pub enum PrimitiveTypeId {
+    Number,
+    String,
+    Boolean,
+
+    Any,
+    Never,
+    Void,
+    /// Bound to a name imported from an unavailable module, so its uses stay quiet. Never written in source.
+    Error,
+}
+
+#[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
+pub struct StructId(pub usize);
+
+#[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
+pub struct EnumId(pub usize);
+
+#[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
+pub struct InterfaceId(pub usize); // TODO consider visibility
+
+#[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
+pub struct GenericTypeId(pub usize);
+impl From<StructId> for NameTypeId {
+    fn from(value: StructId) -> Self {
+        NameTypeId::Struct(value)
+    }
+}
+
+impl From<EnumId> for NameTypeId {
+    fn from(value: EnumId) -> Self {
+        NameTypeId::Enum(value)
+    }
+}
+
+impl From<InterfaceId> for NameTypeId {
+    fn from(value: InterfaceId) -> Self {
+        NameTypeId::Interface(value)
+    }
+}
+
+impl From<GenericTypeId> for NameTypeId {
+    fn from(value: GenericTypeId) -> Self {
+        NameTypeId::Generic(value)
+    }
+}
+
+impl From<PrimitiveTypeId> for NameTypeId {
+    fn from(value: PrimitiveTypeId) -> Self {
+        NameTypeId::Primitive(value)
+    }
+}
+
 impl Type {
-    pub fn new_list(element: Type) -> Type {
-        Type::Struct("List".into(), Rc::from(vec![element]))
+    pub fn new_list(element: Type, sys: &TypeSystem) -> Type {
+        Type::Struct(sys.view_builtins().list_id, Rc::from(vec![element]))
     }
 
-    pub fn new_map(key: Type, value: Type) -> Type {
-        Type::Struct("Map".into(), Rc::from(vec![key, value]))
+    pub fn new_map(key: Type, value: Type, sys: &TypeSystem) -> Type {
+        Type::Struct(sys.view_builtins().map_id, Rc::from(vec![key, value]))
     }
 
-    pub fn list_element(&self) -> Option<&Type> {
-        let Type::Struct(name, args) = self else {
+    pub fn list_element(&self, sys: &TypeSystem) -> Option<&Type> {
+        let Type::Struct(id, args) = self else {
             return None;
         };
-        if name.as_ref() == "List" {
-            args.first()
-        } else {
-            None
-        }
+        if sys.is_list(*id) { args.first() } else { None }
     }
 
-    pub fn map_key(&self) -> Option<&Type> {
-        let Type::Struct(name, args) = self else {
+    pub fn map_key(&self, sys: &TypeSystem) -> Option<&Type> {
+        let Type::Struct(id, args) = self else {
             return None;
         };
-        if name.as_ref() == "Map" {
-            args.first()
-        } else {
-            None
-        }
+        if sys.is_map(*id) { args.first() } else { None }
     }
 
-    pub fn map_value(&self) -> Option<&Type> {
-        let Type::Struct(name, args) = self else {
+    pub fn map_value(&self, sys: &TypeSystem) -> Option<&Type> {
+        let Type::Struct(id, args) = self else {
             return None;
         };
-        if name.as_ref() == "Map" {
-            args.get(1)
-        } else {
-            None
-        }
+        if sys.is_map(*id) { args.get(1) } else { None }
+    }
+
+    pub fn get_ty_id(&self) -> Option<NameTypeId> {
+        Some(match self {
+            Type::Number => PrimitiveTypeId::Number.into(),
+            Type::String => PrimitiveTypeId::String.into(),
+            Type::Boolean => PrimitiveTypeId::Boolean.into(),
+            Type::Void => PrimitiveTypeId::Void.into(),
+            Type::Never => PrimitiveTypeId::Never.into(),
+            Type::Any => PrimitiveTypeId::Any.into(),
+            &Type::GenericParam(id) => id.into(),
+            &Type::Struct(id, _) => id.into(),
+            &Type::Interface(id) => id.into(),
+            &Type::Enum(id, _) => id.into(),
+            _ => return None,
+        })
     }
 
     pub fn generic_args(&self) -> &[Type] {
@@ -131,7 +202,7 @@ impl Type {
     pub fn transform(
         &self,
         f: &impl Fn(Type) -> Type,
-        u: &impl Fn(&[Symbol]) -> Vec<Symbol>,
+        u: &impl Fn(&[GenericTypeId]) -> Vec<GenericTypeId>,
     ) -> Type {
         let transformed = match self {
             Type::Nil
@@ -164,11 +235,11 @@ impl Type {
             }
             Type::Struct(name, args) => {
                 let args: Vec<_> = args.iter().map(|t| t.clone().transform(f, u)).collect();
-                Type::Struct(name.clone(), Rc::from(args))
+                Type::Struct(*name, Rc::from(args))
             }
             Type::Enum(name, args) => {
                 let args: Vec<_> = args.iter().map(|t| t.clone().transform(f, u)).collect();
-                Type::Enum(name.clone(), Rc::from(args))
+                Type::Enum(*name, Rc::from(args))
             }
         };
         f(transformed)
@@ -234,33 +305,10 @@ impl Type {
         }
     }
 
-    pub fn get_name(&self) -> Option<&str> {
-        match self {
-            Type::Error => None,
-            Type::Infer(_) => None,
-            Type::Interface(name) => Some(name),
-            Type::Number => Some("number"),
-            Type::String => Some("string"),
-            Type::Boolean => Some("boolean"),
-            Type::Void => Some("void"),
-            Type::Never => Some("never"),
-            Type::Function(_) => None,
-            Type::Unknown => None,
-            Type::Struct(name, _) => Some(name),
-            Type::Any => None,
-            Type::Optional(_) => None,
-            Type::Nil => Some("nil"),
-            Type::GenericParam(_) => None,
-            Type::Enum(name, _) => Some(name),
-            Type::Tuple(_) => None,
-            Type::Metatype(_, _) => None,
-        }
-    }
-
     pub fn new_general_function(
         params: Vec<(Symbol, Type)>,
         return_type: Type,
-        type_params: Vec<Symbol>,
+        type_params: Vec<GenericTypeId>,
         is_vararg: bool,
     ) -> Self {
         Type::Function(Rc::new(FunctionType {
@@ -274,7 +322,7 @@ impl Type {
     pub fn new_function(
         params: Vec<(Symbol, Type)>,
         return_type: Type,
-        type_params: Vec<Symbol>,
+        type_params: Vec<GenericTypeId>,
     ) -> Type {
         Type::Function(Rc::new(FunctionType {
             is_vararg: false,
@@ -316,7 +364,7 @@ impl Type {
         }
     }
 
-    pub fn generic_to_concrete(&self, map: &HashMap<Symbol, Type>) -> Type {
+    pub fn generic_to_concrete(&self, map: &HashMap<GenericTypeId, Type>) -> Type {
         self.transform(
             &|ty| match ty {
                 Type::GenericParam(ref sym) => match map.get(sym) {

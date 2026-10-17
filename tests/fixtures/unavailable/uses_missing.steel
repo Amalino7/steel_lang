@@ -1,0 +1,5 @@
+import nope/{f, S};
+
+func g(x: S): number {
+    return f(x);
+}

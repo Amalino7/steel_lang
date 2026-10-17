@@ -1,12 +1,13 @@
-use crate::typechecker::core::types::{FunctionType, GenericArgs, TupleType, Type};
-use crate::typechecker::system::make_substitution_map;
 use crate::typechecker::Symbol;
+use crate::typechecker::core::types::{
+    FunctionType, GenericArgs, GenericTypeId, NameTypeId, TupleType, Type,
+};
+use crate::typechecker::system::{TypeSystem, make_substitution_map};
 use std::collections::HashMap;
-use std::fmt;
 
 pub struct InferenceContext {
     substitutions: HashMap<u32, Type>,
-    debug_names: HashMap<u32, Symbol>,
+    debug_names: HashMap<u32, GenericTypeId>,
     next_id: u32,
 }
 impl Default for InferenceContext {
@@ -48,10 +49,10 @@ impl InferenceContext {
         Type::Infer(id)
     }
 
-    /// Like [`new_type_var`] but records `name` as the human-readable origin of this
+    /// Like [`new_type_var`] but records `name` as the human-readable with_origin of this
     /// inference variable (e.g. the generic parameter name `"T"`).
     /// The name is used when building [`CannotInferType`] error messages.
-    pub fn new_named_type_var(&mut self, name: Symbol) -> Type {
+    pub fn new_named_type_var(&mut self, name: GenericTypeId) -> Type {
         let id = self.next_id;
         self.next_id += 1;
         self.debug_names.insert(id, name);
@@ -61,44 +62,44 @@ impl InferenceContext {
     /// Collect the human-readable names of every unresolved inference variable
     /// reachable inside `ty`.  Variables that have no recorded name are rendered
     /// as `"?<id>"` so they are never silently dropped.
-    pub fn uninferred_names(&self, ty: &Type) -> Vec<String> {
+    pub fn uninferred_names(&self, ty: &Type, sys: &TypeSystem) -> Vec<String> {
         let mut names: Vec<String> = Vec::new();
-        self.collect_uninferred(ty, &mut names);
+        self.collect_uninferred(ty, &mut names, sys);
         names.sort();
         names.dedup();
         names
     }
 
-    fn collect_uninferred(&self, ty: &Type, names: &mut Vec<String>) {
+    fn collect_uninferred(&self, ty: &Type, names: &mut Vec<String>, sys: &TypeSystem) {
         match ty {
             Type::Infer(id) => {
                 if self.is_resolved(*id) {
                     let resolved = self.resolve(*id).unwrap().clone();
-                    self.collect_uninferred(&resolved, names);
+                    self.collect_uninferred(&resolved, names, sys);
                 } else {
                     let name = self
                         .debug_names
                         .get(id)
-                        .map(|s| s.to_string())
+                        .map(|&s| sys.get_name(s.into()).to_string())
                         .unwrap_or_else(|| format!("?{}", id));
                     names.push(name);
                 }
             }
-            Type::Optional(inner) => self.collect_uninferred(inner, names),
+            Type::Optional(inner) => self.collect_uninferred(inner, names, sys),
             Type::Tuple(tt) => {
                 for t in tt.types.iter() {
-                    self.collect_uninferred(t, names);
+                    self.collect_uninferred(t, names, sys);
                 }
             }
             Type::Function(ft) => {
                 for (_, t) in ft.params.iter() {
-                    self.collect_uninferred(t, names);
+                    self.collect_uninferred(t, names, sys);
                 }
-                self.collect_uninferred(&ft.return_type, names);
+                self.collect_uninferred(&ft.return_type, names, sys);
             }
             Type::Struct(_, args) | Type::Enum(_, args) => {
                 for t in args.iter() {
-                    self.collect_uninferred(t, names);
+                    self.collect_uninferred(t, names, sys);
                 }
             }
             _ => {}
@@ -106,7 +107,7 @@ impl InferenceContext {
     }
 
     /// Should be used when new type arguments can be partially provided and the rest has to use new infer holes.
-    pub fn fresh_args(&mut self, params: &[Symbol], provided: &[Type]) -> GenericArgs {
+    pub fn fresh_args(&mut self, params: &[GenericTypeId], provided: &[Type]) -> GenericArgs {
         let is_correct = params.len() == provided.len() || provided.is_empty();
         debug_assert!(
             is_correct,
@@ -115,11 +116,11 @@ impl InferenceContext {
         params
             .iter()
             .enumerate()
-            .map(|(i, name)| {
+            .map(|(i, id)| {
                 provided
                     .get(i)
                     .cloned()
-                    .unwrap_or_else(|| self.new_named_type_var(name.clone()))
+                    .unwrap_or_else(|| self.new_named_type_var(*id))
             })
             .collect()
     }
@@ -228,9 +229,10 @@ impl InferenceContext {
                 expected: expected.clone(),
                 found: provided.clone(),
             }),
-            (Type::Struct(exp_name, exp_args), Type::Struct(prov_name, prov_args)) => {
-                self.unify_complex(exp_name, exp_args, prov_name, prov_args, variance, mismatch)
-            }
+            (Type::Struct(exp_name, exp_args), Type::Struct(prov_name, prov_args)) => self
+                .unify_complex(
+                    *exp_name, exp_args, *prov_name, prov_args, variance, mismatch,
+                ),
             (Type::Interface(exp_name), Type::Interface(prov_name)) => {
                 if exp_name == prov_name {
                     Ok(())
@@ -238,9 +240,10 @@ impl InferenceContext {
                     Err(mismatch(UnificationErrorKind::TypeMismatch))
                 }
             }
-            (Type::Enum(exp_name, exp_args), Type::Enum(prov_name, prov_args)) => {
-                self.unify_complex(exp_name, exp_args, prov_name, prov_args, variance, mismatch)
-            }
+            (Type::Enum(exp_name, exp_args), Type::Enum(prov_name, prov_args)) => self
+                .unify_complex(
+                    *exp_name, exp_args, *prov_name, prov_args, variance, mismatch,
+                ),
             (Type::GenericParam(exp_name), Type::GenericParam(prov_name)) => {
                 if exp_name == prov_name {
                     Ok(())
@@ -255,14 +258,14 @@ impl InferenceContext {
 
     fn unify_complex(
         &mut self,
-        expected_name: &Symbol,
+        expected_name: impl Into<NameTypeId>,
         expected_args: &[Type],
-        provided_name: &Symbol,
+        provided_name: impl Into<NameTypeId>,
         provided_args: &[Type],
         _variance: Variance,
         mismatch: impl FnOnce(UnificationErrorKind) -> UnificationError,
     ) -> Result<(), UnificationError> {
-        if expected_name != provided_name {
+        if expected_name.into() != provided_name.into() {
             return Err(mismatch(UnificationErrorKind::TypeMismatch));
         }
 
@@ -411,72 +414,10 @@ pub enum UnificationErrorKind {
     },
 }
 
-impl fmt::Display for UnificationError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match &self.kind {
-            UnificationErrorKind::TypeMismatch => {
-                write!(
-                    f,
-                    "Type mismatch: expected {}, found {}",
-                    self.expected, self.found
-                )
-            }
-            UnificationErrorKind::ArityMismatch {
-                expected_len,
-                found_len,
-            } => {
-                write!(
-                    f,
-                    "Arity mismatch: expected {} elements, found {} elements\n  Expected type: {}\n  Found type: {}",
-                    expected_len, found_len, self.expected, self.found
-                )
-            }
-            UnificationErrorKind::VarianceMismatch => {
-                write!(
-                    f,
-                    "Variance mismatch: types are not compatible\n  Expected: {}\n  Found: {}",
-                    self.expected, self.found
-                )
-            }
-            UnificationErrorKind::VarargNotAllowed => {
-                write!(f, "Cannot use vararg functions as arguments")
-            }
-            UnificationErrorKind::GenericFunctionNotAllowed => {
-                write!(
-                    f,
-                    "Cannot assign a generic function.\n  TIP: specify generics using .<Type> notation"
-                )
-            }
-            UnificationErrorKind::MetatypeNotUnifiable => {
-                write!(f, "Cannot unify metatypes")
-            }
-            UnificationErrorKind::OccursCheck => {
-                write!(
-                    f,
-                    "Infinite type detected: type variable occurs in its own definition\n  Type: {}",
-                    self.expected
-                )
-            }
-            UnificationErrorKind::InterfaceNotImplemented { interface } => {
-                write!(
-                    f,
-                    "Type does not implement interface `{}`\n  Expected: {}\n  Found: {}",
-                    interface, self.expected, self.found
-                )
-            }
-        }
-    }
-}
-
-impl From<UnificationError> for String {
-    fn from(err: UnificationError) -> String {
-        err.to_string()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::typechecker::core::types::StructId;
 
     #[test]
     fn test_occurs_check() {
@@ -485,7 +426,7 @@ mod tests {
         let Type::Infer(id) = var else { panic!() };
 
         // Try to unify T = List<T> (should fail)
-        let list_of_var = Type::new_list(Type::Infer(id));
+        let list_of_var = Type::Struct(StructId(0), GenericArgs::from([Type::Infer(id)]));
         let result = ctx.unify_types(&var, &list_of_var);
         assert!(result.is_err());
         assert!(matches!(

@@ -193,3 +193,61 @@ fn test_invalid_return_in_global_block() {
     .expect_error(|e| matches!(e, TypeCheckerError::InvalidReturnOutsideFunction { .. }))
     .run();
 }
+
+#[test]
+fn test_lambda_return_type_visible_to_caller() {
+    // The lambda returns a `number`. Assigning the result to a `string` must produce
+    // a TypeMismatch — proving the return type was correctly inferred as `number`, not
+    // as `Never` (the pre-fix bug).
+    Tester::new(
+        r#"
+        let f = |x: number| { return x; };
+        let _: string = f(1);
+        "#,
+    )
+    .expect_error(|e| matches!(e, TypeCheckerError::TypeMismatch { .. }))
+    .run();
+}
+
+#[test]
+fn test_multiple_errors_collected() {
+    Tester::new(
+        r#"
+            let a: number = "hello"; // Error 1: Type mismatch
+            b(1);                     // Error 2: Undefined variable 'b'
+            return 10;                // Error 3: Return outside function
+            "#,
+    )
+    .expect_error(|e| matches!(e, TypeCheckerError::TypeMismatch { .. }))
+    .expect_error(|e| matches!(e, TypeCheckerError::UndefinedVariable { .. }))
+    .expect_error(|e| matches!(e, TypeCheckerError::InvalidReturnOutsideFunction { .. }))
+    .run();
+}
+
+fn many_lets(count: usize) -> String {
+    (0..count)
+        .map(|i| format!("let _v{i} = {i};\n"))
+        .collect::<String>()
+}
+
+#[test]
+fn test_error_too_many_locals_in_function() {
+    let src = format!("func big() {{\n{}}}", many_lets(260));
+    Tester::new(&src)
+        .expect_error(|e| matches!(e, TypeCheckerError::TooManyLocals { .. }))
+        .run();
+}
+
+#[test]
+fn test_error_too_many_locals_in_top_level_block() {
+    let src = format!("{{\n{}}}", many_lets(260));
+    Tester::new(&src)
+        .expect_error(|e| matches!(e, TypeCheckerError::TooManyLocals { .. }))
+        .run();
+}
+
+#[test]
+fn test_locals_within_limit_are_accepted() {
+    let src = format!("func ok() {{\n{}}}", many_lets(200));
+    assert_typechecks(&src);
+}

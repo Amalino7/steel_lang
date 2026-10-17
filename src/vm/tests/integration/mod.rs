@@ -1,14 +1,15 @@
 // Integration tests organized by feature
 
+mod advanced;
 mod basics;
+mod enums;
 mod expressions;
 mod functions;
-mod structs;
-mod interfaces;
-mod enums;
 mod generics;
-mod advanced;
+mod interfaces;
 mod lists;
 mod maps;
-mod strings;
+mod module;
 mod numbers;
+mod strings;
+mod structs;

@@ -4,7 +4,7 @@ use crate::scanner::{Span, Token};
 use crate::typechecker::core::ast::{ExprKind, FunctionBody, FunctionDecl, TypedExpr};
 use crate::typechecker::core::error::{MismatchContext, Recoverable, TypeCheckerError};
 use crate::typechecker::core::types::{FunctionType, Type};
-use crate::typechecker::scope::guards::{ScopeGuard, TypeScopeGuard};
+use crate::typechecker::scope::guards::ScopeGuard;
 use crate::typechecker::scope::variables::Declaration;
 use crate::typechecker::{Symbol, TypeChecker};
 use std::rc::Rc;
@@ -56,10 +56,11 @@ impl<'src> TypeChecker<'src> {
         let old_closures = guard.scopes.get_closures();
         drop(guard);
 
+        let reserved = self.limit_locals(reserved, span);
         let captures = self.resolve_captures(old_closures);
 
         FunctionDecl {
-            reserved: reserved as u8,
+            reserved,
             body,
             captures,
         }
@@ -68,26 +69,12 @@ impl<'src> TypeChecker<'src> {
     pub(crate) fn check_function(
         &mut self,
         name: &Token<'src>,
-        sig: &FunctionSig,
+        sig: &FunctionSig<'src>,
         body: &Stmt<'src>,
-        generics: &[Token<'src>],
+        func: Rc<FunctionType>,
     ) -> (FunctionDecl, Type, Span) {
-        let mut ty_guard = TypeScopeGuard::new_function(self, generics);
-        let sig_result = ty_guard.res().resolve_generic_func(sig);
-        let sig_ok = sig_result.is_ok();
-        let func = sig_result.recover(
-            &mut ty_guard.errors,
-            Rc::new(FunctionType {
-                is_vararg: false,
-                params: vec![],
-                return_type: Type::Error,
-                type_params: vec![],
-            }),
-        );
         let func_type = Type::Function(func.clone());
 
-        // Use Span::default() when the signature failed so drain_unused skips these
-        // params — they're declared only for body error-recovery, not real bindings.
         let params: Vec<(Symbol, Type, Span)> = sig
             .params
             .iter()
@@ -98,12 +85,11 @@ impl<'src> TypeChecker<'src> {
                     .get(i)
                     .map(|(_, t)| t.clone())
                     .unwrap_or(Type::Error);
-                let param_span = if sig_ok { param.span } else { Span::default() };
-                (param.lexeme.into(), ty, param_span)
+                (param.lexeme.into(), ty, param.span)
             })
             .collect();
 
-        let fn_decl = ty_guard.build_function_decl(
+        let fn_decl = self.build_function_decl(
             name.lexeme.into(),
             func_type.clone(),
             &params,
@@ -111,7 +97,6 @@ impl<'src> TypeChecker<'src> {
             name.span,
             |guard| FunctionBody::Block(Box::new(guard.check_stmt(body))),
         );
-        drop(ty_guard);
 
         let body_span = fn_decl.body.span();
         let function_span = name.span.merge(body_span);
@@ -240,6 +225,19 @@ impl<'src> TypeChecker<'src> {
             ty: final_func_type,
             kind: ExprKind::Lambda(fn_decl),
             span,
+        }
+    }
+
+    /// Reports `TooManyLocals` when `count` exceeds what a frame can address. Returns the count to
+    /// reserve (0 after an error, since the program is not compiled then).
+    pub(crate) fn limit_locals(&mut self, count: usize, span: Span) -> u8 {
+        match u8::try_from(count) {
+            Ok(count) => count,
+            Err(_) => {
+                self.errors
+                    .push(TypeCheckerError::TooManyLocals { span, count });
+                0
+            }
         }
     }
 }

@@ -247,24 +247,6 @@ Output shows the complete AST structure.
 
 ---
 
-### `-f` (Force Mode)
-
-Bypasses error checks and panics on a failed step.
-
-**Usage:**
-
-```bash
-steel_lang script.steel run -f
-```
-
-**Warning:** Using force mode:
-
-- Used for internal testing and development.
-- Might have been useful in CI/CD pipelines,
-  however, compile time errors now return a non-zero exit code.
-
----
-
 ### `--version` (or `-V`)
 
 Display version information.
@@ -320,9 +302,6 @@ Total:            9.9ms
 You can combine multiple flags:
 
 ```bash
-# Debug mode + force mode
-steel_lang script.steel run -d -f
-
 # Check mode + debug
 steel_lang script.steel check -d
 
@@ -524,8 +503,7 @@ Total:          128.0ms
 1. **Use `check` mode frequently** during development for fast feedback
 2. **Combine `-d` with `check`** to understand type inference
 3. **Use `--time`** to identify performance bottlenecks
-4. **Avoid `-f` in production** - fix errors instead of forcing execution
-5. **Use descriptive file names** - Steel files should end with `.steel`
+4. **Use descriptive file names** - Steel files should end with `.steel`
 
 ---
 

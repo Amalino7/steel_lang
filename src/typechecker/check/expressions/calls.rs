@@ -4,7 +4,9 @@ use crate::typechecker::core::ast::{ExprKind, TypedExpr};
 use crate::typechecker::core::error::{
     CallError, CallParamError, CallParamKind, GenericError, MismatchContext, TypeCheckerError,
 };
-use crate::typechecker::core::types::{GenericArgs, Type};
+use crate::typechecker::core::types::{
+    EnumId, GenericArgs, GenericTypeId, NameTypeId, StructId, Type,
+};
 use crate::typechecker::system::make_substitution_map;
 use crate::typechecker::{Symbol, TypeChecker};
 use std::collections::HashMap;
@@ -34,29 +36,31 @@ impl<'src> TypeChecker<'src> {
                 .unwrap_optional_safe(safe, callee_typed.span, &mut self.warnings);
 
         // Handle Struct constructor
-        if let Type::Metatype(name, generics) = &lookup_type
-            && self.sys.get_struct(name).is_some()
-        {
-            return self.struct_constructor(name, generics, arguments, callee.span(), expr.span());
-        }
-
-        if let Type::Metatype(name, generics) = &lookup_type
-            && self.sys.get_enum(name).is_some()
-        {
-            return self.enum_constructor(
-                name,
-                generics,
-                arguments,
-                callee_typed,
-                callee.span(),
-                expr.span(),
-            );
+        if let Type::Metatype(id, generics) = &lookup_type {
+            if let NameTypeId::Struct(id) = id {
+                return self.struct_constructor(
+                    id,
+                    generics,
+                    arguments,
+                    callee.span(),
+                    expr.span(),
+                );
+            } else if let NameTypeId::Enum(id) = id {
+                return self.enum_constructor(
+                    *id,
+                    generics,
+                    arguments,
+                    callee_typed,
+                    callee.span(),
+                    expr.span(),
+                );
+            }
         }
 
         // Check for Normal Function Call
         if let Type::Function(func) = &lookup_type {
             let fresh_generics = self.infer_ctx.fresh_args(&func.type_params, &[]);
-            let map: HashMap<Symbol, Type> =
+            let map: HashMap<GenericTypeId, Type> =
                 make_substitution_map(&func.type_params, &fresh_generics);
 
             let Type::Function(func) = Type::Function(func.clone()).generic_to_concrete(&map)
@@ -65,7 +69,9 @@ impl<'src> TypeChecker<'src> {
             };
 
             let definition_span = if let ExprKind::GetVar(_, ref name) = callee_typed.kind {
-                self.scopes.lookup(name.as_ref()).map(|(ctx, _)| ctx.span)
+                self.scopes
+                    .lookup(name.as_ref())
+                    .map(|(ctx, _)| ctx.def_span)
             } else if let ExprKind::MethodGet { ref origin, .. } = callee_typed.kind {
                 Some(*origin)
             } else {
@@ -92,7 +98,7 @@ impl<'src> TypeChecker<'src> {
             for fresh in fresh_generics.iter() {
                 let resolved = self.infer_ctx.substitute(fresh);
                 if !resolved.is_concrete() {
-                    let uninferred_generics = self.infer_ctx.uninferred_names(&resolved);
+                    let uninferred_generics = self.infer_ctx.uninferred_names(&resolved, self.sys);
                     return Err(TypeCheckerError::Generic(GenericError::CannotInfer {
                         span: expr.span(),
                         uninferred_generics,
@@ -127,20 +133,29 @@ impl<'src> TypeChecker<'src> {
 
     fn struct_constructor(
         &mut self,
-        name: &Symbol,
+        id: &StructId,
         generics: &[Type],
         arguments: &Vec<CallArg<'src>>,
         callee_span: Span,
         expr_span: Span,
     ) -> Result<TypedExpr, TypeCheckerError> {
-        let struct_def = self
-            .sys
-            .get_struct(name)
-            .expect("Struct should have been checked earlier.");
+        let struct_def = self.sys.get_struct(*id);
         let constructor = struct_def.get_constructor(generics, &mut self.infer_ctx);
 
         let owned_name = struct_def.name.clone();
         let definition_span = struct_def.origin;
+        let private_fields = struct_def.private_fields();
+        if !private_fields.is_empty() && definition_span.file_id != self.file_id {
+            let error = TypeCheckerError::PrivateConstructor {
+                struct_name: owned_name.clone(),
+                private_fields,
+                module: self
+                    .module_graph
+                    .module_name_of_file(definition_span.file_id),
+                span: callee_span,
+            };
+            self.report(error);
+        }
         let bound_args = self.bind_arguments(
             callee_span,
             Some(definition_span),
@@ -163,17 +178,15 @@ impl<'src> TypeChecker<'src> {
 
     fn enum_constructor(
         &mut self,
-        name: &Symbol,
+        id: EnumId,
         generics: &GenericArgs,
         arguments: &Vec<CallArg<'src>>,
         callee_typed: TypedExpr,
         callee_span: Span,
         expr_span: Span,
     ) -> Result<TypedExpr, TypeCheckerError> {
-        let enum_def = self
-            .sys
-            .get_enum(name)
-            .expect("Enum should have been checked earlier.");
+        let enum_def = self.sys.get_enum(id);
+
         let ExprKind::EnumInit {
             enum_name,
             variant_idx,
@@ -184,7 +197,7 @@ impl<'src> TypeChecker<'src> {
         };
 
         let constructor = enum_def
-            .get_constructor(generics.clone(), old_value.ty.clone(), &self.sys)
+            .get_constructor(generics.clone(), old_value.ty.clone(), self.sys)
             .unwrap();
 
         let definition_span = enum_def.origin;
@@ -205,9 +218,9 @@ impl<'src> TypeChecker<'src> {
                 },
                 span,
             },
-            Type::Struct(struct_name, ..) => TypedExpr {
+            Type::Struct(struct_id, ..) => TypedExpr {
                 kind: ExprKind::StructInit {
-                    name: struct_name.to_string().into(),
+                    name: self.sys.get_struct(*struct_id).name.to_string().into(),
                     args: bound_args,
                 },
                 ty: old_value.ty.clone(),
@@ -272,7 +285,7 @@ impl<'src> TypeChecker<'src> {
                 None => {
                     if seen_named {
                         return Err(TypeCheckerError::Call(CallError::PositionalAfterNamed {
-                            message: "positional arguments cannot appear after named arguments",
+                            message: "This positional argument cannot appear after named arguments.",
                             span,
                         }));
                     }

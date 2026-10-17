@@ -1,16 +1,20 @@
 use crate::compiler::analysis::ResolvedVar;
 use crate::scanner::Span;
-use crate::typechecker::core::types::Type;
 use crate::typechecker::Symbol;
+use crate::typechecker::core::types::Type;
+use crate::typechecker::scope::binding::Origin;
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct VariableContext {
     pub(crate) type_info: Type,
     pub(crate) name: Symbol,
     pub(crate) mutability: Mutability,
     pub(crate) kind: DeclarationKind,
     pub(crate) index: usize,
-    pub(crate) span: Span,
+    /// Where the binding came from; for an import its span is the import site.
+    pub(crate) origin: Origin,
+    /// The definition, which for an imported binding is in another module.
+    pub(crate) def_span: Span,
     pub(crate) was_read: bool,
     pub(crate) was_written: bool,
     pub(crate) original_type: Option<(ResolvedVar, Type)>,
@@ -48,36 +52,31 @@ impl DeclarationKind {
 }
 
 impl VariableContext {
-    pub(crate) fn new(
-        name: Symbol,
-        type_info: Type,
-        index: usize,
-        span: Span,
-        mutability: Mutability,
-        kind: DeclarationKind,
-    ) -> Self {
+    pub(crate) fn from_declaration(index: usize, decl: Declaration) -> Self {
         VariableContext {
-            name,
-            type_info,
+            name: decl.name,
+            type_info: decl.type_info,
             index,
-            span,
-            mutability,
-            kind,
+            origin: Origin::Defined {
+                span: decl.span,
+                public: decl.is_public,
+            },
+            def_span: decl.span,
+            mutability: decl.mutability,
+            kind: decl.kind,
             was_read: false,
             was_written: false,
             original_type: None,
         }
     }
 
-    pub(crate) fn from_declaration(index: usize, decl: Declaration) -> Self {
-        VariableContext::new(
-            decl.name,
-            decl.type_info,
-            index,
-            decl.span,
-            decl.mutability,
-            decl.kind,
-        )
+    /// Where this name was bound: the import site for an imported binding. For every other
+    /// binding it is the definition, so `def_span` is the same span.
+    pub fn binding_span(&self) -> Span {
+        match self.origin {
+            Origin::Imported { import_span: span } => span,
+            Origin::Defined { .. } | Origin::Builtin => self.def_span,
+        }
     }
 
     pub fn is_reassignable(&self) -> bool {
@@ -91,9 +90,15 @@ pub struct Declaration {
     pub span: Span,
     pub mutability: Mutability,
     pub kind: DeclarationKind,
+    pub is_public: bool,
 }
 
 impl Declaration {
+    pub fn public(mut self, is_public: bool) -> Self {
+        self.is_public = is_public;
+        self
+    }
+
     // TODO use when adding mutability to variables.
     #[allow(dead_code)]
     pub fn variable(name: Symbol, type_info: Type, span: Span) -> Self {
@@ -103,6 +108,7 @@ impl Declaration {
             span,
             mutability: Mutability::Immutable,
             kind: DeclarationKind::Variable,
+            is_public: false,
         }
     }
 
@@ -113,6 +119,7 @@ impl Declaration {
             span,
             mutability: Mutability::Mutable,
             kind: DeclarationKind::Variable,
+            is_public: false,
         }
     }
 
@@ -124,6 +131,7 @@ impl Declaration {
             span,
             mutability: Mutability::Immutable,
             kind: DeclarationKind::Binding,
+            is_public: false,
         }
     }
 
@@ -134,6 +142,7 @@ impl Declaration {
             span,
             mutability: Mutability::Unique,
             kind: DeclarationKind::Parameter,
+            is_public: false,
         }
     }
 
@@ -144,6 +153,7 @@ impl Declaration {
             span,
             mutability: Mutability::Unique,
             kind: DeclarationKind::Function,
+            is_public: false,
         }
     }
     pub fn function(name: Symbol, type_info: Type, span: Span) -> Self {
@@ -153,16 +163,7 @@ impl Declaration {
             span,
             mutability: Mutability::Immutable,
             kind: DeclarationKind::Function,
-        }
-    }
-
-    pub fn method(name: Symbol, type_info: Type, span: Span) -> Self {
-        Declaration {
-            name,
-            type_info,
-            span,
-            mutability: Mutability::Unique,
-            kind: DeclarationKind::Method,
+            is_public: false,
         }
     }
 }

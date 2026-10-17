@@ -1,11 +1,12 @@
 use crate::compiler::analysis::ResolvedVar;
 use crate::scanner::Span;
+use crate::typechecker::Symbol;
 use crate::typechecker::core::error::{BindingError, TypeCheckerError};
 use crate::typechecker::core::types::Type;
+use crate::typechecker::id_issuer::GlobalIdGenerator;
 use crate::typechecker::scope::variables::{
     Declaration, DeclarationKind, Mutability, VariableContext,
 };
-use crate::typechecker::Symbol;
 use std::cmp::PartialEq;
 use std::collections::HashMap;
 
@@ -36,14 +37,16 @@ impl FunctionContext {
     }
 }
 
-pub struct ScopeManager {
+pub struct ScopeManager<'ctx> {
     scopes: Vec<Scope>,
     functions: Vec<FunctionContext>,
+    id_generator: &'ctx GlobalIdGenerator,
 }
 
-impl ScopeManager {
-    pub fn new() -> Self {
+impl<'ctx> ScopeManager<'ctx> {
+    pub fn new(id_generator: &'ctx GlobalIdGenerator) -> Self {
         Self {
+            id_generator,
             scopes: vec![],
             functions: vec![],
         }
@@ -81,7 +84,10 @@ impl ScopeManager {
     pub fn end_scope(&mut self) -> usize {
         let finished_scope = self.scopes.pop().expect("No scope to end");
         let max = finished_scope.max_index;
-        if let Some(parent) = self.scopes.last_mut() {
+        // A function's locals live in its own frame, so they don't count towards the enclosing scope.
+        if finished_scope.kind != ScopeKind::Function
+            && let Some(parent) = self.scopes.last_mut()
+        {
             parent.max_index = parent.max_index.max(max);
         }
 
@@ -96,10 +102,6 @@ impl ScopeManager {
         self.functions.last().map(FunctionContext::return_type)
     }
 
-    pub fn global_size(&self) -> u32 {
-        self.scopes[0].last_index as u32
-    }
-
     pub fn is_global(&self) -> bool {
         self.scopes.len() == 1
     }
@@ -108,34 +110,63 @@ impl ScopeManager {
         self.scopes.last().map(|s| s.max_index).unwrap_or(0)
     }
 
-    pub fn declare(&mut self, decl: Declaration) -> Result<ResolvedVar, TypeCheckerError> {
-        let scope = self.scopes.last_mut().expect("No scope active");
+    /// Makes the current scope reserve at least `count` slots.
+    pub fn reserve_at_least(&mut self, count: usize) {
+        if let Some(scope) = self.scopes.last_mut() {
+            scope.max_index = scope.max_index.max(count);
+        }
+    }
 
-        if let Some(prev) = scope.variables.get(&decl.name)
-            && prev.mutability == Mutability::Unique
+    /// Binds an already allocated global (an import) in the module scope.
+    pub fn declare_existing(&mut self, ctx: VariableContext) -> Result<(), TypeCheckerError> {
+        let scope = &mut self.scopes[0];
+        if let Some(prev) = scope.variables.get(&ctx.name)
+            && (prev.mutability == Mutability::Unique || scope.kind == ScopeKind::Global)
+            && ctx.index != prev.index
         {
             return Err(TypeCheckerError::Binding(BindingError::Redeclaration {
-                name: decl.name.to_string(),
-                span: decl.span,
-                original: prev.span,
+                name: ctx.name.to_string(),
+                span: ctx.binding_span(),
+                original: prev.binding_span(),
                 original_kind: prev.kind,
             }));
         }
 
-        scope.variables.insert(
-            decl.name.clone(),
-            VariableContext::from_declaration(scope.last_index, decl),
-        );
+        scope.variables.insert(ctx.name.clone(), ctx);
+        Ok(())
+    }
 
-        let resolved = match scope.kind {
-            ScopeKind::Global => ResolvedVar::Global(scope.last_index as u16),
-            _ => ResolvedVar::Local(scope.last_index as u8),
+    pub fn declare(&mut self, decl: Declaration) -> Result<ResolvedVar, TypeCheckerError> {
+        let scope = self.scopes.last_mut().expect("No scope active");
+
+        if let Some(prev) = scope.variables.get(&decl.name)
+            && (prev.mutability == Mutability::Unique || scope.kind == ScopeKind::Global)
+        {
+            return Err(TypeCheckerError::Binding(BindingError::Redeclaration {
+                name: decl.name.to_string(),
+                span: decl.span,
+                original: prev.binding_span(),
+                original_kind: prev.kind,
+            }));
+        }
+
+        let (index, resolved) = match scope.kind {
+            ScopeKind::Global => {
+                let id = self.id_generator.next().get();
+                (id, ResolvedVar::Global(id as u16))
+            }
+            _ => {
+                let idx = scope.last_index;
+                scope.last_index += 1;
+                scope.max_index = scope.max_index.max(scope.last_index);
+                (idx, ResolvedVar::Local(idx as u8))
+            }
         };
 
-        scope.last_index += 1;
-        if ScopeKind::Global != scope.kind {
-            scope.max_index = scope.max_index.max(scope.last_index);
-        }
+        scope.variables.insert(
+            decl.name.clone(),
+            VariableContext::from_declaration(index, decl),
+        );
 
         Ok(resolved)
     }
@@ -216,6 +247,7 @@ impl ScopeManager {
                 name: name.clone(),
                 type_info: new_type,
                 span: Span::default(),
+                is_public: false,
             };
 
             self.declare(new_decl).expect("Declaration Shouldn't fail");
@@ -261,6 +293,11 @@ impl ScopeManager {
             .unwrap_or_default()
     }
 
+    pub(crate) fn export_vars(&mut self) -> HashMap<Symbol, VariableContext> {
+        let scope = self.scopes.first_mut().expect("No Scope exists");
+        std::mem::take(&mut scope.variables)
+    }
+
     /// Get all visible variable names in the current scope (for suggestions)
     pub fn visible_variable_names(&self) -> Vec<&str> {
         let mut names = Vec::new();
@@ -292,26 +329,46 @@ impl ScopeManager {
                     )
                     && !ctx.name.starts_with('_')
                     && ctx.name.as_ref() != "self"
-                    && ctx.span != Span::default()
+                    // Imported globals are the exporter's to use.
+                    && ctx.origin.is_local()
+                    && ctx.def_span != Span::default()
             })
-            .map(|ctx| (ctx.name.to_string(), ctx.span))
+            .map(|ctx| (ctx.name.to_string(), ctx.def_span))
             .collect()
     }
+}
 
-    /// Get all method names for a given type (for suggestions)
-    /// Methods are stored as "TypeName.method_name" in the scope
-    pub fn get_methods_for_type(&self, type_name: &str) -> Vec<String> {
-        let prefix = format!("{}.", type_name);
-        let mut methods = Vec::new();
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-        for scope in self.scopes.iter().rev() {
-            for var_name in scope.variables.keys() {
-                if let Some(method_name) = var_name.as_ref().strip_prefix(&prefix) {
-                    methods.push(method_name.to_string());
-                }
-            }
-        }
+    #[test]
+    fn test_scope_manager_uses_global_id_generator() {
+        let generator = GlobalIdGenerator::new();
+        let mut scope_manager = ScopeManager::new(&generator);
 
-        methods
+        scope_manager.begin_scope(ScopeKind::Global);
+
+        let decl1 = Declaration::mutable("x".into(), Type::Number, Span::default());
+        let res1 = scope_manager.declare(decl1).unwrap();
+        assert_eq!(res1, ResolvedVar::Global(0));
+
+        let decl2 = Declaration::mutable("y".into(), Type::Number, Span::default());
+        let res2 = scope_manager.declare(decl2).unwrap();
+        assert_eq!(res2, ResolvedVar::Global(1));
+
+        assert_eq!(scope_manager.id_generator.count(), 2);
+        assert_eq!(generator.count(), 2);
+
+        // Generating an ID externally advances the sequence
+        let id2 = generator.next();
+        assert_eq!(id2.get(), 2);
+
+        let decl3 = Declaration::mutable("z".into(), Type::Number, Span::default());
+        let res3 = scope_manager.declare(decl3).unwrap();
+        assert_eq!(res3, ResolvedVar::Global(3));
+
+        assert_eq!(scope_manager.id_generator.count(), 4);
+        assert_eq!(generator.count(), 4);
     }
 }

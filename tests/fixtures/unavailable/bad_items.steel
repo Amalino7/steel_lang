@@ -1,0 +1,4 @@
+import lib/hidden;
+import lib/nothing;
+
+println("unreachable");
