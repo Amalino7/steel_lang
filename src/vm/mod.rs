@@ -5,9 +5,10 @@ use crate::vm::error::RuntimeError;
 use crate::vm::gc::{GarbageCollector, Gc};
 use crate::vm::stack::Stack;
 use crate::vm::value::{
-    BoundMethod, Closure, EnumVariant, Function, HashableValue, Instance, InterfaceObj, List, Map,
-    VTable, Value,
+    BoundMethod, Closure, EnumVariant, Function, HashableValue, Instance, InterfaceObj, Lazy, List,
+    Map, VTable, Value,
 };
+use std::ops::Deref;
 
 mod byte_utils;
 pub mod bytecode;
@@ -26,7 +27,13 @@ struct CallFrame {
     function: Gc<Function>,
 }
 
-const STACK_MAX: usize = 256 * 128;
+const STACK_MAX: usize = 256 * 64;
+/// Maximum call depth before a `Stack overflow.` runtime error.
+const FRAMES_MAX: usize = 4096;
+/// Stack slots that must stay free when a frame is entered: a frame addresses at most 256 locals (`u8` slot).
+const FRAME_HEADROOM: usize = 256;
+/// Innermost frames shown in a runtime error's stack trace.
+const TRACE_FRAMES_MAX: usize = 16;
 
 pub struct VM<'gc> {
     vtables: Vec<Gc<VTable>>,
@@ -49,7 +56,7 @@ impl<'gc> VM<'gc> {
 
     fn make_error(&self, message: &str) -> RuntimeError {
         let mut stack_trace = Vec::new();
-        for frame in self.frames.iter().rev() {
+        for frame in self.frames.iter().rev().take(TRACE_FRAMES_MAX) {
             let line = if frame.ip > 0 {
                 frame.function.chunk.lines[frame.ip - 1]
             } else {
@@ -57,10 +64,25 @@ impl<'gc> VM<'gc> {
             };
             stack_trace.push(format!("{} (line {})", frame.function.name, line));
         }
+        if self.frames.len() > TRACE_FRAMES_MAX {
+            stack_trace.push(format!(
+                "... {} more frames",
+                self.frames.len() - TRACE_FRAMES_MAX
+            ));
+        }
         RuntimeError {
             message: message.to_string(),
             stack_trace,
         }
+    }
+
+    /// Saves `caller` before entering a callee, failing when the call depth or the value stack is exhausted.
+    fn push_frame(&mut self, caller: CallFrame) -> Result<(), RuntimeError> {
+        self.frames.push(caller);
+        if self.frames.len() >= FRAMES_MAX || self.stack.top + FRAME_HEADROOM > STACK_MAX {
+            return Err(self.make_error("Stack overflow."));
+        }
+        Ok(())
     }
 
     /// Maps each native to the global slot assigned by the typechecker via extern declarations.
@@ -90,7 +112,7 @@ impl<'gc> VM<'gc> {
             #[cfg(feature = "debug_trace_execution")]
             disassemble_instruction(
                 chunk.instructions.as_ref(),
-                self.ip,
+                current_frame.ip,
                 chunk.constants.as_ref(),
                 chunk.lines.as_ref(),
             );
@@ -277,6 +299,10 @@ impl<'gc> VM<'gc> {
                 Opcode::Reserve => {
                     let amount = chunk.instructions[current_frame.ip] as usize;
                     current_frame.ip += 1;
+                    if self.stack.top + amount > STACK_MAX {
+                        self.frames.push(current_frame);
+                        return Err(self.make_error("Stack overflow."));
+                    }
                     self.stack.top += amount;
                 }
                 Opcode::Nil => {
@@ -337,13 +363,46 @@ impl<'gc> VM<'gc> {
                     self.stack.push(val);
                 }
                 Opcode::SetGlobal => {
-                    let index = chunk.instructions[current_frame.ip] as usize;
-                    current_frame.ip += 1;
+                    let index =
+                        read_16_bytes(&chunk.instructions[current_frame.ip..current_frame.ip + 2]);
+                    current_frame.ip += 2;
                     self.globals[index] = self.stack.get_top();
                 }
+                Opcode::ResolveGlobal => {
+                    let idx =
+                        read_16_bytes(&chunk.instructions[current_frame.ip..current_frame.ip + 2]);
+                    let val = self.globals[idx];
+                    current_frame.ip += 2;
+                    if let Value::Lazy(lazy) = val {
+                        match lazy.deref() {
+                            Lazy::Initializing => {
+                                self.frames.push(current_frame);
+                                return Err(self.make_error("Circular dependency initialization."));
+                            }
+                            Lazy::Uninit(func) => {
+                                self.stack.push(Value::Function(*func)); // Necessary for calling convention
+                                let new_slot_offset = self.stack.top - 1;
+                                let frame = CallFrame {
+                                    function: *func,
+                                    ip: 0,
+                                    slot_offset: new_slot_offset,
+                                };
+
+                                self.push_frame(current_frame)?;
+                                current_frame = frame;
+                                chunk = &current_frame.function.chunk; // updated chunk
+                            }
+                        }
+                    } else {
+                        self.stack.push(Value::Nil); // Necessary placeholder
+                    }
+                }
                 Opcode::GetGlobal => {
-                    let val = self.globals[chunk.instructions[current_frame.ip] as usize];
-                    current_frame.ip += 1;
+                    let idx =
+                        read_16_bytes(&chunk.instructions[current_frame.ip..current_frame.ip + 2]);
+                    let val = self.globals[idx];
+                    current_frame.ip += 2;
+                    self.stack.pop(); // Value returned from the thunk
                     self.stack.push(val);
                 }
                 Opcode::Call => {
@@ -360,7 +419,7 @@ impl<'gc> VM<'gc> {
                                 ip: 0,
                                 slot_offset: new_slot_offset,
                             };
-                            self.frames.push(current_frame);
+                            self.push_frame(current_frame)?;
                             current_frame = frame;
                             chunk = &current_frame.function.chunk; // updated chunk
                         }
@@ -372,7 +431,7 @@ impl<'gc> VM<'gc> {
                                 slot_offset: new_slot_offset,
                             };
 
-                            self.frames.push(current_frame);
+                            self.push_frame(current_frame)?;
                             current_frame = frame;
                             chunk = &current_frame.function.chunk; // updated chunk
                         }
@@ -391,7 +450,7 @@ impl<'gc> VM<'gc> {
                                 slot_offset: callee_index,
                             };
 
-                            self.frames.push(current_frame);
+                            self.push_frame(current_frame)?;
                             current_frame = frame;
                             chunk = &current_frame.function.chunk; // updated chunk
                         }
@@ -412,7 +471,7 @@ impl<'gc> VM<'gc> {
                                 }
                             }
                         }
-                        val => unreachable!("Only functions should be called found {}", val),
+                        val => unreachable!("Only functions should be called, found {}", val),
                     }
                 }
                 Opcode::MakeClosure => {
@@ -662,7 +721,10 @@ impl<'gc> VM<'gc> {
                         match v {
                             Value::Function(f) => methods.push(f),
                             Value::Closure(c) => methods.push(c.function),
-                            _ => unreachable!("MakeVTable expects function/closure values"),
+                            _ => unreachable!(
+                                "MakeVTable expects function/closure values, found {}",
+                                v
+                            ),
                         }
                     }
 

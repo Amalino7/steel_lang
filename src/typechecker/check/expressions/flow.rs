@@ -1,11 +1,11 @@
 use crate::parser::ast::{Expr, Literal, Stmt};
 use crate::scanner::Span;
+use crate::typechecker::TypeChecker;
 use crate::typechecker::core::ast::{ExprKind, TypedExpr, TypedRefinements};
 use crate::typechecker::core::error::MismatchContext;
 use crate::typechecker::core::types::Type;
 use crate::typechecker::scope::guards::ScopeGuard;
 use crate::typechecker::scope::manager::ScopeKind;
-use crate::typechecker::TypeChecker;
 
 impl<'src> TypeChecker<'src> {
     pub(crate) fn check_block_expr(

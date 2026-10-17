@@ -1,0 +1,2 @@
+import nope/Foo;
+struct Foo { x: number }

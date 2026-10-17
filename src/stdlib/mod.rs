@@ -43,7 +43,63 @@ pub fn debug_size<T>() {
     println!(
         "Size of {}: {} bytes, alignment: {} bytes",
         std::any::type_name::<T>(),
-        std::mem::size_of::<T>(),
+        size_of::<T>(),
         align_of::<T>()
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::Parser;
+    use crate::parser::ast::Stmt;
+    use crate::scanner::{PRELUDE_FILE, Scanner};
+    use std::collections::HashSet;
+
+    /// Names of every `extern func` in the prelude; `impl` externs as `Type.method`, like the natives.
+    fn declared_externs() -> HashSet<String> {
+        let parsed = Parser::new(Scanner::new(get_prelude(), PRELUDE_FILE))
+            .parse()
+            .unwrap_or_else(|errs| panic!("the prelude must parse: {errs:#?}"));
+        let mut names = HashSet::new();
+        for stmt in &parsed.body {
+            match stmt {
+                Stmt::ExternFunction { name, .. } => {
+                    names.insert(name.lexeme.to_string());
+                }
+                Stmt::Impl { name, methods, .. } => {
+                    for method in methods {
+                        if let Stmt::ExternFunction { name: method, .. } = method {
+                            names.insert(format!("{}.{}", name.0.lexeme, method.lexeme));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        names
+    }
+
+    #[test]
+    fn every_untyped_native_is_declared_by_an_extern() {
+        let declared = declared_externs();
+        for native in get_natives().iter().filter(|n| n.type_.is_none()) {
+            assert!(
+                declared.contains(native.name),
+                "native '{}' has no `extern func` in the prelude, so no Steel code can reach it",
+                native.name
+            );
+        }
+    }
+
+    #[test]
+    fn every_extern_has_a_native() {
+        let natives = get_natives();
+        for name in declared_externs() {
+            assert!(
+                natives.iter().any(|n| n.name == name),
+                "`extern func {name}` has no native"
+            );
+        }
+    }
 }

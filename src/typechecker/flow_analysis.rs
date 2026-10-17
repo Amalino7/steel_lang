@@ -1,10 +1,10 @@
 use crate::scanner::Span;
+use crate::typechecker::TypeChecker;
 use crate::typechecker::core::ast::{
     ExprKind, FunctionBody, MatchCase, StmtKind, TypedExpr, TypedStmt, TypedStringPart,
 };
 use crate::typechecker::core::error::TypeCheckerWarning;
 use crate::typechecker::core::types::Type;
-use crate::typechecker::TypeChecker;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Diverges {
@@ -36,7 +36,7 @@ impl Diverges {
 }
 
 /// Check for diverging code
-impl<'src> TypeChecker<'src> {
+impl<'ctx> TypeChecker<'ctx> {
     pub(crate) fn stmt_diverges(&self, stmt: &TypedStmt) -> Diverges {
         match &stmt.kind {
             StmtKind::Expression(expr) => self.expr_diverges(expr),
@@ -283,11 +283,7 @@ impl<'src> TypeChecker<'src> {
                 }
             },
 
-            StmtKind::Impl { methods, .. } => {
-                for method in methods {
-                    self.walk_stmt(method);
-                }
-            }
+            StmtKind::Impl { .. } => {}
 
             StmtKind::Expression(expr) => {
                 self.walk_expr(expr);

@@ -1,6 +1,7 @@
 use crate::vm::byte_utils::{byte_to_opcode, read_bytes};
 use crate::vm::bytecode::{Bytecode, Chunk, Opcode};
-use crate::vm::value::Value;
+use crate::vm::value::{Lazy, Value};
+use std::ops::Deref;
 
 pub fn disassemble_chunk(chunk: &Chunk, name: &str) {
     let bytecode = &chunk.instructions;
@@ -33,6 +34,12 @@ pub fn disassemble_instruction(
             let val = constants[index as usize];
             println!(" {}", val);
             if let Value::Function(func) = val {
+                disassemble_chunk(&func.chunk, func.name.as_str());
+            }
+
+            if let Value::Lazy(lazy) = val
+                && let Lazy::Uninit(func) = lazy.deref()
+            {
                 disassemble_chunk(&func.chunk, func.name.as_str());
             }
         }
@@ -103,17 +110,24 @@ pub fn disassemble_instruction(
             offset += 1;
             println!("SetLocal {}", bytecode[offset]);
         }
+        Opcode::ResolveGlobal => {
+            offset += 2;
+            println!(
+                "ResolveGlobal {}",
+                read_bytes(&bytecode[(offset - 1)..=offset])
+            );
+        }
         Opcode::GetLocal => {
             offset += 1;
             println!("GetLocal {}", bytecode[offset]);
         }
         Opcode::SetGlobal => {
-            offset += 1;
-            println!("SetGlobal {}", bytecode[offset]);
+            offset += 2;
+            println!("SetGlobal {}", read_bytes(&bytecode[(offset - 1)..=offset]));
         }
         Opcode::GetGlobal => {
-            offset += 1;
-            println!("GetGlobal {}", bytecode[offset]);
+            offset += 2;
+            println!("GetGlobal {}", read_bytes(&bytecode[(offset - 1)..=offset]));
         }
         Opcode::Call => {
             offset += 1;

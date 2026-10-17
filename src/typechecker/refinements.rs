@@ -19,9 +19,9 @@ impl<'src> TypeChecker<'src> {
                 variant_idx,
             } => {
                 if let ExprKind::GetVar(_, name) = &target.kind
-                    && let Type::Enum(enum_name, generics) = &target.ty
+                    && let Type::Enum(enum_id, generics) = &target.ty
                 {
-                    let enum_def = self.sys.get_enum(enum_name).unwrap();
+                    let enum_def = self.sys.get_enum(*enum_id);
                     let false_path = if enum_def.variants.len() == 2 {
                         let other_ty = enum_def
                             .get_variant_by_index((1 - *variant_idx) as usize, generics)

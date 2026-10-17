@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 /// Simple string similarity module for suggesting corrections in error messages.
 /// Uses Levenshtein distance to find similar names.
 ///
@@ -45,8 +47,10 @@ pub fn find_similar<'a>(
     max_suggestions: usize,
 ) -> Vec<String> {
     let target_lower = target.to_lowercase();
+    let mut seen = HashSet::new();
     let mut similarities: Vec<(usize, &str)> = candidates
         .into_iter()
+        .filter(|candidate| seen.insert(*candidate))
         .filter_map(|candidate| {
             let candidate_lower = candidate.to_lowercase();
             let distance = levenshtein_distance(&target_lower, &candidate_lower);
@@ -108,5 +112,11 @@ mod tests {
         // No close matches
         let result = find_similar("xyz", candidates.iter().copied(), 3);
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_find_similar_dedupes_candidates() {
+        let found = find_similar("foo", ["fo", "fo", "foa"], 5);
+        assert_eq!(found, vec!["fo".to_string(), "foa".to_string()]);
     }
 }

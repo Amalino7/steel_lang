@@ -1,7 +1,11 @@
-use crate::{run, ColorChoice, EmitTarget, Mode, RunConfig};
+use crate::pipeline::pipeline;
+use crate::resolver::ModuleResolver;
+use crate::resolver::resolution::Source;
+use crate::{ColorChoice, EmitTarget, Mode, RunConfig};
 use clap::{Parser, ValueEnum};
-use std::fs;
-use std::path::Path;
+use notify::{EventKind, RecursiveMode, Watcher};
+use std::path::PathBuf;
+use std::sync::mpsc;
 
 /// The Steel language runtime
 #[derive(Parser)]
@@ -13,10 +17,6 @@ pub struct Cli {
     /// Execution mode
     #[arg(value_enum, default_value_t = CliMode::Run)]
     mode: CliMode,
-
-    /// Suppress error reporting and continue past parse/type errors.
-    #[arg(short, long)]
-    force: bool,
 
     /// Show debug output (AST, disassembly, typed AST). Equivalent to --emit ast,bytecode,types.
     #[arg(short, long)]
@@ -45,15 +45,16 @@ pub struct Cli {
     /// Re-run the program whenever the source file changes
     #[arg(short = 'w', long)]
     watch: bool,
+    /// Check the root folder for incompatible files on other OSes
+    #[arg(long, default_value_t = false)]
+    portable: bool,
 }
 
-#[derive(ValueEnum, Clone)]
+#[derive(ValueEnum, Clone, PartialEq)]
 enum CliMode {
-    /// Scan, parse, type-check, compile and run
+    /// Scan, parse, type-check, compile, and run
     Run,
-    /// Scan and parse only (prints AST with --debug or --emit ast)
-    Parse,
-    /// Scan, parse and type-check only
+    /// Scan, parse, and type-check only
     Check,
 }
 
@@ -61,7 +62,6 @@ impl From<CliMode> for Mode {
     fn from(m: CliMode) -> Self {
         match m {
             CliMode::Run => Mode::Run,
-            CliMode::Parse => Mode::Parse,
             CliMode::Check => Mode::Check,
         }
     }
@@ -107,26 +107,60 @@ impl From<CliEmit> for EmitTarget {
     }
 }
 
-fn build_config<'a>(cli: &'a Cli, source: &'a str) -> RunConfig<'a> {
+fn build_config(cli: &Cli) -> RunConfig<'_> {
     RunConfig {
-        file_name: &cli.file,
-        source,
+        source: Source::EntryFile(cli.file.as_ref()),
         mode: cli.mode.clone().into(),
         debug: cli.debug,
-        force: cli.force,
         include_prelude: !cli.no_stdlib,
         color: cli.color.into(),
+        diagnostics: true,
+        portable: cli.portable,
         emit: cli.emit.iter().copied().map(EmitTarget::from).collect(),
         error_limit: cli.error_limit,
     }
 }
 
-pub fn watch_loop(cli: &Cli) {
-    use notify::{EventKind, RecursiveMode, Watcher};
-    use std::sync::mpsc;
+/// Makes `watched` match `wanted`. A failure is reported with the failing path, and the watcher keeps
+/// running: a module may vanish between the resolver reading it and us watching it.
+fn sync_watches(watcher: &mut impl Watcher, watched: &mut Vec<PathBuf>, wanted: &[PathBuf]) {
+    watched.retain(|path| {
+        if wanted.contains(path) {
+            return true;
+        }
+        if let Err(e) = watcher.unwatch(path.as_path()) {
+            eprintln!("steel: cannot stop watching '{}': {}", path.display(), e);
+        }
+        false
+    });
+    for path in wanted {
+        if watched.contains(path) {
+            continue;
+        }
+        match watcher.watch(path.as_path(), RecursiveMode::NonRecursive) {
+            Ok(()) => watched.push(path.clone()),
+            Err(e) => eprintln!("steel: cannot watch '{}': {}", path.display(), e),
+        }
+    }
+}
 
-    let source = read_source(&cli.file);
-    let output = run(&build_config(cli, &source));
+/// The module files to watch after a run, the entry included.
+fn files_to_watch(cli: &Cli, config: &RunConfig) -> Vec<PathBuf> {
+    // Resolve again without the prelude: std has no file to watch, and only import headers are parsed.
+    match ModuleResolver::new().resolve_source(&config.source) {
+        Ok(graph) if !graph.modules.is_empty() => graph
+            .modules
+            .into_iter()
+            .map(|module| module.path)
+            .collect(),
+        _ => vec![PathBuf::from(&cli.file)],
+    }
+}
+
+pub fn watch_loop(cli: &Cli) {
+    let config = build_config(cli);
+
+    let output = pipeline(&config);
     if cli.time {
         output.timings.print();
     }
@@ -136,12 +170,9 @@ pub fn watch_loop(cli: &Cli) {
         eprintln!("steel: cannot start file watcher: {}", e);
         std::process::exit(1);
     });
-    watcher
-        .watch(Path::new(&cli.file), RecursiveMode::NonRecursive)
-        .unwrap_or_else(|e| {
-            eprintln!("steel: cannot watch '{}': {}", cli.file, e);
-            std::process::exit(1);
-        });
+
+    let mut watched = vec![];
+    sync_watches(&mut watcher, &mut watched, &files_to_watch(cli, &config));
 
     loop {
         match rx.recv() {
@@ -150,9 +181,9 @@ pub fn watch_loop(cli: &Cli) {
                 std::thread::sleep(std::time::Duration::from_millis(50));
                 while rx.try_recv().is_ok() {}
 
-                eprintln!("\n=== {} changed ===\n", cli.file);
-                let source = read_source(&cli.file);
-                let output = run(&build_config(cli, &source));
+                let output = pipeline(&config);
+                sync_watches(&mut watcher, &mut watched, &files_to_watch(cli, &config));
+
                 if cli.time {
                     output.timings.print();
                 }
@@ -164,20 +195,13 @@ pub fn watch_loop(cli: &Cli) {
     }
 }
 
-pub fn read_source(path: &str) -> String {
-    fs::read_to_string(path).unwrap_or_else(|e| {
-        eprintln!("steel: cannot read '{}': {}", path, e);
-        std::process::exit(1);
-    })
-}
-
 pub fn handle_input() {
     let cli = Cli::parse();
+
     if cli.watch {
         watch_loop(&cli);
     } else {
-        let source = read_source(&cli.file);
-        let output = run(&build_config(&cli, &source));
+        let output = pipeline(&build_config(&cli));
         if cli.time {
             output.timings.print();
         }

@@ -52,7 +52,7 @@ fn test_unreachable_in_if_branch() {
 
 #[test]
 fn test_unreachable_all_stmts_after_diverge() {
-    // All stmts after a single diverge are grouped into one warning with a unified span.
+    // Wildcard stmts after a single diverge are grouped into one warning with a unified span.
     Tester::new(
         r#"
         func test(): number {
@@ -99,7 +99,7 @@ fn test_unreachable_inside_branches_and_after_if() {
 
 #[test]
 fn test_no_unreachable_with_correct_returns() {
-    // All code is reachable - no warnings expected
+    // Wildcard code is reachable - no warnings expected
     assert_typechecks(
         r#"
         func larger(a: number, b: number): number {

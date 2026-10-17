@@ -1,13 +1,13 @@
 use crate::parser::ast::Expr;
-use crate::scanner::Token;
+use crate::scanner::{FileId, Token};
 use crate::typechecker::core::ast::{ExprKind, TypedExpr};
 use crate::typechecker::core::error::{
     Mismatch, MismatchContext, Operand, TypeCheckerError, TypeCheckerWarning, TypeRequirement,
     UndefinedMethodError,
 };
-use crate::typechecker::core::types::Type;
-use crate::typechecker::system::{make_substitution_map, TypeSystem};
-use crate::typechecker::{similarity, Symbol, TypeChecker};
+use crate::typechecker::core::types::{InterfaceId, NameTypeId, Type};
+use crate::typechecker::system::{TypeSystem, make_substitution_map};
+use crate::typechecker::{TypeChecker, similarity};
 use std::rc::Rc;
 
 impl<'src> TypeChecker<'src> {
@@ -22,12 +22,12 @@ impl<'src> TypeChecker<'src> {
         if object_typed.ty == Type::Error {
             return Ok(TypedExpr::new_blank(object_typed.span));
         }
-        if let Type::Metatype(name, generics) = &object_typed.ty {
+        if let Type::Metatype(id, generics) = &object_typed.ty {
             if *safe {
                 self.warnings
                     .push(TypeCheckerWarning::SafeAccessOnNonOptional { span: expr.span() })
             }
-            return self.resolve_static_access(name, field, generics);
+            return self.resolve_static_access(*id, field, generics);
         }
 
         self.resolve_instance_access(object_typed, field, *safe)
@@ -81,15 +81,12 @@ impl<'src> TypeChecker<'src> {
                 .unwrap_optional_safe(*safe, object_typed.span, &mut self.warnings);
 
         // Map indexing: always returns V? (Optional)
-        if let (Some(key_ty), Some(val_ty)) =
-            (parent_type.map_key().cloned(), parent_type.map_value().cloned())
-        {
-            let index_typed = self.coerce_expression(
-                index,
-                &key_ty,
-                MismatchContext::IndexValue,
-                None,
-            );
+        if let (Some(key_ty), Some(val_ty)) = (
+            parent_type.map_key(self.sys).cloned(),
+            parent_type.map_value(self.sys).cloned(),
+        ) {
+            let index_typed =
+                self.coerce_expression(index, &key_ty, MismatchContext::IndexValue, None);
 
             let mut ty = Type::Optional(Box::new(val_ty));
             if safe {
@@ -107,7 +104,7 @@ impl<'src> TypeChecker<'src> {
             });
         }
 
-        let inner = parent_type.list_element().cloned().ok_or_else(|| {
+        let inner = parent_type.list_element(self.sys).cloned().ok_or_else(|| {
             TypeCheckerError::OperatorConstraint {
                 operator: "[]",
                 operand: Operand::Lhs,
@@ -144,7 +141,7 @@ impl<'src> TypeChecker<'src> {
 
     pub(crate) fn check_set_index(
         &mut self,
-        expr: &Expr<'src>,
+        expr: &Expr,
         safe: &bool,
         object: &Expr<'src>,
         index: &Expr<'src>,
@@ -157,15 +154,12 @@ impl<'src> TypeChecker<'src> {
                 .unwrap_optional_safe(*safe, object_typed.span, &mut self.warnings);
 
         // Map set-indexing: upsert key -> value
-        if let (Some(key_ty), Some(val_ty)) =
-            (parent_type.map_key().cloned(), parent_type.map_value().cloned())
-        {
-            let index_typed = self.coerce_expression(
-                index,
-                &key_ty,
-                MismatchContext::IndexValue,
-                None,
-            );
+        if let (Some(key_ty), Some(val_ty)) = (
+            parent_type.map_key(self.sys).cloned(),
+            parent_type.map_value(self.sys).cloned(),
+        ) {
+            let index_typed =
+                self.coerce_expression(index, &key_ty, MismatchContext::IndexValue, None);
             let value_typed =
                 self.coerce_expression(value, &val_ty, MismatchContext::IndexValue, None);
 
@@ -181,7 +175,7 @@ impl<'src> TypeChecker<'src> {
             });
         }
 
-        let inner = parent_type.list_element().cloned().ok_or_else(|| {
+        let inner = parent_type.list_element(self.sys).cloned().ok_or_else(|| {
             TypeCheckerError::OperatorConstraint {
                 operator: "[]",
                 operand: Operand::Lhs,
@@ -225,7 +219,10 @@ impl<'src> TypeChecker<'src> {
                 .ty
                 .unwrap_optional_safe(safe, member_token.span, &mut self.warnings);
 
-        if let Ok((idx, field_type)) = resolve_member_type(&actual_ty, member_token, &self.sys) {
+        if let Ok((idx, field_type)) =
+            resolve_member_type(&actual_ty, member_token, self.sys, self.file_id)
+        {
+            self.check_field_access(&actual_ty, idx, member_token);
             let mut expr = TypedExpr {
                 ty: field_type,
                 span: object_typed.span.merge(member_token.span),
@@ -241,27 +238,27 @@ impl<'src> TypeChecker<'src> {
             return Ok(expr);
         }
 
-        if let Type::Interface(name) = &actual_ty {
-            return self.resolve_interface_method(name, object_typed, member_token, safe);
+        if let Type::Interface(id) = &actual_ty {
+            return self.resolve_interface_method(*id, object_typed, member_token, safe);
         }
 
         self.resolve_regular_method(actual_ty, object_typed, member_token, safe)
     }
     fn resolve_interface_method(
         &self,
-        name: &Symbol,
+        id: InterfaceId,
         object_typed: TypedExpr,
         member_token: &Token,
         is_safe: bool,
     ) -> Result<TypedExpr, TypeCheckerError> {
-        let iface = self.sys.get_interface(name).unwrap();
+        let iface = self.sys.get_interface(id);
         let Some((idx, method_ty)) = iface.methods.get(member_token.lexeme) else {
             let method_names: Vec<&str> = iface.methods.keys().map(|s| s.as_str()).collect();
             let suggestions = similarity::find_similar(member_token.lexeme, method_names, 3);
             return Err(TypeCheckerError::UndefinedMethod(Box::new(
                 UndefinedMethodError {
                     span: member_token.span,
-                    found: Type::Interface(iface.name.clone()),
+                    found: Type::Interface(id),
                     method_name: member_token.lexeme.into(),
                     type_origin: Some(iface.origin),
                     suggestions,
@@ -295,30 +292,29 @@ impl<'src> TypeChecker<'src> {
         method_token: &Token,
         safe: bool,
     ) -> Result<TypedExpr, TypeCheckerError> {
-        let type_name = obj_type
-            .get_name()
+        let type_id = obj_type
+            .get_ty_id()
             .ok_or_else(|| TypeCheckerError::TypeHasNoFields {
                 found: obj_type.clone(),
                 span: object_expr.span,
             })?;
 
-        // Type.method
-        let mangled_name = format!("{}.{}", type_name, method_token.lexeme);
+        let lookup_result = self.lookup_method(type_id, method_token.lexeme);
 
-        let lookup_result = self.scopes.lookup(&mangled_name);
-        let Some((ctx, resolved_var)) = lookup_result else {
-            let mut candidates: Vec<String> = self.scopes.get_methods_for_type(type_name);
+        let Some(method) = lookup_result else {
+            let mut candidates = self.method_names_for_type(type_id);
             // Add field names if this is a struct type
-            if let Some(struct_def) = self.sys.get_struct(type_name) {
-                candidates.extend(struct_def.fields.keys().map(|s| s.to_string()));
+            if let NameTypeId::Struct(id) = type_id {
+                let def = self.sys.get_struct(id);
+                candidates.extend(def.visible_field_names(self.file_id).cloned());
             }
 
             let suggestions = similarity::find_similar(
                 method_token.lexeme,
-                candidates.iter().map(|s| s.as_str()),
+                candidates.iter().map(|s| s.as_ref()),
                 3,
             );
-            let type_origin = self.sys.get_origin(type_name);
+            let type_origin = self.sys.get_origin(type_id);
             return Err(TypeCheckerError::UndefinedMethod(Box::new(
                 UndefinedMethodError {
                     span: method_token.span,
@@ -329,10 +325,20 @@ impl<'src> TypeChecker<'src> {
                 },
             )));
         };
-        let definition_span = ctx.span;
-        let method_type = ctx.type_info.clone();
+
+        self.check_method_access(method, method_token);
+        let method_info = self.sys.get_method_info(method.target);
+
+        let definition_span = method_info.origin;
+        let method_type = method_info.func_type.clone();
+        let location = method_info.location.clone();
+        let impl_count = method_info.impl_generic_count;
+
         let Type::Function(func) = &method_type else {
-            unreachable!("Method should be of type function")
+            unreachable!(
+                "Method should be of type function {}",
+                method_type.display_type(self.sys)
+            )
         };
 
         if func.is_static() {
@@ -342,39 +348,28 @@ impl<'src> TypeChecker<'src> {
             });
         }
 
-        let impl_count: Option<usize> = self
-            .sys
-            .get_method_info(&mangled_name)
-            .map(|info| info.impl_generic_count);
+        let impl_params = &func.type_params[0..impl_count];
+        let fresh_generics = self.infer_ctx.fresh_args(impl_params, &[]);
+        let impl_map = make_substitution_map(impl_params, &fresh_generics);
 
-        let result_type = if let Some(impl_count) = impl_count {
-            let impl_params = &func.type_params[0..impl_count];
-            let fresh_generics = self.infer_ctx.fresh_args(impl_params, &[]);
-            let impl_map = make_substitution_map(impl_params, &fresh_generics);
+        let method_with_fresh = method_type.generic_to_concrete(&impl_map);
 
-            let method_with_fresh = method_type.generic_to_concrete(&impl_map);
-
-            let Type::Function(fresh_func) = &method_with_fresh else {
-                unreachable!()
-            };
-            let self_param_ty = fresh_func.params[0].1.clone();
-            self.infer_ctx
-                .unify_types(&self_param_ty, &obj_type)
-                .map_err(|unif_err| TypeCheckerError::TypeMismatch {
-                    mismatch: Box::new(Mismatch::from(unif_err)),
-                    context: MismatchContext::Generic,
-                    primary_span: method_token.span,
-                    defined_at: None,
-                })?;
-
-            self.infer_ctx.substitute(&method_with_fresh)
-        } else {
-            // Fallback: direct generic-name substitution (non-impl methods).
-            let generics_map = self.sys.get_generics_map(&obj_type);
-            method_type.generic_to_concrete(&generics_map)
+        let Type::Function(fresh_func) = &method_with_fresh else {
+            unreachable!()
         };
+        let self_param_ty = fresh_func.params[0].1.clone();
+        self.infer_ctx
+            .unify_types(&self_param_ty, &obj_type)
+            .map_err(|unif_err| TypeCheckerError::TypeMismatch {
+                mismatch: Box::new(Mismatch::from(unif_err)),
+                context: MismatchContext::Generic,
+                primary_span: method_token.span,
+                defined_at: None,
+            })?;
 
-        // Remove the self parameter from the resolved method type.
+        let result_type = self.infer_ctx.substitute(&method_with_fresh);
+
+        // Remove the 'self' parameter from the resolved method type.
         let mut method_ty = if let Type::Function(mut func) = result_type {
             let func_inner = Rc::make_mut(&mut func);
             func_inner.params.remove(0);
@@ -392,12 +387,28 @@ impl<'src> TypeChecker<'src> {
             span: object_expr.span.merge(method_token.span),
             kind: ExprKind::MethodGet {
                 object: Box::new(object_expr),
-                method: resolved_var,
+                method: location,
                 origin: definition_span,
                 safe,
             },
         })
     }
+    pub(crate) fn check_field_access(&mut self, ty: &Type, idx: u8, field: &Token) {
+        let Type::Struct(id, _) = ty else { return };
+        let def = self.sys.get_struct(*id);
+        if def.is_field_public(idx as usize) || def.origin.file_id == self.file_id {
+            return;
+        }
+        let error = TypeCheckerError::PrivateField {
+            struct_name: def.name.clone(),
+            field_name: field.lexeme.into(),
+            module: self.module_graph.module_name_of_file(def.origin.file_id),
+            span: field.span,
+            definition: def.field_span(idx as usize),
+        };
+        self.report(error);
+    }
+
     pub(crate) fn with_member_access<F>(
         &mut self,
         object_expr: &Expr<'src>,
@@ -414,7 +425,8 @@ impl<'src> TypeChecker<'src> {
                 .ty
                 .unwrap_optional_safe(safe, field.span, &mut self.warnings);
 
-        let (index, field_type) = resolve_member_type(&parent_type, field, &self.sys)?;
+        let (index, field_type) = resolve_member_type(&parent_type, field, self.sys, self.file_id)?;
+        self.check_field_access(&parent_type, index, field);
         callback(self, object_typed, index, field_type, safe)
     }
 }
@@ -423,6 +435,7 @@ fn resolve_member_type(
     parent_type: &Type,
     field: &Token,
     sys: &TypeSystem,
+    file_id: FileId,
 ) -> Result<(u8, Type), TypeCheckerError> {
     match parent_type {
         Type::Tuple(tuple_type) => {
@@ -446,16 +459,16 @@ fn resolve_member_type(
 
             Ok((idx, tuple_type.types[idx as usize].clone()))
         }
-        Type::Struct(name, generics) => {
-            let struct_def = sys
-                .get_struct(name)
-                .expect("Struct def missing after type check");
+        Type::Struct(id, generics) => {
+            let struct_def = sys.get_struct(*id);
 
             let (field_id, ty) = struct_def
                 .get_field(field.lexeme, generics)
                 .ok_or_else(|| {
-                    let field_names: Vec<&str> =
-                        struct_def.fields.keys().map(|s| s.as_ref()).collect();
+                    let field_names: Vec<&str> = struct_def
+                        .visible_field_names(file_id)
+                        .map(|name| name.as_ref())
+                        .collect();
                     let suggestions = similarity::find_similar(field.lexeme, field_names, 3);
                     TypeCheckerError::UndefinedField {
                         struct_name: struct_def.name.clone(),

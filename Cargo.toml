@@ -1,6 +1,6 @@
 [package]
 name = "steel_lang"
-version = "0.6.7"
+version = "0.7.0"
 edition = "2024"
 
 [features]
@@ -9,13 +9,16 @@ debug_stack_execution = []
 debug_gc = []
 stress_gc = []
 
+# TODO update deps
 [dependencies]
 ariadne = "0.4.1"
 clap = { version = "4", features = ["derive"] }
-notify = "6"
+notify = "8.2.0"
+
 
 [dev-dependencies]
 criterion = { version = "0.8.2", features = ["html_reports"] }
+tempfile = "3.27.0"
 
 [[bench]]
 name = "vm_bench"

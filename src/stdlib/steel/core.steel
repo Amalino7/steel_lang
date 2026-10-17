@@ -1,9 +1,9 @@
-extern func panic(msg: any): never;
-extern func assert(left: any, right: any): void;
-extern func clock(): number;
-extern func to_str<T>(val: T): string;
-extern func is_nan(val: number): boolean;
-extern func readline(): string;
-extern func range(start: number, end_exclusive: number): List<number>;
+public extern func panic(msg: any): never;
+public extern func assert(left: any, right: any): void;
+public extern func clock(): number;
+public extern func to_str<T>(val: T): string;
+public extern func is_nan(val: number): boolean;
+public extern func readline(): string;
+public extern func range(start: number, end_exclusive: number): List<number>;
 
-func Void() {}
+public func Void() {}

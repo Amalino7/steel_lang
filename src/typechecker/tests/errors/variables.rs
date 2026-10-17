@@ -30,11 +30,8 @@ fn test_undefined_type() {
 
 #[test]
 fn test_undefined_type_in_function_param() {
-    // The typechecker resolves the unknown type twice (forward declaration + body check)
+    // The typechecker resolves the unknown type
     Tester::new(r#"func foo(x: UnknownType): void {}"#)
-        .expect_error(
-            |e| matches!(e, TypeCheckerError::UndefinedType { name, .. } if name == "UnknownType"),
-        )
         .expect_error(
             |e| matches!(e, TypeCheckerError::UndefinedType { name, .. } if name == "UnknownType"),
         )
@@ -43,11 +40,8 @@ fn test_undefined_type_in_function_param() {
 
 #[test]
 fn test_undefined_type_in_function_return() {
-    // The typechecker resolves the unknown type twice (forward declaration + body check)
+    // The typechecker resolves the unknown type
     Tester::new(r#"func foo(): UnknownType {}"#)
-        .expect_error(
-            |e| matches!(e, TypeCheckerError::UndefinedType { name, .. } if name == "UnknownType"),
-        )
         .expect_error(
             |e| matches!(e, TypeCheckerError::UndefinedType { name, .. } if name == "UnknownType"),
         )

@@ -1,0 +1,3 @@
+import nope/thing;
+
+println("unreachable");

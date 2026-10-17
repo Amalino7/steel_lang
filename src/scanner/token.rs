@@ -86,6 +86,9 @@ pub enum TokenType {
     Self_,
     Interface,
     Extern,
+    Public,
+    Import,
+    As,
 
     Enum,
     Match,
@@ -165,6 +168,9 @@ impl Display for TokenType {
             TokenType::Percent => f.write_str("%"),
             TokenType::PercentEqual => f.write_str("%="),
             TokenType::StarStar => f.write_str("**"),
+            TokenType::Public => f.write_str("public"),
+            TokenType::Import => f.write_str("import"),
+            TokenType::As => f.write_str("as"),
         }
     }
 }

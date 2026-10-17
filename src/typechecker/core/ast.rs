@@ -1,8 +1,9 @@
 use crate::compiler::analysis::ResolvedVar;
 use crate::parser::ast::Literal;
 use crate::scanner::Span;
-use crate::typechecker::core::types::Type;
 use crate::typechecker::Symbol;
+use crate::typechecker::core::types::Type;
+use std::fmt::{Display, Formatter};
 
 #[derive(Debug)]
 pub struct TypedExpr {
@@ -238,25 +239,22 @@ pub struct TypedStmt {
 pub enum StmtKind {
     Blank,
     Impl {
-        methods: Box<[TypedStmt]>, // optimizes memory layout
         vtables: Box<[Vec<ResolvedVar>]>,
     }, // Might add meta-information later
     StructDecl {},
     EnumDecl {},
     Global {
-        global_count: u32,
         stmts: Vec<TypedStmt>,
-        reserved: u16,
-        extern_fns: Vec<(Box<str>, u16)>,
     },
     Expression(TypedExpr),
     Let {
         binding: TypedBinding,
         value: TypedExpr,
+        reserved: u8,
     },
     Block {
         body: Vec<TypedStmt>,
-        reserved: u16,
+        reserved: u8,
     },
     While {
         condition: TypedExpr,
@@ -275,10 +273,36 @@ pub enum StmtKind {
 }
 #[derive(Debug, Clone)]
 pub enum TypedBinding {
-    Variable(ResolvedVar),
+    Variable(ResolvedVar, Symbol),
     Ignored,
     Tuple(Vec<TypedBinding>),
     Struct(Vec<(u8, TypedBinding)>),
+}
+impl Display for TypedBinding {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TypedBinding::Variable(_, name) => {
+                write!(f, "{name}")
+            }
+            TypedBinding::Ignored => {
+                write!(f, "_")
+            }
+            TypedBinding::Tuple(bindings) => {
+                write!(f, "(")?;
+                for binding in bindings {
+                    write!(f, "{binding}, ")?;
+                }
+                write!(f, ")")
+            }
+            TypedBinding::Struct(fields) => {
+                write!(f, "{{")?;
+                for field in fields {
+                    write!(f, "{},", field.0)?;
+                }
+                write!(f, "}}")
+            }
+        }
+    }
 }
 
 #[derive(Debug)]

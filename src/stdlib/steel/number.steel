@@ -1,5 +1,5 @@
 impl number {
-    func abs(self): number {
+    public func abs(self): number {
         if self < 0 {
             return -self;
         }
@@ -7,18 +7,18 @@ impl number {
             return self;
         }
     }
-    extern func floor(self): number;
-    extern func ceil(self): number;
-    extern func round(self): number;
-    extern func trunc(self): number;
-    extern func sqrt(self): number;
-    extern func pow(self, exp: number): number;
-    extern func log(self): number;
-    extern func log2(self): number;
-    extern func log10(self): number;
-    extern func sin(self): number;
-    extern func cos(self): number;
-    extern func tan(self): number;
-    extern func min(self, other: number): number;
-    extern func max(self, other: number): number;
+    public extern func floor(self): number;
+    public extern func ceil(self): number;
+    public extern func round(self): number;
+    public extern func trunc(self): number;
+    public extern func sqrt(self): number;
+    public extern func pow(self, exp: number): number;
+    public extern func log(self): number;
+    public extern func log2(self): number;
+    public extern func log10(self): number;
+    public extern func sin(self): number;
+    public extern func cos(self): number;
+    public extern func tan(self): number;
+    public extern func min(self, other: number): number;
+    public extern func max(self, other: number): number;
 }

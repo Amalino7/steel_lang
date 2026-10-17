@@ -146,7 +146,7 @@ fn test_map_nan_key_panics_on_set() {
 
 #[test]
 fn test_map_nan_key_panics_on_contains_key() {
-    assert_panics_with_prelude(
+    assert_panics(
         r#"
         let m: Map<number, string> = [];
         let nan = (-10) ** 0.5;

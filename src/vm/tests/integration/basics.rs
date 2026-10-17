@@ -278,3 +278,43 @@ fn test_string_concatenation_large() {
         "#,
     );
 }
+
+#[test]
+fn test_more_than_256_globals() {
+    // Global slots are wider than a byte: the last global must still be addressable.
+    let mut src = String::new();
+    for i in 0..300 {
+        src.push_str(&format!("let g{i} = {i};\n"));
+    }
+    src.push_str("assert(g299, 299);\nassert(g0 + g256, 256);\n");
+    assert_runs(&src);
+}
+
+#[test]
+fn test_ignored_global_let_with_locals_runs_once() {
+    // The initializer's locals are numbered for its own frame, not the module script's.
+    assert_runs(
+        r#"
+        enum Pick { One, Two }
+        let count = 0;
+        func bump(): number {
+            count = count + 1;
+            return count;
+        }
+        let _ = {
+            let a = Pick.One;
+            func f(): Pick {
+                return a;
+            }
+            bump();
+            match f() {
+                .One => 2,
+                .Two => 3,
+            }
+        };
+        let after = 5;
+        assert(after, 5);
+        assert(count, 1);
+        "#,
+    );
+}

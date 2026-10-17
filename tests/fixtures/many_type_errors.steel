@@ -1,0 +1,3 @@
+let a: number = "one";
+let b: number = "two";
+let c: number = "three";
