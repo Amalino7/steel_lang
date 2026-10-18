@@ -2,7 +2,7 @@ use crate::compiler::Compiler;
 use crate::diagnostics::DiagnosticContext;
 use crate::diagnostics::ariadne::{cache, render};
 use crate::diagnostics::emitter::{DiagnosticEmitter, DiagnosticSink};
-use crate::parser::Parser;
+use crate::parser::{Parser, printer};
 use crate::resolver::{ModuleGraph, ModuleId, ModuleResolver};
 use crate::scanner::Scanner;
 use crate::stdlib::{NativeDef, get_natives, get_prelude};
@@ -225,8 +225,7 @@ fn process_file(
 
     if emit_ast {
         println!("=== AST ===");
-        file.imports.iter().for_each(|i| println!("{}", i));
-        file.body.iter().for_each(|e| println!("{}", e));
+        print!("{}", printer::file_to_string(&file, false));
         println!("===========");
     }
 

@@ -318,3 +318,36 @@ fn test_ignored_global_let_with_locals_runs_once() {
         "#,
     );
 }
+
+// B4 (docs/features/parser-improvements): `t op= v` is desugared to `t = t op v` by cloning the target,
+// so side effects in the target run twice.
+#[test]
+#[ignore = "B4"]
+fn test_compound_assign_evaluates_index_target_once() {
+    assert_runs(
+        r#"
+        let calls = 0;
+        func idx(): number { calls += 1; return 0; }
+        let a = [1];
+        a[idx()] += 1;
+        assert(calls, 1);
+        assert(a[0], 2);
+        "#,
+    );
+}
+
+#[test]
+#[ignore = "B4"]
+fn test_compound_assign_evaluates_object_target_once() {
+    assert_runs(
+        r#"
+        struct Box { x: number }
+        let calls = 0;
+        let b = Box(x: 1);
+        func get(): Box { calls += 1; return b; }
+        get().x += 1;
+        assert(calls, 1);
+        assert(b.x, 2);
+        "#,
+    );
+}
