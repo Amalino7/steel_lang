@@ -35,12 +35,23 @@ fn test_b3_function_type_span_starts_at_func_keyword() {
 }
 
 #[test]
-#[ignore = "B5"]
 fn test_b5_nested_tuple_access() {
     assert_parses(
         "let t = ((1, 2), 3); let y = t.0.1;",
         "(let (bind t) ? (tuple (tuple 1 2) 3)) (let (bind y) ? (get (get t .0) .1))",
     );
+}
+
+#[test]
+fn test_b5_tuple_index_after_safe_access_and_float_like_index() {
+    assert_expr("t?.0.1", "(get (get? t .0) .1)");
+    assert_expr("t.1.5", "(get (get t .1) .5)");
+}
+
+#[test]
+fn test_b5_tuple_index_with_leading_zero_is_error() {
+    assert_parse_errors("let y = t.01;", &["1:11"]);
+    assert_parse_errors("let y = t?.00;", &["1:12"]);
 }
 
 #[test]

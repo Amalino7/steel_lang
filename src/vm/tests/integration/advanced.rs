@@ -197,6 +197,19 @@ fn test_unrefinement_after_assignment() {
 // --- Tuples ---
 
 #[test]
+fn test_nested_tuple_access() {
+    assert_runs(
+        r#"
+        let t = ((1, 2), (3, (4, 5)));
+        assert(t.0.1, 2);
+        assert(t.1.1.0, 4);
+        let o: ((number, number), number)? = ((6, 7), 8);
+        assert(o?.0?.1, 7);
+        "#,
+    );
+}
+
+#[test]
 fn test_tuple_basic() {
     assert_runs(
         r#"

@@ -14,6 +14,8 @@ pub struct Scanner<'src> {
     file_id: FileId,
     line: u32,
     context_stack: Vec<InterpolationFrame>,
+    /// The type of the last token returned, `None` before the first one.
+    prev_type: Option<TokenType>,
 }
 
 struct InterpolationFrame {
@@ -32,9 +34,17 @@ impl<'src> Scanner<'src> {
             file_id,
             line: 1,
             context_stack: Vec::new(),
+            prev_type: None,
         }
     }
+
     pub fn next_token(&mut self) -> Token<'src> {
+        let token = self.scan_token();
+        self.prev_type = Some(token.token_type.clone());
+        token
+    }
+
+    fn scan_token(&mut self) -> Token<'src> {
         let error = self.skip_whitespace();
         if let Some(token) = error {
             return token;
@@ -131,6 +141,8 @@ impl<'src> Scanner<'src> {
                     self.string()
                 }
             }
+            //A digit right after `.`/`?.` starts a tuple index instead of a number literal.
+            '0'..='9' if self.after_dot() => self.tuple_index(),
             c @ '0'..='9' => self.number(c),
             c if is_valid_identifier(c) => self.identifier(),
             _ => self.make_token(TokenType::UnexpectedSymbolError),
@@ -275,6 +287,22 @@ impl<'src> Scanner<'src> {
         }
     }
 
+    fn after_dot(&self) -> bool {
+        matches!(
+            self.prev_type,
+            Some(TokenType::Dot | TokenType::QuestionDot)
+        )
+    }
+
+    /// A tuple index (`t.0`) is decimal digits only, so `t.0.1` lexes as `t . 0 . 1` rather than `t . 0.1`.
+    /// Leading zeros are rejected by the parser.
+    fn tuple_index(&mut self) -> Token<'src> {
+        while self.peek_char().is_ascii_digit() {
+            self.advance();
+        }
+        self.make_token(TokenType::Number)
+    }
+
     fn number(&mut self, first: char) -> Token<'src> {
         // Base prefixes
         if first == '0' {
@@ -378,4 +406,69 @@ fn keywords() -> HashMap<&'static str, TokenType> {
         ("public", TokenType::Public),
         ("as", TokenType::As),
     ])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn token_types(src: &str) -> Vec<TokenType> {
+        let mut scanner = Scanner::new(src, FileId(0));
+        let mut types = vec![];
+        loop {
+            let token = scanner.next_token();
+            if token.token_type == TokenType::EOF {
+                return types;
+            }
+            types.push(token.token_type);
+        }
+    }
+
+    fn lexemes(src: &str) -> Vec<&str> {
+        let mut scanner = Scanner::new(src, FileId(0));
+        let mut lexemes = vec![];
+        loop {
+            let token = scanner.next_token();
+            if token.token_type == TokenType::EOF {
+                return lexemes;
+            }
+            lexemes.push(token.lexeme);
+        }
+    }
+
+    #[test]
+    fn test_digits_after_dot_are_a_tuple_index() {
+        assert_eq!(lexemes("t.0.1"), ["t", ".", "0", ".", "1"]);
+        assert_eq!(lexemes("t?.0.1"), ["t", "?.", "0", ".", "1"]);
+        assert_eq!(lexemes("t.1.5"), ["t", ".", "1", ".", "5"]);
+        assert_eq!(lexemes("t. /* c */ 0.1"), ["t", ".", "0", ".", "1"]);
+    }
+
+    #[test]
+    fn test_tuple_index_has_no_prefix_separator_or_exponent() {
+        assert_eq!(lexemes("t.0x1"), ["t", ".", "0", "x1"]);
+        assert_eq!(lexemes("t.1_0"), ["t", ".", "1", "_0"]);
+        assert_eq!(lexemes("t.1e2"), ["t", ".", "1", "e2"]);
+    }
+
+    #[test]
+    fn test_number_literals_outside_field_access_are_unchanged() {
+        assert_eq!(lexemes("1.5"), ["1.5"]);
+        assert_eq!(lexemes("x = 0.25e1"), ["x", "=", "0.25e1"]);
+        assert_eq!(lexemes("1.0.1"), ["1.0", ".", "1"]);
+        assert_eq!(
+            token_types("1.abs"),
+            [TokenType::Number, TokenType::Dot, TokenType::Identifier]
+        );
+    }
+
+    #[test]
+    fn test_tuple_index_inside_interpolation() {
+        let src = r#""${t.0.1}""#;
+        assert!(
+            lexemes(src)
+                .windows(5)
+                .any(|w| w == ["t", ".", "0", ".", "1"])
+        );
+    }
 }

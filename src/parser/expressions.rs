@@ -280,7 +280,7 @@ impl<'src> Parser<'src> {
                 };
             } else if match_token_type!(self, TokT::Dot) {
                 if match_token_type!(self, TokT::Number) {
-                    let idx = self.previous_token.clone();
+                    let idx = self.tuple_index();
                     expr = Expr::Get {
                         safe: false,
                         object: Box::new(expr),
@@ -298,7 +298,7 @@ impl<'src> Parser<'src> {
                 };
             } else if match_token_type!(self, TokT::QuestionDot) {
                 if match_token_type!(self, TokT::Number) {
-                    let idx = self.previous_token.clone();
+                    let idx = self.tuple_index();
                     expr = Expr::Get {
                         safe: true,
                         object: Box::new(expr),
@@ -360,6 +360,19 @@ impl<'src> Parser<'src> {
             let expr = self.expression()?;
             Ok(CallArg { label: None, expr })
         }
+    }
+
+    /// The tuple index just consumed. The scanner guarantees it is decimal digits; a leading zero (`t.01`) is
+    /// reported but the access is still built, since the intended index is clear.
+    fn tuple_index(&mut self) -> Token<'src> {
+        let idx = self.previous_token.clone();
+        if idx.lexeme.len() > 1 && idx.lexeme.starts_with('0') {
+            self.errors.push(ParserError::ParseError {
+                token: idx.clone(),
+                message: "Tuple index must not have leading zeros.".to_string(),
+            });
+        }
+        idx
     }
 
     fn primary(&mut self) -> Result<Expr<'src>, ParserError<'src>> {
