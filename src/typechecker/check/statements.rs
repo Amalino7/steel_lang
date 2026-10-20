@@ -98,7 +98,7 @@ impl<'src> TypeChecker<'src> {
                 }
                 self.define_impl(impl_block, interfaces, &name.0)
             }
-            Stmt::Block { body, brace_token } => {
+            Stmt::Block { body, .. } => {
                 let mut scope = ScopeGuard::new(self, ScopeKind::Block);
                 let stmts = body
                     .iter()
@@ -110,7 +110,7 @@ impl<'src> TypeChecker<'src> {
                         reserved: 0,
                     },
                     type_info: Type::Void,
-                    span: stmt.span().merge(brace_token.span),
+                    span: stmt.span(),
                 }
             }
             Stmt::While { condition, body } => {

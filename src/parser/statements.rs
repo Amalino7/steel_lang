@@ -84,7 +84,7 @@ impl<'src> Parser<'src> {
                 Ok(import) => imports.push(import),
                 Err(e) => {
                     self.errors.push(e);
-                    self.synchronize();
+                    self.synchronize_top_level();
                 }
             }
         }
@@ -111,7 +111,11 @@ impl<'src> Parser<'src> {
         let keyword = self.previous_token.clone();
         let segment = self.import_segment(true)?;
         self.consume(TokT::Semicolon, "Expected ';' after import statement")?;
-        Ok(ImportStmt { keyword, segment })
+        Ok(ImportStmt {
+            keyword,
+            segment,
+            semicolon: self.previous_token.clone(),
+        })
     }
 
     /// `top_level` segments (the ones directly after `import`) must name an item: `module/item`.
@@ -190,6 +194,7 @@ impl<'src> Parser<'src> {
 
     pub(super) fn block(&mut self) -> Result<Stmt<'src>, ParserError<'src>> {
         self.consume(TokT::LeftBrace, "Expected '{' before block.")?;
+        let open_brace = self.previous_token.clone();
         let mut statements = vec![];
         while !check_token_type!(self, TokT::RightBrace) {
             match self.declaration(false) {
@@ -197,7 +202,7 @@ impl<'src> Parser<'src> {
                 Err(e) => {
                     self.synchronize();
                     self.errors.push(e);
-                    if check_token_type!(self, TokT::EOF) {
+                    if self.at_eof() {
                         break;
                     }
                 }
@@ -205,10 +210,10 @@ impl<'src> Parser<'src> {
         }
 
         self.consume(TokT::RightBrace, "Expected '}' after block.")?;
-        let brace_token = self.previous_token.clone();
         Ok(Stmt::Block {
+            open_brace,
             body: statements,
-            brace_token,
+            close_brace: self.previous_token.clone(),
         })
     }
 

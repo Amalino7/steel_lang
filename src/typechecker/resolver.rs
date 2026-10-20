@@ -22,7 +22,7 @@ impl<'a> TypeResolver<'a> {
         match ast {
             TypeAst::Optional(inner) => Ok(self.resolve(inner)?.wrap_in_optional()),
             TypeAst::Named(name, generics) => self.resolve_named(name, generics),
-            TypeAst::Function(sig) => self.resolve_func(sig, vec![]).map(Type::Function),
+            TypeAst::Function(_, sig) => self.resolve_func(sig, vec![]).map(Type::Function),
             TypeAst::Tuple(param) => self.resolve_tuple(param),
             TypeAst::Infer => Ok(Type::Unknown),
         }

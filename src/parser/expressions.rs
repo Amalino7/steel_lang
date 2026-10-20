@@ -58,6 +58,7 @@ impl<'src> Parser<'src> {
         expr: Expr<'src>,
         value: Expr<'src>,
     ) -> Result<Expr<'src>, ParserError<'src>> {
+        let target_span = expr.span();
         if let Expr::Variable { name, .. } = expr {
             Ok(Expr::Assignment {
                 identifier: name,
@@ -88,7 +89,7 @@ impl<'src> Parser<'src> {
                 value: Box::new(value),
             })
         } else {
-            Err(self.error_previous("Invalid assignment target."))
+            Err(ParserError::InvalidAssignmentTarget { span: target_span })
         }
     }
 
@@ -371,7 +372,7 @@ impl<'src> Parser<'src> {
                 if let Some(num) = parse_number(self.previous_token.lexeme) {
                     self.literal(Literal::Number(num))
                 } else {
-                    Err(self.error_current("Invalid number literal."))
+                    Err(self.error_previous("Invalid number literal."))
                 }
             }
             TokT::String => {
@@ -489,7 +490,7 @@ impl<'src> Parser<'src> {
 
         if !match_token_type!(self, TokT::Pipe) {
             // Parse parameter list until closing `|`.
-            while !check_token_type!(self, TokT::Pipe) && !check_token_type!(self, TokT::EOF) {
+            while !check_token_type!(self, TokT::Pipe) && !self.at_eof() {
                 if !match_token_type!(self, TokT::Identifier) {
                     return Err(self.error_current("Expected parameter name in lambda."));
                 }

@@ -6,31 +6,26 @@ use super::helpers::*;
 
 /// The trailing statements of a file are silently dropped once the scanner has hit the end of the input.
 #[test]
-#[ignore = "B1"]
 fn test_b1_last_statement_is_kept() {
     assert_parses("let x = 1; x;", "(let (bind x) ? 1) x");
 }
 
 #[test]
-#[ignore = "B1"]
 fn test_b1_trailing_expression_without_semicolon_is_reported() {
     assert_parse_errors("let x = 1; x", &["1:13"]);
 }
 
 #[test]
-#[ignore = "B1"]
 fn test_b1_unclosed_paren_before_end_reports_once() {
     assert_error_count("func f() {\n let a = (1 + 2;\n}", 1);
 }
 
 #[test]
-#[ignore = "B2"]
 fn test_b2_missing_semicolon_in_block_expression_is_reported() {
     assert_error_count("let x = { 1 2 }; let y = 1;", 1);
 }
 
 #[test]
-#[ignore = "B3"]
 fn test_b3_function_type_span_starts_at_func_keyword() {
     assert_span(
         "let f: func(number): string = 5;",
@@ -49,13 +44,11 @@ fn test_b5_nested_tuple_access() {
 }
 
 #[test]
-#[ignore = "B6"]
 fn test_b6_invalid_number_is_reported_on_the_literal() {
     assert_parse_errors("let z = 0xFFFFFFFFFFFFFFFFFF;", &["1:9"]);
 }
 
 #[test]
-#[ignore = "B7"]
 fn test_b7_invalid_assignment_target_is_reported_on_the_target() {
     assert_parse_errors("5 = a + 1; let y = 1;", &["1:1"]);
 }
@@ -68,7 +61,6 @@ fn test_b8_lexer_error_is_reported_once() {
 }
 
 #[test]
-#[ignore = "B9"]
 fn test_b9_block_statement_span_covers_the_braces() {
     assert_span(
         "func f() { let a = 1; } let y = 1;",
@@ -79,7 +71,6 @@ fn test_b9_block_statement_span_covers_the_braces() {
 }
 
 #[test]
-#[ignore = "B10"]
 fn test_b10_import_span_includes_the_terminator() {
     assert_span("import a/b; let y = 1;", "import", "import a/b;");
 }

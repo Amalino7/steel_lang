@@ -251,7 +251,7 @@ fn type_node(ty: &TypeAst) -> Node {
         TypeAst::Named(name, args) => Node::list("type", ty.span())
             .child(Node::name(name))
             .children(args.iter().map(type_node)),
-        TypeAst::Function(sig) => fn_type_node(ty.span(), sig),
+        TypeAst::Function(_, sig) => fn_type_node(ty.span(), sig),
         TypeAst::Tuple(types) => {
             Node::list("tuple-type", ty.span()).children(types.iter().map(type_node))
         }

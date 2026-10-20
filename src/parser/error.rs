@@ -22,6 +22,9 @@ pub enum ParserError<'src> {
         token: Token<'src>,
         message: String,
     },
+    InvalidAssignmentTarget {
+        span: Span,
+    },
 }
 impl<'src> ParserError<'src> {
     pub fn span(&self) -> Span {
@@ -30,6 +33,7 @@ impl<'src> ParserError<'src> {
             ParserError::UnexpectedToken { found, .. } => found.span,
             ParserError::ParseError { token, .. } => token.span,
             ParserError::MissingToken { found_token, .. } => found_token.span,
+            ParserError::InvalidAssignmentTarget { span } => *span,
         }
     }
     pub fn message(&self) -> String {
@@ -51,6 +55,7 @@ impl<'src> ParserError<'src> {
                 )
             }
             ParserError::ParseError { message, .. } => message.to_string(),
+            ParserError::InvalidAssignmentTarget { .. } => "Invalid assignment target.".to_string(),
         }
     }
 }

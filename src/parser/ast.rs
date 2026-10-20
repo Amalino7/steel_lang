@@ -25,7 +25,8 @@ pub struct FunctionSig<'src> {
 pub enum TypeAst<'src> {
     Optional(Box<TypeAst<'src>>),
     Named(Token<'src>, Vec<TypeAst<'src>>),
-    Function(FunctionSig<'src>),
+    /// The span is the `func` keyword. The parameter names in the signature are placeholders.
+    Function(Span, FunctionSig<'src>),
     Tuple(Vec<TypeAst<'src>>),
     Infer,
 }
@@ -196,8 +197,9 @@ pub enum Stmt<'src> {
         type_info: TypeAst<'src>,
     },
     Block {
-        brace_token: Token<'src>,
+        open_brace: Token<'src>,
         body: Vec<Stmt<'src>>,
+        close_brace: Token<'src>,
     },
     While {
         condition: Expr<'src>,
@@ -253,6 +255,7 @@ pub struct ParsedFile<'src> {
 pub struct ImportStmt<'src> {
     pub keyword: Token<'src>,
     pub segment: ImportSegment<'src>,
+    pub semicolon: Token<'src>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -278,13 +281,7 @@ pub enum ImportType<'src> {
 
 impl ImportStmt<'_> {
     pub fn span(&self) -> Span {
-        self.keyword.span.merge(
-            self.segment
-                .path
-                .last()
-                .map(|last| last.span)
-                .unwrap_or(self.keyword.span),
-        )
+        self.keyword.span.merge(self.semicolon.span)
     }
 }
 
@@ -395,10 +392,11 @@ impl Stmt<'_> {
         match self {
             Stmt::Expression(expr) => expr.span(),
             Stmt::Let { binding, value, .. } => binding.span().merge(value.span()),
-            Stmt::Block { body, brace_token } => body
-                .first()
-                .map(|first| brace_token.span.merge(first.span()))
-                .unwrap_or(brace_token.span),
+            Stmt::Block {
+                open_brace,
+                close_brace,
+                ..
+            } => open_brace.span.merge(close_brace.span),
             Stmt::While { condition, body } => condition.span().merge(body.span()),
             Stmt::Function { name, body, .. } => name.span.merge(body.span()),
             Stmt::ExternFunction {
@@ -447,13 +445,9 @@ impl TypeAst<'_> {
                 .last()
                 .map(|generic| name.span.merge(generic.span()))
                 .unwrap_or(name.span),
-            TypeAst::Function(FunctionSig {
-                params,
-                return_type,
-            }) => params
-                .last()
-                .map(|last| params[0].0.span.merge(last.1.span()))
-                .unwrap_or_else(|| return_type.span()),
+            TypeAst::Function(keyword, FunctionSig { return_type, .. }) => {
+                keyword.merge(return_type.span())
+            }
             TypeAst::Tuple(types) => types
                 .last()
                 .map(|last| types[0].span().merge(last.span()))

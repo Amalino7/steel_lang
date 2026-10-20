@@ -35,8 +35,13 @@ impl Span {
         *self == Self::builtin()
     }
 
-    /// Extends this span to cover another span (useful for combining start/end tokens of an expression)
+    /// Extends this span to cover another span (useful for combining start/end tokens of an expression).
+    /// Both spans must be in the same file.
     pub fn merge(&self, other: Span) -> Self {
+        debug_assert_eq!(
+            self.file_id, other.file_id,
+            "merging spans from different files"
+        );
         Self {
             start: self.start.min(other.start),
             end: self.end.max(other.end),

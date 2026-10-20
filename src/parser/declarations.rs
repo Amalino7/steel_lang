@@ -3,7 +3,7 @@ use crate::parser::ast::{
 };
 use crate::parser::error::ParserError;
 use crate::parser::{Parser, TokT, check_token_type, match_token_type};
-use crate::scanner::{FileId, Span, Token, TokenType};
+use crate::scanner::{Token, TokenType};
 
 type FunctionDecl<'src> = (Token<'src>, Vec<Token<'src>>, FunctionSig<'src>);
 
@@ -211,15 +211,10 @@ impl<'src> Parser<'src> {
     }
 
     pub(super) fn type_block(&mut self) -> Result<TypeAst<'src>, ParserError<'src>> {
-        const UNDER: Token<'static> = Token {
-            token_type: TokenType::Identifier,
-            span: Span::new(0, 0, 0, FileId(0)),
-            lexeme: "_",
-        };
-
         match self.current_token.token_type {
             TokT::Func => {
                 self.consume(TokT::Func, "Expected 'func' keyword.")?;
+                let keyword = self.previous_token.span;
 
                 let optional = match_token_type!(self, TokT::QuestionParen);
 
@@ -234,7 +229,8 @@ impl<'src> Parser<'src> {
                 if !check_token_type!(self, TokT::RightParen) {
                     loop {
                         let arg = self.type_block()?;
-                        params.push((UNDER, arg));
+                        let placeholder = Token::new(TokenType::Identifier, arg.span(), "_");
+                        params.push((placeholder, arg));
 
                         if !match_token_type!(self, TokT::Comma) {
                             break;
@@ -254,10 +250,13 @@ impl<'src> Parser<'src> {
                         vec![],
                     )
                 };
-                let func_type = TypeAst::Function(FunctionSig {
-                    params: Box::from(params),
-                    return_type: Box::new(return_type),
-                });
+                let func_type = TypeAst::Function(
+                    keyword,
+                    FunctionSig {
+                        params: Box::from(params),
+                        return_type: Box::new(return_type),
+                    },
+                );
                 if optional {
                     Ok(TypeAst::Optional(Box::new(func_type)))
                 } else {

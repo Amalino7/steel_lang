@@ -113,15 +113,19 @@ impl<'src> Parser<'src> {
             message: message.into(),
         }
     }
+    fn at_eof(&self) -> bool {
+        self.current_token.token_type == TokT::EOF
+    }
+
     pub fn parse(&mut self) -> Result<ParsedFile<'src>, Vec<ParserError<'src>>> {
         let imports = self.parse_imports();
         let mut statements = vec![];
-        while !self.scanner.is_at_end() {
+        while !self.at_eof() {
             match self.declaration(true) {
                 Ok(stmt) => statements.push(stmt),
                 Err(e) => {
                     self.errors.push(e);
-                    self.synchronize();
+                    self.synchronize_top_level();
                 }
             }
         }
@@ -135,8 +139,19 @@ impl<'src> Parser<'src> {
         }
     }
 
+    /// Like [`Self::synchronize`], but a `}` is never a restart point at the top level, so it is skipped
+    /// instead of being reported again as the start of the next statement.
+    fn synchronize_top_level(&mut self) {
+        // TODO refactor synchronization logic.
+        self.synchronize();
+        while check_token_type!(self, TokT::RightBrace) {
+            let _ = self.advance();
+            self.synchronize();
+        }
+    }
+
     fn synchronize(&mut self) {
-        while !self.scanner.is_at_end() {
+        while !self.at_eof() {
             if self.previous_token.token_type == TokenType::Semicolon {
                 return;
             }

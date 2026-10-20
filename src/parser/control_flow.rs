@@ -9,7 +9,7 @@ impl<'src> Parser<'src> {
         let mut tail: Option<Box<Expr<'src>>> = None;
 
         loop {
-            if check_token_type!(self, TokT::RightBrace) || check_token_type!(self, TokT::EOF) {
+            if check_token_type!(self, TokT::RightBrace) || self.at_eof() {
                 break;
             }
 
@@ -20,7 +20,7 @@ impl<'src> Parser<'src> {
                     Err(e) => {
                         self.synchronize();
                         self.errors.push(e);
-                        if check_token_type!(self, TokT::EOF) {
+                        if self.at_eof() {
                             break;
                         }
                     }
@@ -59,20 +59,21 @@ impl<'src> Parser<'src> {
                         (true, false) => tail = Some(Box::new(expr)),
                         (_, true) => body.push(Stmt::Expression(expr)),
                         (false, false) => {
-                            if is_brace_expr {
-                                // Brace-terminated expressions (if/match/{}) in ambiguous positions
-                                // are treated like statements
-                                body.push(Stmt::Expression(expr));
-                            } else {
-                                self.error_previous("Expected ';' after expression.");
+                            // Brace-terminated expressions (if/match/{}) in ambiguous positions
+                            // are treated like statements. Anything else is missing its `;`: report it
+                            // and keep the expression so the rest of the block still parses.
+                            if !is_brace_expr {
+                                let err = self.error_previous("Expected ';' after expression.");
+                                self.errors.push(err);
                             }
+                            body.push(Stmt::Expression(expr));
                         }
                     }
                 }
                 Err(e) => {
                     self.synchronize();
                     self.errors.push(e);
-                    if check_token_type!(self, TokT::EOF) {
+                    if self.at_eof() {
                         break;
                     }
                 }
@@ -138,7 +139,7 @@ impl<'src> Parser<'src> {
         self.consume(TokT::LeftBrace, "Expected '{' after match value.")?;
         let mut arms: Vec<ExprMatchArm<'src>> = vec![];
 
-        while !check_token_type!(self, TokT::RightBrace) && !check_token_type!(self, TokT::EOF) {
+        while !check_token_type!(self, TokT::RightBrace) && !self.at_eof() {
             let pattern = self.pattern()?;
             self.consume(TokT::Arrow, "Expected '=>' after match pattern.")?;
             // Brace-terminated expressions are parsed directly so the trailing `}`
