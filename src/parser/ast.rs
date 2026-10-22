@@ -33,7 +33,7 @@ pub enum TypeAst<'src> {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Expr<'src> {
-    Error,
+    Error(Span),
     Unary {
         operator: Token<'src>,
         expression: Box<Expr<'src>>,
@@ -302,7 +302,7 @@ pub struct MethodSig<'src> {
 impl Expr<'_> {
     pub fn span(&self) -> Span {
         match self {
-            Expr::Error => Span::default(),
+            Expr::Error(span) => *span,
             Expr::Unary {
                 operator,
                 expression,

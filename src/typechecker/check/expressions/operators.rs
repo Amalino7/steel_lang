@@ -13,9 +13,9 @@ impl<'src> TypeChecker<'src> {
         operator: &Token,
         expr: &Expr<'src>,
     ) -> TypedExpr {
-        let (hint_ty, unary_op, op_str) = if operator.token_type == TokenType::Bang {
+        let (hint_ty, unary_op, op_str) = if operator.kind == TokenType::Bang {
             (Type::Boolean, UnaryOp::Not, "!")
-        } else if operator.token_type == TokenType::Minus {
+        } else if operator.kind == TokenType::Minus {
             (Type::Number, UnaryOp::Negate, "-")
         } else {
             unreachable!("Ast should have checked for invalid operators before this point.")
@@ -51,7 +51,7 @@ impl<'src> TypeChecker<'src> {
         left: &Expr<'src>,
         right: &Expr<'src>,
     ) -> TypedExpr {
-        let op_str = if TokenType::And == operator.token_type {
+        let op_str = if TokenType::And == operator.kind {
             "and"
         } else {
             "or"
@@ -68,9 +68,9 @@ impl<'src> TypeChecker<'src> {
         );
 
         let refinements = self.analyze_condition(&left_typed);
-        let refinement_path = if TokenType::And == operator.token_type {
+        let refinement_path = if TokenType::And == operator.kind {
             refinements.true_path
-        } else if TokenType::Or == operator.token_type {
+        } else if TokenType::Or == operator.kind {
             refinements.false_path
         } else {
             unreachable!("Invalid logical operator");
@@ -96,7 +96,7 @@ impl<'src> TypeChecker<'src> {
             right_typed.span,
         );
 
-        let op = match operator.token_type {
+        let op = match operator.kind {
             TokenType::And => LogicalOp::And,
             TokenType::Or => LogicalOp::Or,
             _ => unreachable!("Invalid logical operator"),
@@ -121,7 +121,7 @@ impl<'src> TypeChecker<'src> {
         right: &Expr<'src>,
         expected: &Type,
     ) -> Result<TypedExpr, TypeCheckerError> {
-        match operator.token_type {
+        match operator.kind {
             TokenType::Minus
             | TokenType::Slash
             | TokenType::Star
@@ -149,7 +149,7 @@ impl<'src> TypeChecker<'src> {
                     return Err(err);
                 }
 
-                let op = match operator.token_type {
+                let op = match operator.kind {
                     TokenType::Minus => BinaryOp::Subtract,
                     TokenType::Slash => BinaryOp::Divide,
                     TokenType::Star => BinaryOp::Multiply,
@@ -246,7 +246,7 @@ impl<'src> TypeChecker<'src> {
                     return Err(err);
                 }
 
-                let op = match (operator.token_type.clone(), &left_type) {
+                let op = match (operator.kind, &left_type) {
                     (TokenType::Greater, Type::String) => BinaryOp::GreaterString,
                     (TokenType::GreaterEqual, Type::String) => BinaryOp::GreaterEqualString,
                     (TokenType::Less, Type::String) => BinaryOp::LessString,
@@ -302,7 +302,7 @@ impl<'src> TypeChecker<'src> {
                     },
                     span: total_span,
                 };
-                if operator.token_type == TokenType::BangEqual {
+                if operator.kind == TokenType::BangEqual {
                     Ok(TypedExpr {
                         ty: Type::Boolean,
                         kind: ExprKind::Unary {

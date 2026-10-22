@@ -190,7 +190,7 @@ impl<'src> TypeChecker<'src> {
                 let (typed_binding, typed_body) = {
                     let mut guard = ScopeGuard::new(self, ScopeKind::Block);
                     let result = guard.check_binding(
-                        &Binding::Variable(name.clone()),
+                        &Binding::Variable(*name),
                         &value_typed.ty,
                         false,
                         false,

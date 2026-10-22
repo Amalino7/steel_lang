@@ -465,7 +465,7 @@ fn expr_node(expr: &Expr) -> Node {
         if safe { safe_name } else { plain }
     };
     match expr {
-        Expr::Error => Node::list("error", None),
+        Expr::Error(span) => Node::list("error", *span),
         Expr::Unary {
             operator,
             expression,

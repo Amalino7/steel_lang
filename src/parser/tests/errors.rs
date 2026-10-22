@@ -57,8 +57,8 @@ fn test_recovery_continues_after_block_error() {
     }
     let y = 42;
     let z = 1;";
-    // Only the missing `;`: the declarations after the broken block parse cleanly.
-    assert_parse_errors(source, &["4:5"]);
+    // Only the missing `;`, reported right after `10`: the declarations after the broken block parse cleanly.
+    assert_parse_errors(source, &["3:19"]);
 }
 
 #[test]

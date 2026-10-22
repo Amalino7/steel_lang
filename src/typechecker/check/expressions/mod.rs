@@ -39,9 +39,7 @@ impl<'src> TypeChecker<'src> {
             Expr::Unary {
                 operator,
                 expression,
-            } if operator.token_type == TokenType::Try => {
-                self.check_try(expr, operator, expression)
-            }
+            } if operator.kind == TokenType::Try => self.check_try(expr, operator, expression),
 
             Expr::Unary {
                 operator,
@@ -212,7 +210,7 @@ impl<'src> TypeChecker<'src> {
                 operator,
                 left,
                 right,
-            } if operator.token_type == TokenType::QuestionQuestion => {
+            } if operator.kind == TokenType::QuestionQuestion => {
                 self.check_coalesce(expr, operator, left, right, expected)
             }
 
@@ -274,9 +272,9 @@ impl<'src> TypeChecker<'src> {
                 .check_set_index(expr, safe, object, index, value)
                 .recover(&mut self.errors, fallback()),
 
-            Expr::Error => {
+            Expr::Error(span) => {
                 // Already reported by parser
-                TypedExpr::new_blank(expr.span())
+                TypedExpr::new_blank(*span)
             }
 
             Expr::Block { body, tail, .. } => {

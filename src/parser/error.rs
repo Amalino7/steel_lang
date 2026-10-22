@@ -1,3 +1,9 @@
+//! Parser and lexer errors, and their conversion into diagnostics.
+//!
+//! Every variant carries the span it is reported at. Expected-token errors compute that span once, in
+//! `Parser::err_expected`, so the position rule lives in one place. Phase 3 of the parser plan replaces the
+//! free-form messages with an error-kind enum.
+
 use crate::diagnostics::builder::DiagBuilder;
 use crate::diagnostics::{Diagnostic, DiagnosticContext, IntoDiagnostic};
 use crate::scanner::Span;
@@ -13,13 +19,28 @@ pub enum ParserError<'src> {
         found: Token<'src>,
         message: String,
     },
+    /// `span` is `found`'s span, or the point after the previous token when `found` starts a new line.
     MissingToken {
         expected: TokenType,
-        found_token: Token<'src>,
-        message: String,
+        /// Noun phrase for "expected X after <after>".
+        after: &'static str,
+        found: Token<'src>,
+        span: Span,
+    },
+    /// A closing delimiter is missing; `open` is the opener it would close.
+    Unclosed {
+        close: TokenType,
+        open: Span,
+        found: Token<'src>,
+        span: Span,
     },
     ParseError {
         token: Token<'src>,
+        message: String,
+    },
+    /// A construct that parsed but isn't allowed, reported on the whole construct.
+    Invalid {
+        span: Span,
         message: String,
     },
     InvalidAssignmentTarget {
@@ -32,7 +53,9 @@ impl<'src> ParserError<'src> {
             ParserError::ScannerError { token } => token.span,
             ParserError::UnexpectedToken { found, .. } => found.span,
             ParserError::ParseError { token, .. } => token.span,
-            ParserError::MissingToken { found_token, .. } => found_token.span,
+            ParserError::MissingToken { span, .. } => *span,
+            ParserError::Unclosed { span, .. } => *span,
+            ParserError::Invalid { span, .. } => *span,
             ParserError::InvalidAssignmentTarget { span } => *span,
         }
     }
@@ -45,16 +68,28 @@ impl<'src> ParserError<'src> {
                 format!("{} Found '{}'.", message, found.lexeme)
             }
             ParserError::MissingToken {
+                expected: TokenType::Identifier,
+                after,
+                found,
+                ..
+            } => format!("Expected a name after {after}. Found '{}'.", found.lexeme),
+            ParserError::MissingToken {
                 expected,
-                found_token,
-                message,
-            } => {
+                after,
+                found,
+                ..
+            } => format!(
+                "Missing '{expected}' after {after}. Found '{}'.",
+                found.lexeme
+            ),
+            ParserError::Unclosed { close, found, .. } => {
                 format!(
-                    "Missing '{}'. {} Found '{}'.",
-                    expected, message, found_token.lexeme
+                    "Missing '{close}' to close the delimiter. Found '{}'.",
+                    found.lexeme
                 )
             }
             ParserError::ParseError { message, .. } => message.to_string(),
+            ParserError::Invalid { message, .. } => message.to_string(),
             ParserError::InvalidAssignmentTarget { .. } => "Invalid assignment target.".to_string(),
         }
     }
@@ -68,6 +103,21 @@ impl Display for ParserError<'_> {
 
 impl IntoDiagnostic for ParserError<'_> {
     fn into_diagnostic(self, _: &DiagnosticContext) -> Diagnostic {
-        DiagBuilder::error(self.span(), "E0000", "Parser error", self.message()).build()
+        let mut builder = DiagBuilder::error(self.span(), "E0000", "Parser error", self.message());
+        match &self {
+            ParserError::MissingToken { found, span, .. } if found.span != *span => {
+                builder = builder.with_secondary(found.span, "unexpected token");
+            }
+            ParserError::Unclosed {
+                open, found, span, ..
+            } => {
+                builder = builder.with_secondary(*open, "unclosed delimiter");
+                if found.span != *span {
+                    builder = builder.with_secondary(found.span, "unexpected token");
+                }
+            }
+            _ => {}
+        }
+        builder.build()
     }
 }

@@ -96,6 +96,7 @@ fn test_import_group_needs_slash() {
 #[test]
 fn test_non_ascii_import() {
     assert_parses_ok("import a/dεfrœ;");
-    assert_error_count("import a/😎/b; let y = 2;", 1);
+    // The unexpected symbol is reported and dropped, which leaves `a//b`: a second error.
+    assert_error_count("import a/😎/b; let y = 2;", 2);
     assert_error_count("import a/œaʃðæ/b/; let y = 2;", 1);
 }

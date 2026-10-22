@@ -49,6 +49,29 @@ impl Span {
             file_id: self.file_id,
         }
     }
+    /// The span from the start of `self` to the end of `end`. Unlike [`Self::merge`] the order matters:
+    /// `end` must not start before `self`, which catches swapped arguments.
+    pub fn to(self, end: Span) -> Self {
+        debug_assert!(self.start <= end.start, "Span::to with swapped arguments");
+        self.merge(end)
+    }
+
+    /// Zero-width span at the end of `self`: where a missing `;` or closer would go.
+    pub fn point_after(self) -> Self {
+        Self {
+            start: self.end,
+            ..self
+        }
+    }
+
+    /// Zero-width span at the start of `self`.
+    pub fn point_before(self) -> Self {
+        Self {
+            end: self.start,
+            ..self
+        }
+    }
+
     pub fn to_range(self) -> Range<usize> {
         self.start..self.end
     }

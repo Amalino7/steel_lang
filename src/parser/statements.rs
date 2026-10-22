@@ -1,78 +1,176 @@
-use crate::parser::ast::{ImportSegment, ImportStmt, ImportType, Stmt};
+//! Statements: declaration/statement dispatch, the import header, `while`, and the one block parser shared by
+//! function bodies, `while`, `if`/`else`, match arms and block expressions.
+
+use crate::parser::ast::{Expr, ImportSegment, ImportStmt, ImportType, Stmt};
+use crate::parser::declarations::Visibility;
 use crate::parser::error::ParserError;
-use crate::parser::{Parser, TokT, check_next_token_type, check_token_type, match_token_type};
-use crate::scanner::Token;
+use crate::parser::lists::{Delim, ListSpec};
+use crate::parser::{PResult, Parser, TokT};
+use crate::scanner::{Span, Token};
+
+/// A `{ … }` block. Becomes a `Stmt::Block` or an `Expr::Block` depending on where it appears.
+pub(super) struct Block<'src> {
+    pub open: Token<'src>,
+    pub stmts: Vec<Stmt<'src>>,
+    pub tail: Option<Box<Expr<'src>>>,
+    pub close: Span,
+}
+
+impl<'src> Block<'src> {
+    /// For statement blocks (`allow_tail: false`), which never have a tail.
+    pub fn into_stmt(self) -> Stmt<'src> {
+        debug_assert!(self.tail.is_none(), "statement block with a tail");
+        Stmt::Block {
+            open_brace: self.open,
+            body: self.stmts,
+            close_brace: Token::new(TokT::RightBrace, self.close, "}"),
+        }
+    }
+
+    pub fn into_expr(self) -> Expr<'src> {
+        Expr::Block {
+            brace_token: self.open,
+            body: self.stmts,
+            tail: self.tail,
+        }
+    }
+}
+
+/// One item of a block: a statement, or the final expression without `;` that is the block's value.
+enum BlockItem<'src> {
+    Stmt(Stmt<'src>),
+    Tail(Expr<'src>),
+}
+
+impl<'src> BlockItem<'src> {
+    fn into_stmt(self) -> Stmt<'src> {
+        match self {
+            BlockItem::Stmt(stmt) => stmt,
+            BlockItem::Tail(expr) => Stmt::Expression(expr),
+        }
+    }
+}
 
 impl<'src> Parser<'src> {
-    pub(super) fn declaration(&mut self, top_level: bool) -> Result<Stmt<'src>, ParserError<'src>> {
-        let is_public = match_token_type!(self, TokT::Public);
-        let prev_token = self.previous_token.clone();
-        if is_public && !top_level {
-            self.errors.push(ParserError::ParseError {
-                token: prev_token.clone(),
-                message: "`public` is only allowed on top-level declarations.".to_string(),
-            });
-        }
-        // Already reported above when nested; don't report a second error for the same token.
-        let report = is_public && top_level;
-
-        if match_token_type!(self, TokT::Let) {
-            self.let_declaration(is_public)
-        } else if match_token_type!(self, TokT::Enum) {
-            self.enum_declaration(is_public)
-        } else if match_token_type!(self, TokT::Func) {
-            self.func_declaration(is_public, false)
-        } else if match_token_type!(self, TokT::Import) {
-            // Imports are parsed only initially.
-            let keyword = self.previous_token.clone();
-            self.import_statement()?;
-            Err(ParserError::ParseError {
-                token: keyword,
-                message: "imports must come before all other declarations".to_string(),
-            })
-        } else if match_token_type!(self, TokT::Struct) {
-            self.struct_declaration(is_public)
-        } else if match_token_type!(self, TokT::Impl) {
-            self.public_err(
-                report,
-                prev_token,
-                "`impl` blocks are always visible; mark individual methods `public`.",
-            );
-            self.impl_block()
-        } else if match_token_type!(self, TokT::Interface) {
-            self.interface_declaration(is_public)
-        } else if match_token_type!(self, TokT::Extern) {
-            self.consume(TokT::Func, "Expected 'func' after 'extern'.")?;
-            self.extern_func_declaration(is_public, false)
-        } else {
-            self.public_err(report, prev_token, "expected a declaration after `public`.");
-            self.statement()
-        }
+    /// One top-level item: a declaration or a statement.
+    pub(super) fn top_level_item(&mut self) -> PResult<'src, Stmt<'src>> {
+        self.declaration_or_statement(true, false)
+            .map(BlockItem::into_stmt)
     }
 
-    fn public_err(&mut self, report: bool, token: Token<'src>, message: &str) {
-        if report {
-            self.errors.push(ParserError::ParseError {
-                token,
-                message: format!("`public` is not allowed here: {message}"),
-            })
-        }
+    /// `public` is parsed here and passed to the declaration it prefixes; constructs that don't allow it report
+    /// it. Anything that isn't a declaration goes to [`Self::statement`] with `allow_tail`.
+    fn declaration_or_statement(
+        &mut self,
+        top_level: bool,
+        allow_tail: bool,
+    ) -> PResult<'src, BlockItem<'src>> {
+        let vis = self.visibility();
+        // A nested `public` is reported once, here, and not again by the construct it prefixes.
+        let unreported = if top_level {
+            vis
+        } else {
+            self.forbid_visibility(vis, "`public` is only allowed on top-level declarations.");
+            Visibility::Private
+        };
+
+        let declaration = match self.current.kind {
+            TokT::Let => self.let_declaration(vis),
+            TokT::Func => self.func_declaration(vis, false),
+            TokT::Enum => self.enum_declaration(vis),
+            TokT::Struct => self.struct_declaration(vis),
+            TokT::Interface => self.interface_declaration(vis),
+            TokT::Extern => self.extern_func_declaration(vis, false),
+            TokT::Impl => {
+                self.forbid_visibility(
+                    unreported,
+                    "`impl` blocks are always visible; mark individual methods `public`.",
+                );
+                self.impl_block()
+            }
+            TokT::Import => {
+                let import = self.import_statement()?;
+                Err(ParserError::ParseError {
+                    token: import.keyword,
+                    message: "imports must come before all other declarations".to_string(),
+                })
+            }
+            _ => {
+                self.forbid_visibility(unreported, "expected a declaration after `public`.");
+                return self.statement(allow_tail);
+            }
+        };
+        declaration.map(BlockItem::Stmt)
     }
 
-    pub(super) fn statement(&mut self) -> Result<Stmt<'src>, ParserError<'src>> {
-        if match_token_type!(self, TokT::LeftBrace) {
-            Ok(Stmt::Expression(self.parse_block_expr()?))
-        } else if match_token_type!(self, TokT::If) {
-            Ok(Stmt::Expression(self.parse_if_expr()?))
-        } else if match_token_type!(self, TokT::While) {
-            self.while_statement()
-        } else if match_token_type!(self, TokT::Match) {
-            self.parse_match_expr().map(Stmt::Expression)
-        } else {
-            let expr = self.expression()?;
-            self.consume(TokT::Semicolon, "Expected ';' after expression.")?;
-            Ok(Stmt::Expression(expr))
+    /// A non-declaration statement.
+    /// A statement that *starts* with `{`, `if` or `match` is exactly that
+    /// construct, with no binary or postfix continuation, and needs no `;`. Everything else is `expression ;`.
+    /// With `allow_tail`, an expression directly before `}` is the block's value instead.
+    fn statement(&mut self, allow_tail: bool) -> PResult<'src, BlockItem<'src>> {
+        let expr = match self.current.kind {
+            TokT::While => return self.while_statement().map(BlockItem::Stmt),
+            TokT::LeftBrace => self.block_expr()?,
+            TokT::If => self.if_expr()?,
+            TokT::Match => self.match_expr()?,
+            _ => {
+                let expr = self.expression()?;
+                if allow_tail && self.check(TokT::RightBrace) {
+                    return Ok(BlockItem::Tail(expr));
+                }
+                self.expect_semi("expression")?;
+                return Ok(BlockItem::Stmt(Stmt::Expression(expr)));
+            }
+        };
+        if allow_tail && self.check(TokT::RightBrace) {
+            return Ok(BlockItem::Tail(expr));
         }
+        self.try_consume(TokT::Semicolon);
+        Ok(BlockItem::Stmt(Stmt::Expression(expr)))
+    }
+
+    /// `{ stmt* tail? }`. Fails only if the current token isn't `{`. E
+    /// Errors inside are recovered per statement.
+    /// Function and `while` bodies pass `allow_tail: false`, since there a final expression without `;` is an error.
+    pub(super) fn block(
+        &mut self,
+        allow_tail: bool,
+        after: &'static str,
+    ) -> PResult<'src, Block<'src>> {
+        let open = self.expect(TokT::LeftBrace, after)?;
+        let mut items = self.sequence(&[TokT::RightBrace], Self::recover_stmt, |p| {
+            p.declaration_or_statement(false, allow_tail)
+        });
+        let close = self.close_delimiter(open.span, Delim::Brace);
+        let tail = match items.pop() {
+            Some(BlockItem::Tail(expr)) => Some(Box::new(expr)),
+            Some(item) => {
+                items.push(item);
+                None
+            }
+            None => None,
+        };
+        let stmts = items.into_iter().map(BlockItem::into_stmt).collect();
+        Ok(Block {
+            open,
+            stmts,
+            tail,
+            close,
+        })
+    }
+
+    pub(super) fn block_expr(&mut self) -> PResult<'src, Expr<'src>> {
+        self.block(true, "block").map(Block::into_expr)
+    }
+
+    fn while_statement(&mut self) -> PResult<'src, Stmt<'src>> {
+        self.advance_kind(TokT::While);
+        let condition = self.expression()?;
+        let body = self.block(false, "while condition")?;
+        Ok(Stmt::While {
+            condition,
+            body: Box::new(body.into_stmt()),
+        })
     }
 
     /// Parses the import header: every leading `import`. A malformed import is reported and skipped, so the
@@ -84,7 +182,7 @@ impl<'src> Parser<'src> {
                 Ok(import) => imports.push(import),
                 Err(e) => {
                     self.errors.push(e);
-                    self.synchronize_top_level();
+                    self.recover_top_level();
                 }
             }
         }
@@ -92,89 +190,74 @@ impl<'src> Parser<'src> {
     }
 
     fn at_import(&self) -> bool {
-        check_token_type!(self, TokT::Import)
-            || (check_token_type!(self, TokT::Public) && check_next_token_type!(self, TokT::Import))
+        self.check(TokT::Import) || (self.check(TokT::Public) && self.check_next(TokT::Import))
     }
 
-    fn header_import(&mut self) -> Result<ImportStmt<'src>, ParserError<'src>> {
-        if match_token_type!(self, TokT::Public) {
-            self.errors.push(ParserError::ParseError {
-                token: self.previous_token.clone(),
-                message: "`public` is not allowed here: re-exports are not supported.".to_string(),
-            });
-        }
-        self.consume(TokT::Import, "Expected 'import'.")?;
+    fn header_import(&mut self) -> PResult<'src, ImportStmt<'src>> {
+        let vis = self.visibility();
+        self.forbid_visibility(vis, "re-exports are not supported.");
         self.import_statement()
     }
 
-    fn import_statement(&mut self) -> Result<ImportStmt<'src>, ParserError<'src>> {
-        let keyword = self.previous_token.clone();
+    fn import_statement(&mut self) -> PResult<'src, ImportStmt<'src>> {
+        let keyword = self.advance_kind(TokT::Import);
         let segment = self.import_segment(true)?;
-        self.consume(TokT::Semicolon, "Expected ';' after import statement")?;
+        self.expect(TokT::Semicolon, "import")?;
         Ok(ImportStmt {
             keyword,
             segment,
-            semicolon: self.previous_token.clone(),
+            semicolon: self.previous,
         })
     }
 
     /// `top_level` segments (the ones directly after `import`) must name an item: `module/item`.
     /// Segments inside a `{ }` group may be a bare item.
-    fn import_segment(
-        &mut self,
-        top_level: bool,
-    ) -> Result<ImportSegment<'src>, ParserError<'src>> {
-        self.consume(TokT::Identifier, "Expected import name")?;
-        let mut path = vec![self.previous_token.clone()];
+    fn import_segment(&mut self, top_level: bool) -> PResult<'src, ImportSegment<'src>> {
+        let mut path = vec![self.expect_ident("import")?];
 
-        while match_token_type!(self, TokT::Slash) {
-            if match_token_type!(self, TokT::Identifier) {
-                path.push(self.previous_token.clone());
-            } else if check_token_type!(self, TokT::LeftBrace) {
+        let mut after_slash = false;
+        while self.try_consume(TokT::Slash) {
+            after_slash = true;
+            if self.check(TokT::LeftBrace) {
                 break;
-            } else {
-                return Err(self.error_current("Expected an identifier or '{' after '/'."));
             }
+            path.push(self.expect_ident("'/'")?);
+            after_slash = false;
         }
-        let after_slash = self.previous_token.token_type == TokT::Slash;
 
-        let import_type = if check_token_type!(self, TokT::LeftBrace) {
+        let import_type = if self.check(TokT::LeftBrace) {
             if !after_slash {
-                return Err(self.error_current("Expected '/' before '{' in import."));
+                return Err(self.err_expected(TokT::Slash, "module path"));
             }
-            self.advance()?;
-            if match_token_type!(self, TokT::Star) {
-                let star = self.previous_token.clone();
-                self.consume(TokT::RightBrace, "Expected '}' after wildcard import.")?;
+            let open = self.advance().span;
+            if self.try_consume(TokT::Star) {
+                let star = self.previous;
+                self.close_delimiter(open, Delim::Brace);
                 ImportType::Wildcard(star)
             } else {
-                let mut options = vec![];
-                while !check_token_type!(self, TokT::RightBrace) {
-                    options.push(self.import_segment(false)?);
-                    if !match_token_type!(self, TokT::Comma) {
-                        break;
-                    }
+                let group = self.delimited_after(
+                    open,
+                    ListSpec::brace("import", &[TokT::Identifier]),
+                    |p| p.import_segment(false),
+                );
+                if group.items.is_empty() && !group.failed {
+                    self.errors.push(ParserError::Invalid {
+                        span: group.open.to(group.close),
+                        message: "Import group must not be empty.".to_string(),
+                    });
                 }
-                if options.is_empty() {
-                    // Consume the brace so recovery doesn't stop on it.
-                    let err = self.error_current("Import group must not be empty.");
-                    self.advance()?;
-                    return Err(err);
+                ImportType::Group {
+                    options: group.items,
                 }
-                self.consume(TokT::RightBrace, "Expected ',' or '}' in import group.")?;
-                ImportType::Group { options }
             }
         } else {
             if top_level && path.len() < 2 {
-                return Err(self.error_previous("Expected 'module/item' in import."));
+                return Err(self.err_expected(TokT::Slash, "module name ('module/item')"));
             }
             let terminator = path.pop().expect("path starts with an identifier");
-            if match_token_type!(self, TokT::As) {
-                self.consume(TokT::Identifier, "Expected alias after 'as'.")?;
-                ImportType::Alias {
-                    terminator,
-                    alias: self.previous_token.clone(),
-                }
+            if self.try_consume(TokT::As) {
+                let alias = self.expect_ident("'as'")?;
+                ImportType::Alias { terminator, alias }
             } else {
                 ImportType::Simple { terminator }
             }
@@ -183,64 +266,12 @@ impl<'src> Parser<'src> {
         for element in path.iter() {
             if !element.lexeme.is_ascii() {
                 self.errors.push(ParserError::ParseError {
-                    token: element.clone(),
+                    token: *element,
                     message: "Expected ASCII identifier in import path.".to_string(),
                 })
             }
         }
 
         Ok(ImportSegment { path, import_type })
-    }
-
-    pub(super) fn block(&mut self) -> Result<Stmt<'src>, ParserError<'src>> {
-        self.consume(TokT::LeftBrace, "Expected '{' before block.")?;
-        let open_brace = self.previous_token.clone();
-        let mut statements = vec![];
-        while !check_token_type!(self, TokT::RightBrace) {
-            match self.declaration(false) {
-                Ok(stmt) => statements.push(stmt),
-                Err(e) => {
-                    self.synchronize();
-                    self.errors.push(e);
-                    if self.at_eof() {
-                        break;
-                    }
-                }
-            }
-        }
-
-        self.consume(TokT::RightBrace, "Expected '}' after block.")?;
-        Ok(Stmt::Block {
-            open_brace,
-            body: statements,
-            close_brace: self.previous_token.clone(),
-        })
-    }
-
-    fn while_statement(&mut self) -> Result<Stmt<'src>, ParserError<'src>> {
-        let condition = self.expression();
-        let condition = condition?;
-
-        let body = self.block()?;
-        Ok(Stmt::While {
-            condition,
-            body: Box::new(body),
-        })
-    }
-
-    pub(crate) fn is_stmt_start(&self) -> bool {
-        let current_token = self.current_token.clone();
-        matches!(
-            current_token.token_type,
-            TokT::Let
-                | TokT::Func
-                | TokT::Struct
-                | TokT::Impl
-                | TokT::Interface
-                | TokT::Extern
-                | TokT::Enum
-                | TokT::While
-                | TokT::Public
-        )
     }
 }

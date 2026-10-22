@@ -47,6 +47,14 @@ let val = n.next?.next;
 
 ```
 
+`?.` does not short-circuit the rest of the chain (the same as Kotlin, unlike Swift). `a?.b` has an optional type, so
+every step after it needs its own `?.`:
+
+```rustrust@formatter:off
+let ok = n.next?.next?.next;   // Node?
+let bad = n.next?.next.next;   // error E014: type 'Node?' has no fields
+```
+
 ## Flow-Sensitive Typing
 
 The compiler is smart enough to know when you've checked for nil.

@@ -66,7 +66,6 @@ fn test_b7_invalid_assignment_target_is_reported_on_the_target() {
 
 /// A lexer error is reported once and skipped; it must not also derail the statement after it.
 #[test]
-#[ignore = "B8"]
 fn test_b8_lexer_error_is_reported_once() {
     assert_parse_errors("let a = 1; @ let b = 2;", &["1:12"]);
 }

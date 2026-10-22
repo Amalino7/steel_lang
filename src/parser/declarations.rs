@@ -1,450 +1,451 @@
+//! Declarations (`let`, `func`, `extern func`, `struct`, `enum`, `impl`, `interface`), their shared pieces
+//! (bindings, signatures, generics, annotations) and type syntax.
+
 use crate::parser::ast::{
     Binding, FunctionSig, MethodSig, Stmt, StructField, TypeAst, VariantType,
 };
 use crate::parser::error::ParserError;
-use crate::parser::{Parser, TokT, check_token_type, match_token_type};
-use crate::scanner::{Token, TokenType};
+use crate::parser::lists::{Delim, Delimited, ListSpec};
+use crate::parser::{PResult, Parser, TokT};
+use crate::scanner::{Span, Token, TokenType};
 
 type FunctionDecl<'src> = (Token<'src>, Vec<Token<'src>>, FunctionSig<'src>);
+type Param<'src> = (Token<'src>, TypeAst<'src>);
+
+/// FIRST set of a type: the tokens `type_block` dispatches on.
+pub(super) const TYPE_START: &[TokT] = &[TokT::Identifier, TokT::LeftParen, TokT::Func];
+
+/// FIRST set of a binding: the tokens `parse_binding` accepts.
+pub(super) const BINDING_START: &[TokT] = &[TokT::Identifier, TokT::LeftParen];
+
+/// `(key: binding, :name)` after a struct or variant name. Shared by `let` destructuring and match patterns.
+pub(super) const STRUCT_DESTRUCTURE: ListSpec =
+    ListSpec::paren("field binding", &[TokT::Identifier, TokT::Colon]);
+
+/// The `void` return type of a signature without `: T`, placed at `span`.
+fn void_at(span: Span) -> TypeAst<'static> {
+    TypeAst::Named(Token::new(TokenType::Identifier, span, "void"), vec![])
+}
+
+/// `public` or nothing, parsed wherever it may appear; the construct decides whether it's allowed.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum Visibility<'src> {
+    Private,
+    Public(Token<'src>),
+}
+
+impl Visibility<'_> {
+    pub(crate) fn is_public(self) -> bool {
+        matches!(self, Visibility::Public(_))
+    }
+}
 
 impl<'src> Parser<'src> {
-    pub(super) fn let_declaration(
-        &mut self,
-        is_public: bool,
-    ) -> Result<Stmt<'src>, ParserError<'src>> {
-        let binding = self.parse_binding()?;
-        let type_info = if match_token_type!(self, TokT::Colon) {
-            self.type_block()?
-        } else {
-            TypeAst::Infer // The type will be inferred by the compiler later on.
-        };
-
-        self.consume(TokT::Equal, "Expected '=' after variable field.")?;
-        let expr = self.expression()?;
-        self.consume(TokT::Semicolon, "Expected ';' after variable declaration.")?;
+    pub(super) fn let_declaration(&mut self, vis: Visibility<'src>) -> PResult<'src, Stmt<'src>> {
+        self.advance_kind(TokT::Let);
+        let binding = self.parse_binding("'let'")?;
+        let type_info = self.type_annotation()?.unwrap_or(TypeAst::Infer);
+        self.expect(TokT::Equal, "variable binding")?;
+        let value = self.expression()?;
+        self.expect_semi("variable declaration")?;
         Ok(Stmt::Let {
-            is_public,
+            is_public: vis.is_public(),
             binding,
-            value: expr,
+            value,
             type_info,
         })
     }
 
-    pub(super) fn parse_binding(&mut self) -> Result<Binding<'src>, ParserError<'src>> {
-        if match_token_type!(self, TokT::LeftParen) {
-            // Tuple
-            let mut fields = vec![];
-            while !match_token_type!(self, TokT::RightParen) {
-                let binding = self.parse_binding()?;
-                fields.push(binding);
-                match_token_type!(self, TokT::Comma);
+    /// `after` names what precedes the binding, for the "expected a name" error.
+    pub(super) fn parse_binding(&mut self, after: &'static str) -> PResult<'src, Binding<'src>> {
+        match self.current.kind {
+            TokT::LeftParen => {
+                let fields = self.delimited(ListSpec::paren("binding", BINDING_START), |p| {
+                    p.parse_binding("'('")
+                });
+                self.validate_tuple(&fields, "tuple binding");
+                Ok(Binding::Tuple {
+                    fields: fields.items,
+                })
             }
-            Ok(Binding::Tuple { fields })
-        } else if match_token_type!(self, TokT::Identifier) {
-            let name = self.previous_token.clone();
-            if match_token_type!(self, TokT::LeftParen) {
-                // structure
-                self.parse_destructure(name)
-            } else {
-                Ok(Binding::Variable(name))
+            TokT::Identifier => {
+                let name = self.advance();
+                if self.check(TokT::LeftParen) {
+                    let fields = self.delimited(STRUCT_DESTRUCTURE, Self::destructure_field);
+                    Ok(Binding::Struct {
+                        name,
+                        fields: fields.items,
+                    })
+                } else {
+                    Ok(Binding::Variable(name))
+                }
             }
+            // Always an error here; reports keywords used as names specifically.
+            _ => self.expect_ident(after).map(Binding::Variable),
+        }
+    }
+
+    /// `key: binding`, or `: name` as shorthand for `name: name`.
+    pub(super) fn destructure_field(&mut self) -> PResult<'src, (Token<'src>, Binding<'src>)> {
+        let key = if self.check(TokT::Identifier) {
+            Some(self.advance())
         } else {
-            Err(self.error_current("Expected variable name."))
+            None
+        };
+        self.expect(TokT::Colon, "field name")?;
+        let value = self.parse_binding("':'")?;
+        match (key, value) {
+            (Some(key), value) => Ok((key, value)),
+            (None, Binding::Variable(name)) => Ok((name, Binding::Variable(name))),
+            (None, value) => Err(ParserError::Invalid {
+                span: value.span(),
+                message: "Expected variable name after ':'.\n\
+                          Either provide explicit key to the left or provide variable binding to the right."
+                    .to_string(),
+            }),
         }
     }
 
-    pub(super) fn parse_destructure(
-        &mut self,
-        name: Token<'src>,
-    ) -> Result<Binding<'src>, ParserError<'src>> {
-        let mut fields = vec![];
-        while !match_token_type!(self, TokT::RightParen) {
-            let key = if match_token_type!(self, TokT::Identifier) {
-                Some(self.previous_token.clone())
-            } else {
-                None
-            };
-            self.consume(TokT::Colon, "Expected ':'")?;
-            let val = self.parse_binding()?;
-            match key {
-                None => {
-                    if let Binding::Variable(name) = &val {
-                        fields.push((name.clone(), val));
-                    } else {
-                        return Err(self.error_previous(
-                            "Expected variable name after ':'.\n\
-                             Either provide explicit key to the left or provide variable binding to the right.",
-                        ));
-                    }
-                }
-                Some(key) => fields.push((key, val)),
-            }
-            match_token_type!(self, TokT::Comma);
+    /// Parenthesised lists that are tuples: `()` is an error, and one item needs a trailing comma (`(x,)`), since
+    /// `(x)` would be a grouping.
+    pub(super) fn validate_tuple<T>(&mut self, list: &Delimited<T>, what: &'static str) {
+        if list.failed {
+            return;
         }
-        Ok(Binding::Struct { name, fields })
+        let message = match (list.items.len(), list.trailing) {
+            (0, _) => format!("Empty {what}: a tuple needs at least one element."),
+            (1, None) => format!("A one-element {what} needs a trailing comma: `(x,)`."),
+            _ => return,
+        };
+        self.errors.push(ParserError::Invalid {
+            span: list.open.to(list.close),
+            message,
+        });
     }
 
-    fn parse_generic_params(&mut self) -> Result<Vec<Token<'src>>, ParserError<'src>> {
-        let mut generics = vec![];
-        if match_token_type!(self, TokT::Less) {
-            loop {
-                self.consume(TokT::Identifier, "Expected generic parameter name.")?;
-                generics.push(self.previous_token.clone());
-
-                if match_token_type!(self, TokT::Comma) {
-                    continue;
-                }
-                break;
-            }
-            self.consume(TokT::Greater, "Expected '>' after generic parameters.")?;
+    /// `: T` if present (`let`, parameters, lambda parameters).
+    pub(super) fn type_annotation(&mut self) -> PResult<'src, Option<TypeAst<'src>>> {
+        if self.try_consume(TokT::Colon) {
+            self.type_block().map(Some)
+        } else {
+            Ok(None)
         }
-        Ok(generics)
     }
 
-    pub(crate) fn parse_generic_arguments(
-        &mut self,
-    ) -> Result<Vec<TypeAst<'src>>, ParserError<'src>> {
-        let mut args = vec![];
-        if match_token_type!(self, TokT::Less) {
-            loop {
-                args.push(self.type_block()?);
-                if match_token_type!(self, TokT::Comma) {
-                    continue;
-                }
-                break;
-            }
-            self.consume(TokT::Greater, "Expected '>' after generic arguments.")?;
-        }
-        Ok(args)
+    /// `: T` after a parameter list, if present (functions, function types, lambdas).
+    pub(super) fn return_type(&mut self) -> PResult<'src, Option<TypeAst<'src>>> {
+        self.type_annotation()
     }
 
+    /// `<T, U>` if the current token is `<`.
+    fn generic_params(&mut self) -> Option<Delimited<Token<'src>>> {
+        self.check(TokT::Less).then(|| {
+            self.delimited(
+                ListSpec::angle("generic parameter", &[TokT::Identifier]),
+                |p| p.expect_ident("'<'"),
+            )
+        })
+    }
+
+    /// `<A, B>` if the current token is `<`.
+    pub(super) fn generic_args(&mut self) -> Option<Delimited<TypeAst<'src>>> {
+        self.check(TokT::Less).then(|| {
+            self.delimited(
+                ListSpec::angle("type argument", TYPE_START),
+                Self::type_block,
+            )
+        })
+    }
+
+    fn generic_param_list(&mut self) -> Vec<Token<'src>> {
+        self.generic_params().map_or_else(Vec::new, |g| g.items)
+    }
+
+    pub(super) fn generic_arg_list(&mut self) -> Vec<TypeAst<'src>> {
+        self.generic_args().map_or_else(Vec::new, |g| g.items)
+    }
+
+    /// `in_impl`: whether `self` parameters are allowed.
     pub(super) fn func_declaration(
         &mut self,
-        is_public: bool,
-        is_method: bool,
-    ) -> Result<Stmt<'src>, ParserError<'src>> {
-        let (name, generics, signature) = self.func_signature(is_method)?;
-        let body = self.block()?;
+        vis: Visibility<'src>,
+        in_impl: bool,
+    ) -> PResult<'src, Stmt<'src>> {
+        self.advance_kind(TokT::Func);
+        let (name, generics, signature) = self.func_signature()?;
+        self.validate_params(&signature.params, in_impl);
+        let body = self.block(false, "function signature")?;
 
         Ok(Stmt::Function {
-            is_public,
+            is_public: vis.is_public(),
             generics,
             signature,
             name,
-            body: Box::new(body),
+            body: Box::new(body.into_stmt()),
         })
+    }
+
+    pub(super) fn visibility(&mut self) -> Visibility<'src> {
+        if self.try_consume(TokT::Public) {
+            Visibility::Public(self.previous)
+        } else {
+            Visibility::Private
+        }
+    }
+
+    /// Reports `public` on a construct that doesn't allow it. Parsing continues as if it weren't there.
+    pub(super) fn forbid_visibility(&mut self, vis: Visibility<'src>, reason: &'static str) {
+        if let Visibility::Public(token) = vis {
+            self.errors.push(ParserError::ParseError {
+                token,
+                message: format!("`public` is not allowed here: {reason}"),
+            });
+        }
     }
 
     pub(super) fn extern_func_declaration(
         &mut self,
-        is_public: bool,
-        is_method: bool,
-    ) -> Result<Stmt<'src>, ParserError<'src>> {
-        let (name, generics, signature) = self.func_signature(is_method)?;
-        self.consume(
-            TokT::Semicolon,
-            "Expected ';' after extern function signature.",
-        )?;
+        vis: Visibility<'src>,
+        in_impl: bool,
+    ) -> PResult<'src, Stmt<'src>> {
+        self.advance_kind(TokT::Extern);
+        self.expect(TokT::Func, "'extern'")?;
+        let (name, generics, signature) = self.func_signature()?;
+        self.validate_params(&signature.params, in_impl);
+        self.expect_semi("extern function signature")?;
         Ok(Stmt::ExternFunction {
-            is_public,
+            is_public: vis.is_public(),
             name,
             generics,
             signature,
         })
     }
 
-    fn func_signature(&mut self, is_method: bool) -> Result<FunctionDecl<'src>, ParserError<'src>> {
-        self.consume(
-            TokT::Identifier,
-            "Expected method name. Syntax: 'func name(self, ...): type;'",
-        )?;
-        let name = self.previous_token.clone();
-
-        let generics = self.parse_generic_params()?;
-        self.consume(TokT::LeftParen, "Expected '(' after function name.")?;
-        let mut params = vec![];
-
-        if !check_token_type!(self, TokT::RightParen) {
-            loop {
-                if is_method && match_token_type!(self, TokT::Self_) {
-                    let param = self.previous_token.clone();
-                    let ty = TypeAst::Named(
-                        Token {
-                            token_type: TokenType::Identifier,
-                            span: self.previous_token.span,
-                            lexeme: "Self",
-                        },
-                        vec![],
-                    );
-                    params.push((param, ty));
-                } else {
-                    self.consume(TokT::Identifier, "Expected parameter name.")?;
-                    let param = self.previous_token.clone();
-                    self.consume(TokT::Colon, "Expected ':' after parameter name.")?;
-                    let ty = self.type_block()?;
-                    params.push((param, ty));
-                }
-
-                if !match_token_type!(self, TokT::Comma) {
-                    break;
-                }
-            }
-        }
-        self.consume(TokT::RightParen, "Expected ')' after parameters.")?;
-
-        let return_type = if match_token_type!(self, TokT::Colon) {
-            self.type_block()?
-        } else {
-            TypeAst::Named(
-                Token::new(TokenType::Identifier, self.previous_token.span, "void"),
-                vec![],
-            )
-        };
+    /// `name<G>(params): T`, after `func`. Accepts `self` anywhere; [`Self::validate_params`] decides.
+    fn func_signature(&mut self) -> PResult<'src, FunctionDecl<'src>> {
+        let name = self.expect_ident("'func'")?;
+        let generics = self.generic_param_list();
+        let open = self.expect(TokT::LeftParen, "function name")?.span;
+        let params = self.delimited_after(
+            open,
+            ListSpec::paren("parameter", &[TokT::Identifier, TokT::Self_]),
+            Self::param,
+        );
+        let return_type = self.return_type()?.unwrap_or_else(|| void_at(params.close));
         Ok((
             name,
             generics,
             FunctionSig {
-                params: Box::from(params),
+                params: params.items.into_boxed_slice(),
                 return_type: Box::new(return_type),
             },
         ))
     }
 
-    pub(super) fn type_block(&mut self) -> Result<TypeAst<'src>, ParserError<'src>> {
-        match self.current_token.token_type {
-            TokT::Func => {
-                self.consume(TokT::Func, "Expected 'func' keyword.")?;
-                let keyword = self.previous_token.span;
+    fn param(&mut self) -> PResult<'src, Param<'src>> {
+        if self.check(TokT::Self_) {
+            let param = self.advance();
+            let ty = TypeAst::Named(
+                Token::new(TokenType::Identifier, param.span, "Self"),
+                vec![],
+            );
+            return Ok((param, ty));
+        }
+        let name = self.expect_ident("'('")?;
+        self.expect(TokT::Colon, "parameter name")?;
+        let ty = self.type_block()?;
+        Ok((name, ty))
+    }
 
-                let optional = match_token_type!(self, TokT::QuestionParen);
-
-                if !optional {
-                    self.consume(
-                        TokT::LeftParen,
-                        "Expected 'paren' after func type definition",
-                    )?;
-                }
-                let mut params = vec![];
-
-                if !check_token_type!(self, TokT::RightParen) {
-                    loop {
-                        let arg = self.type_block()?;
-                        let placeholder = Token::new(TokenType::Identifier, arg.span(), "_");
-                        params.push((placeholder, arg));
-
-                        if !match_token_type!(self, TokT::Comma) {
-                            break;
-                        }
-                    }
-                }
-                self.consume(
-                    TokT::RightParen,
-                    "Expected ')' after function type parameters.",
-                )?;
-
-                let return_type = if match_token_type!(self, TokT::Colon) {
-                    self.type_block()?
-                } else {
-                    TypeAst::Named(
-                        Token::new(TokenType::Identifier, self.previous_token.span, "void"),
-                        vec![],
-                    )
-                };
-                let func_type = TypeAst::Function(
-                    keyword,
-                    FunctionSig {
-                        params: Box::from(params),
-                        return_type: Box::new(return_type),
-                    },
-                );
-                if optional {
-                    Ok(TypeAst::Optional(Box::new(func_type)))
-                } else {
-                    Ok(func_type)
-                }
+    /// `self` is only allowed in methods, as the first parameter. A later `self` (including a duplicate) is
+    /// reported on its own token.
+    fn validate_params(&mut self, params: &[Param<'src>], allow_self: bool) {
+        for (i, (token, _)) in params.iter().enumerate() {
+            if token.kind != TokT::Self_ {
+                continue;
             }
+            let message = if !allow_self {
+                "`self` is only allowed in methods."
+            } else if i != 0 {
+                "`self` must be the first parameter."
+            } else {
+                continue;
+            };
+            self.errors.push(ParserError::ParseError {
+                token: *token,
+                message: message.to_string(),
+            });
+        }
+    }
+
+    pub(super) fn type_block(&mut self) -> PResult<'src, TypeAst<'src>> {
+        let ty = match self.current.kind {
+            TokT::Func => return self.function_type(),
             TokT::LeftParen => {
-                self.consume(TokT::LeftParen, "Expected '(' after tuple type definition.")?;
-                // Tuple
-                let mut types = vec![];
-                while !match_token_type!(self, TokT::RightParen) {
-                    let type_ = self.type_block()?;
-                    types.push(type_);
-                    if match_token_type!(self, TokT::Comma) {}
-                }
-                if types.len() < 2 {
-                    return Err(self.error_previous("Tuple types must have at least 2 fields."));
-                }
-                let type_name = TypeAst::Tuple(types);
-                if match_token_type!(self, TokT::Question) {
-                    Ok(TypeAst::Optional(Box::new(type_name)))
-                } else {
-                    Ok(type_name)
-                }
+                let types = self.delimited(ListSpec::paren("type", TYPE_START), Self::type_block);
+                self.validate_tuple(&types, "tuple type");
+                TypeAst::Tuple(types.items)
             }
             TokT::Identifier => {
-                self.consume(TokT::Identifier, "Expected the name of the type.")?;
-                let name = self.previous_token.clone();
-                let generics = self.parse_generic_arguments()?;
-
-                let type_name = TypeAst::Named(name, generics);
-
-                if match_token_type!(self, TokT::Question) {
-                    Ok(TypeAst::Optional(Box::new(type_name)))
-                } else {
-                    Ok(type_name)
-                }
+                let name = self.advance();
+                TypeAst::Named(name, self.generic_arg_list())
             }
-            _ => Err(self.error_current("Expected valid type start.")),
+            _ => {
+                return Err(ParserError::ParseError {
+                    token: self.current,
+                    message: format!("Expected a type, found '{}'.", self.current.lexeme),
+                });
+            }
+        };
+        if self.try_consume(TokT::Question) {
+            Ok(TypeAst::Optional(Box::new(ty)))
+        } else {
+            Ok(ty)
+        }
+    }
+
+    /// `func(T, U): R`, or `func?(T): R` for an optional function.
+    fn function_type(&mut self) -> PResult<'src, TypeAst<'src>> {
+        let keyword = self.advance_kind(TokT::Func).span;
+        let optional = self.check(TokT::QuestionParen);
+        let open = if optional {
+            self.advance().span
+        } else {
+            self.expect(TokT::LeftParen, "'func'")?.span
+        };
+        let params =
+            self.delimited_after(open, ListSpec::paren("parameter type", TYPE_START), |p| {
+                let ty = p.type_block()?;
+                // Function types have no parameter names; the AST still wants one (Phase 4 removes it).
+                Ok((Token::new(TokenType::Identifier, ty.span(), "_"), ty))
+            });
+        let return_type = self.return_type()?.unwrap_or_else(|| void_at(params.close));
+        let func_type = TypeAst::Function(
+            keyword,
+            FunctionSig {
+                params: params.items.into_boxed_slice(),
+                return_type: Box::new(return_type),
+            },
+        );
+        if optional {
+            Ok(TypeAst::Optional(Box::new(func_type)))
+        } else {
+            Ok(func_type)
         }
     }
 
     pub(super) fn struct_declaration(
         &mut self,
-        is_public: bool,
-    ) -> Result<Stmt<'src>, ParserError<'src>> {
-        self.consume(TokT::Identifier, "Expected struct name.")?;
-        let name = self.previous_token.clone();
-
-        let generics = self.parse_generic_params()?;
-        self.consume(TokT::LeftBrace, "Expected '{' before struct body.")?;
-        let mut fields = vec![];
-
-        while !check_token_type!(self, TokT::RightBrace) {
-            let is_public = match_token_type!(self, TokT::Public);
-            self.consume(TokT::Identifier, "Expected field name")?;
-            let field_name = self.previous_token.clone();
-            self.consume(TokT::Colon, "Expected ':' after field name")?;
-            let field_type = self.type_block()?;
-            fields.push(StructField {
-                is_public,
-                name: field_name,
-                type_info: field_type,
-            });
-            // TODO review trailing commas
-            match_token_type!(self, TokT::Comma); // Optional trailing comma.
-        }
-        self.consume(TokT::RightBrace, "Expected '}' after struct body.")?;
+        vis: Visibility<'src>,
+    ) -> PResult<'src, Stmt<'src>> {
+        self.advance_kind(TokT::Struct);
+        let name = self.expect_ident("'struct'")?;
+        let generics = self.generic_param_list();
+        let open = self.expect(TokT::LeftBrace, "struct name")?.span;
+        let fields = self.delimited_after(
+            open,
+            ListSpec::brace("field", &[TokT::Identifier, TokT::Public]),
+            |p| {
+                let vis = p.visibility();
+                p.struct_field(vis)
+            },
+        );
         Ok(Stmt::Struct {
-            is_public,
+            is_public: vis.is_public(),
             name,
-            fields,
+            fields: fields.items,
             generics,
         })
     }
 
-    pub(super) fn enum_declaration(
-        &mut self,
-        is_public: bool,
-    ) -> Result<Stmt<'src>, ParserError<'src>> {
-        self.consume(TokT::Identifier, "Expected enum name.")?;
-        let name = self.previous_token.clone();
-        let generics = self.parse_generic_params()?;
-        self.consume(TokT::LeftBrace, "Expected '{' before enum body.")?;
+    fn struct_field(&mut self, vis: Visibility<'src>) -> PResult<'src, StructField<'src>> {
+        let name = self.expect_ident("'{'")?;
+        self.expect(TokT::Colon, "field name")?;
+        let type_info = self.type_block()?;
+        Ok(StructField {
+            is_public: vis.is_public(),
+            name,
+            type_info,
+        })
+    }
 
-        let mut variants = vec![];
-        while !check_token_type!(self, TokT::RightBrace) {
-            self.reject_public("enum variants are always as visible as the enum.")?;
-            self.consume(TokT::Identifier, "Expected variant name.")?;
-            let variant_name = self.previous_token.clone();
-
-            let variant_type = if match_token_type!(self, TokT::LeftParen) {
-                // Tuple Style: Variant(int, int)
-                let mut types = vec![];
-                while !check_token_type!(self, TokT::RightParen) {
-                    types.push(self.type_block()?);
-                    if !match_token_type!(self, TokT::Comma) {
-                        break;
-                    }
-                }
-                self.consume(TokT::RightParen, "Expected ')' after tuple variant.")?;
-                VariantType::Tuple(types)
-            } else if match_token_type!(self, TokT::LeftBrace) {
-                // Struct Style: Variant { msg: string }
-                let mut fields = vec![];
-                while !check_token_type!(self, TokT::RightBrace) {
-                    self.reject_public("enum variant fields are always as visible as the enum.")?;
-                    self.consume(TokT::Identifier, "Expected field name.")?;
-                    let field_name = self.previous_token.clone();
-                    self.consume(TokT::Colon, "Expected ':' after field name.")?;
-                    let field_type = self.type_block()?;
-                    fields.push(StructField {
-                        is_public: false,
-                        type_info: field_type,
-                        name: field_name,
-                    });
-
-                    if !match_token_type!(self, TokT::Comma) {
-                        break;
-                    }
-                }
-                self.consume(TokT::RightBrace, "Expected '}' after struct variant.")?;
-                VariantType::Struct(fields)
-            } else {
-                // Unit Style: Variant
-                VariantType::Unit
-            };
-
-            variants.push((variant_name, variant_type));
-            match_token_type!(self, TokT::Comma);
-        }
-        self.consume(TokT::RightBrace, "Expected '}' after enum body.")?;
-
+    pub(super) fn enum_declaration(&mut self, vis: Visibility<'src>) -> PResult<'src, Stmt<'src>> {
+        self.advance_kind(TokT::Enum);
+        let name = self.expect_ident("'enum'")?;
+        let generics = self.generic_param_list();
+        let open = self.expect(TokT::LeftBrace, "enum name")?.span;
+        let variants = self.delimited_after(
+            open,
+            ListSpec::brace("variant", &[TokT::Identifier, TokT::Public]),
+            Self::enum_variant,
+        );
         Ok(Stmt::Enum {
-            is_public,
+            is_public: vis.is_public(),
             name,
-            variants,
+            variants: variants.items,
             generics,
         })
     }
 
-    pub(super) fn impl_block(&mut self) -> Result<Stmt<'src>, ParserError<'src>> {
-        let generics = self.parse_generic_params()?;
-
-        self.consume(TokT::Identifier, "Expected name of type.")?;
-        let name = self.previous_token.clone();
-
-        let mut target_generics = vec![];
-        if match_token_type!(self, TokT::Less) {
-            loop {
-                let ty = self.type_block()?;
-                target_generics.push(ty);
-                if match_token_type!(self, TokT::Comma) {
-                    continue;
+    fn enum_variant(&mut self) -> PResult<'src, (Token<'src>, VariantType<'src>)> {
+        let vis = self.visibility();
+        self.forbid_visibility(vis, "enum variants are always as visible as the enum.");
+        let name = self.expect_ident("'{'")?;
+        let payload = match self.current.kind {
+            TokT::LeftParen => {
+                let types = self.delimited(
+                    ListSpec::paren("payload type", TYPE_START),
+                    Self::type_block,
+                );
+                if types.items.is_empty() && !types.failed {
+                    self.errors.push(ParserError::Invalid {
+                        span: types.open.to(types.close),
+                        message: "Empty variant payload: remove the `()`.".to_string(),
+                    });
                 }
-                break;
+                VariantType::Tuple(types.items)
             }
-            self.consume(TokT::Greater, "Expected '>' after generic parameters.")?;
-        }
+            TokT::LeftBrace => {
+                let fields = self.delimited(
+                    ListSpec::brace("field", &[TokT::Identifier, TokT::Public]),
+                    |p| {
+                        let vis = p.visibility();
+                        p.forbid_visibility(
+                            vis,
+                            "enum variant fields are always as visible as the enum.",
+                        );
+                        p.struct_field(Visibility::Private)
+                    },
+                );
+                VariantType::Struct(fields.items)
+            }
+            _ => VariantType::Unit,
+        };
+        Ok((name, payload))
+    }
+
+    pub(super) fn impl_block(&mut self) -> PResult<'src, Stmt<'src>> {
+        self.advance_kind(TokT::Impl);
+        let generics = self.generic_param_list();
+        let name = self.expect_ident("'impl'")?;
+        let target_generics = self.generic_arg_list();
 
         let mut interfaces = vec![];
-        if match_token_type!(self, TokT::Colon) {
-            loop {
-                self.consume(TokT::Identifier, "Expected interface name after ':'.")?;
-                interfaces.push(self.previous_token.clone());
-                if !match_token_type!(self, TokT::Comma) {
-                    break;
-                }
+        if self.try_consume(TokT::Colon) {
+            interfaces = self.separated(
+                &[TokT::LeftBrace],
+                "interface name",
+                &[TokT::Identifier],
+                |p| p.expect_ident("':'"),
+            );
+            if interfaces.is_empty() {
+                return Err(self.err_expected(TokT::Identifier, "':'"));
             }
         }
 
-        self.consume(TokT::LeftBrace, "Expected '{' before impl block.")?;
-        let mut methods = vec![];
-        while check_token_type!(self, TokT::Func)
-            || check_token_type!(self, TokT::Extern)
-            || check_token_type!(self, TokT::Public)
-        {
-            let is_public = match_token_type!(self, TokT::Public);
-
-            if match_token_type!(self, TokT::Extern) {
-                self.consume(TokT::Func, "Expected 'func' after 'extern'.")?;
-                methods.push(self.extern_func_declaration(is_public, true)?);
-            } else {
-                match_token_type!(self, TokT::Func);
-                methods.push(self.func_declaration(is_public, true)?);
-            }
-        }
-        self.consume(TokT::RightBrace, "Expected '}' after impl block.")?;
+        let open = self.expect(TokT::LeftBrace, "impl header")?.span;
+        let methods = self.sequence(&[TokT::RightBrace], Self::recover_item, Self::impl_item);
+        self.close_delimiter(open, Delim::Brace);
 
         // TODO support generic interfaces
         Ok(Stmt::Impl {
@@ -455,49 +456,45 @@ impl<'src> Parser<'src> {
         })
     }
 
-    /// Consumes a stray `public` and reports it, so parsing can continue normally.
-    fn reject_public(&mut self, message: &str) -> Result<(), ParserError<'src>> {
-        if match_token_type!(self, TokT::Public) {
-            self.errors.push(ParserError::ParseError {
-                token: self.previous_token.clone(),
-                message: format!("`public` is not allowed here: {message}"),
-            });
+    fn impl_item(&mut self) -> PResult<'src, Stmt<'src>> {
+        let vis = self.visibility();
+        match self.current.kind {
+            TokT::Func => self.func_declaration(vis, true),
+            TokT::Extern => self.extern_func_declaration(vis, true),
+            _ => Err(self.err_expected(TokT::Func, "'{' in impl body")),
         }
-        Ok(())
     }
 
     pub(super) fn interface_declaration(
         &mut self,
-        is_public: bool,
-    ) -> Result<Stmt<'src>, ParserError<'src>> {
-        self.consume(TokT::Identifier, "Expected interface name.")?;
-        let name = self.previous_token.clone();
-        let generics = self.parse_generic_params()?;
-        self.consume(TokT::LeftBrace, "Expected '{' before interface body.")?;
-        let mut methods = vec![];
-
-        while !check_token_type!(self, TokT::RightBrace) {
-            self.reject_public("interface methods are always as visible as the interface.")?;
-            self.consume(TokT::Func, "Expected 'func' in interface body.")?;
-            methods.push(self.interface_method_sig()?);
-        }
-
-        self.consume(TokT::RightBrace, "Expected '}' after interface body.")?;
+        vis: Visibility<'src>,
+    ) -> PResult<'src, Stmt<'src>> {
+        self.advance_kind(TokT::Interface);
+        let name = self.expect_ident("'interface'")?;
+        let generics = self.generic_param_list();
+        let open = self.expect(TokT::LeftBrace, "interface name")?.span;
+        let methods = self.sequence(&[TokT::RightBrace], Self::recover_item, |p| {
+            let vis = p.visibility();
+            p.forbid_visibility(
+                vis,
+                "interface methods are always as visible as the interface.",
+            );
+            p.interface_method_sig()
+        });
+        self.close_delimiter(open, Delim::Brace);
         Ok(Stmt::Interface {
-            is_public,
+            is_public: vis.is_public(),
             name,
             methods,
             generics,
         })
     }
 
-    fn interface_method_sig(&mut self) -> Result<MethodSig<'src>, ParserError<'src>> {
-        let (name, generics, signature) = self.func_signature(true)?;
-
-        self.consume(
-            TokT::Semicolon,
-            "Expected ';' after interface method signature.",
-        )?;
+    fn interface_method_sig(&mut self) -> PResult<'src, MethodSig<'src>> {
+        self.expect(TokT::Func, "'{' in interface body")?;
+        let (name, generics, signature) = self.func_signature()?;
+        self.validate_params(&signature.params, true);
+        self.expect_semi("interface method signature")?;
         Ok(MethodSig {
             generics,
             name,

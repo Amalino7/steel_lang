@@ -1,105 +1,24 @@
-use crate::parser::ast::{Binding, Expr, ExprMatchArm, Literal, Pattern, Stmt};
+//! Control-flow expressions: `if`/`else`, `match` (arms and patterns) and `return`.
+
+use crate::parser::ast::{Binding, Expr, ExprMatchArm, Literal, Pattern};
+use crate::parser::declarations::{BINDING_START, STRUCT_DESTRUCTURE};
 use crate::parser::error::ParserError;
-use crate::parser::{Parser, TokT, check_next_token_type, check_token_type, match_token_type};
+use crate::parser::expressions::EXPR_START;
+use crate::parser::lists::{Delim, ListSpec};
+use crate::parser::recovery::RECOVERY_STOP;
+use crate::parser::{PResult, Parser, TokT};
 
 impl<'src> Parser<'src> {
-    pub(super) fn parse_block_expr(&mut self) -> Result<Expr<'src>, ParserError<'src>> {
-        let brace_token = self.previous_token.clone();
-        let mut body: Vec<Stmt<'src>> = vec![];
-        let mut tail: Option<Box<Expr<'src>>> = None;
-
-        loop {
-            if check_token_type!(self, TokT::RightBrace) || self.at_eof() {
-                break;
-            }
-
-            // Items that are only ever statements — delegate to the full declaration path.
-            if self.is_stmt_start() {
-                match self.declaration(false) {
-                    Ok(stmt) => body.push(stmt),
-                    Err(e) => {
-                        self.synchronize();
-                        self.errors.push(e);
-                        if self.at_eof() {
-                            break;
-                        }
-                    }
-                }
-                continue;
-            }
-
-            // Limit brace expressions in mid positions
-            let expr = match self.current_token.token_type {
-                TokT::LeftBrace => {
-                    self.consume(TokT::LeftBrace, "Unreachable!")?;
-                    self.parse_block_expr()
-                }
-                TokT::If => {
-                    self.consume(TokT::If, "Unreachable!")?;
-                    self.parse_if_expr()
-                }
-                TokT::Match => {
-                    self.consume(TokT::Match, "Unreachable!")?;
-                    self.parse_match_expr()
-                }
-                _ => self.expression(),
-            };
-
-            match expr {
-                Ok(expr) => {
-                    let is_brace_expr = self.previous_token.token_type == TokT::RightBrace;
-                    let is_final = self.current_token.token_type == TokT::RightBrace;
-                    let has_semicolon = match_token_type!(self, TokT::Semicolon);
-                    // } + semicolon -> discard
-                    // expr + ; -> stmt
-                    // expr + final -> tail
-                    // expr + !final -> error
-                    // } + final -> tail
-                    match (is_final, has_semicolon) {
-                        (true, false) => tail = Some(Box::new(expr)),
-                        (_, true) => body.push(Stmt::Expression(expr)),
-                        (false, false) => {
-                            // Brace-terminated expressions (if/match/{}) in ambiguous positions
-                            // are treated like statements. Anything else is missing its `;`: report it
-                            // and keep the expression so the rest of the block still parses.
-                            if !is_brace_expr {
-                                let err = self.error_previous("Expected ';' after expression.");
-                                self.errors.push(err);
-                            }
-                            body.push(Stmt::Expression(expr));
-                        }
-                    }
-                }
-                Err(e) => {
-                    self.synchronize();
-                    self.errors.push(e);
-                    if self.at_eof() {
-                        break;
-                    }
-                }
-            }
-        }
-
-        self.consume(TokT::RightBrace, "Expected '}' to close block expression.")?;
-        Ok(Expr::Block {
-            brace_token,
-            body,
-            tail,
-        })
-    }
-
-    pub(super) fn parse_if_expr(&mut self) -> Result<Expr<'src>, ParserError<'src>> {
+    pub(super) fn if_expr(&mut self) -> PResult<'src, Expr<'src>> {
+        self.advance_kind(TokT::If);
         let condition = self.expression()?;
-        // Consume `{` and parse the then-branch as a block expression.
-        self.consume(TokT::LeftBrace, "Expected '{' after if condition.")?;
-        let then_branch = self.parse_block_expr()?;
+        let then_branch = self.block(true, "if condition")?.into_expr();
 
-        let else_branch = if match_token_type!(self, TokT::Else) {
-            if match_token_type!(self, TokT::If) {
-                Some(Box::new(self.parse_if_expr()?))
+        let else_branch = if self.try_consume(TokT::Else) {
+            if self.check(TokT::If) {
+                Some(Box::new(self.if_expr()?))
             } else {
-                self.consume(TokT::LeftBrace, "Expected '{' after else.")?;
-                Some(Box::new(self.parse_block_expr()?))
+                Some(Box::new(self.block(true, "'else'")?.into_expr()))
             }
         } else {
             None
@@ -111,21 +30,16 @@ impl<'src> Parser<'src> {
             else_branch,
         })
     }
-    pub(super) fn parse_return_expr(&mut self) -> Result<Expr<'src>, ParserError<'src>> {
-        let keyword = self.previous_token.clone();
-        let value = if !check_token_type!(
-            self,
-            TokT::Semicolon,
-            TokT::RightBrace,
-            TokT::EOF,
-            TokT::Comma,
-            TokT::RightParen
-        ) {
+
+    /// `return` with an optional value: there is one exactly when the next token can start an expression.
+    pub(super) fn return_expr(&mut self) -> PResult<'src, Expr<'src>> {
+        let keyword = self.advance_kind(TokT::Return);
+        let value = if self.check_any(EXPR_START) {
             self.expression()?
         } else {
             Expr::Literal {
                 literal: Literal::Void,
-                span: self.previous_token.span,
+                span: keyword.span,
             }
         };
         Ok(Expr::Return {
@@ -134,79 +48,92 @@ impl<'src> Parser<'src> {
         })
     }
 
-    pub(super) fn parse_match_expr(&mut self) -> Result<Expr<'src>, ParserError<'src>> {
+    /// A recovery point: a bad arm is reported and skipped to the next `,` or the closing `}`.
+    pub(super) fn match_expr(&mut self) -> PResult<'src, Expr<'src>> {
+        self.advance_kind(TokT::Match);
         let value = self.expression()?;
-        self.consume(TokT::LeftBrace, "Expected '{' after match value.")?;
+        let open = self.expect(TokT::LeftBrace, "match value")?.span;
         let mut arms: Vec<ExprMatchArm<'src>> = vec![];
 
-        while !check_token_type!(self, TokT::RightBrace) && !self.at_eof() {
-            let pattern = self.pattern()?;
-            self.consume(TokT::Arrow, "Expected '=>' after match pattern.")?;
-            // Brace-terminated expressions are parsed directly so the trailing `}`
-            let mut is_block = false;
-            let body = match self.current_token.token_type {
-                TokT::LeftBrace => {
-                    self.consume(TokT::LeftBrace, "unreachable")?;
-                    is_block = true;
-                    self.parse_block_expr()?
+        while !self.check(TokT::RightBrace) && !self.at_eof() {
+            let before = self.pos;
+            match self.match_arm() {
+                Ok(arm) => arms.push(arm),
+                Err(e) => {
+                    self.errors.push(e);
+                    self.skip_to(&[&[TokT::Comma], RECOVERY_STOP]);
+                    self.try_consume(TokT::Comma);
+                    if self.pos == before {
+                        // Stuck on a statement boundary or a stray closer: the match is unclosed.
+                        break;
+                    }
                 }
-                _ => self.expression()?,
-            };
-            arms.push(ExprMatchArm { pattern, body });
-            if is_block {
-                // Blocks get optional commas
-                match_token_type!(self, TokT::Comma);
-            } else if !check_token_type!(self, TokT::RightBrace) {
-                // Non-block expressions get a mandatory comma unless final
-                self.consume(TokT::Comma, "Expected ',' after match arm.")?;
             }
         }
 
-        self.consume(TokT::RightBrace, "Expected '}' after match arms.")?;
+        self.close_delimiter(open, Delim::Brace);
         Ok(Expr::MatchExpr {
             value: Box::new(value),
             arms,
         })
     }
 
-    pub(super) fn pattern(&mut self) -> Result<Pattern<'src>, ParserError<'src>> {
-        if check_token_type!(self, TokT::Identifier) && !check_next_token_type!(self, TokT::Dot) {
-            self.consume(TokT::Identifier, "Expected variable name.")?;
-            let var_name = self.previous_token.clone();
-            return Ok(Pattern::Variable(var_name));
+    /// `pattern => body`, plus its `,`: optional after a block body, otherwise required unless the arm is last.
+    fn match_arm(&mut self) -> PResult<'src, ExprMatchArm<'src>> {
+        let pattern = self.pattern()?;
+        self.expect(TokT::Arrow, "match pattern")?;
+        if self.check(TokT::LeftBrace) {
+            let body = self.block_expr()?;
+            self.try_consume(TokT::Comma);
+            return Ok(ExprMatchArm { pattern, body });
+        }
+        let body = self.expression()?;
+        if !self.check(TokT::RightBrace) {
+            self.expect(TokT::Comma, "match arm")?;
+        }
+        Ok(ExprMatchArm { pattern, body })
+    }
+
+    pub(super) fn pattern(&mut self) -> PResult<'src, Pattern<'src>> {
+        if self.check(TokT::Identifier) && !self.check_next(TokT::Dot) {
+            return Ok(Pattern::Variable(self.advance()));
         }
 
-        let enum_name = if match_token_type!(self, TokT::Identifier) {
-            Some(self.previous_token.clone())
-        } else {
-            None
-        };
-        self.consume(
-            TokT::Dot,
-            "Expected '.' as pattern start or between enum name and variant ",
-        )?;
+        let enum_name = self.try_consume(TokT::Identifier).then_some(self.previous);
+        self.expect(TokT::Dot, "enum name")?;
+        let variant_name = self.expect_ident("'.'")?;
 
-        self.consume(TokT::Identifier, "Expected variant name.")?;
-        let variant_name = self.previous_token.clone();
-
-        let bind = if match_token_type!(self, TokT::LeftParen) {
-            // Struct like case, :x or val:val
-            if check_token_type!(self, TokT::Colon) || check_next_token_type!(self, TokT::Colon) {
-                Some(self.parse_destructure(variant_name.clone())?)
+        let bind = if self.check(TokT::LeftParen) {
+            // `(` is consumed first: telling `.V(x: a)` from `.V(a)` needs the two tokens after it.
+            let open = self.advance().span;
+            if self.check(TokT::Colon)
+                || (self.check(TokT::Identifier) && self.check_next(TokT::Colon))
+            {
+                let fields =
+                    self.delimited_after(open, STRUCT_DESTRUCTURE, Self::destructure_field);
+                Some(Binding::Struct {
+                    name: variant_name,
+                    fields: fields.items,
+                })
             } else {
-                let mut bindings = vec![];
-                while !check_token_type!(self, TokT::RightParen) {
-                    bindings.push(self.parse_binding()?);
-                    match_token_type!(self, TokT::Comma);
-                }
-                self.consume(TokT::RightParen, "Expected ')' pattern.")?;
-
-                if bindings.is_empty() {
-                    None
-                } else if bindings.len() == 1 {
-                    Some(bindings.remove(0))
-                } else {
-                    Some(Binding::Tuple { fields: bindings })
+                let mut bindings =
+                    self.delimited_after(open, ListSpec::paren("binding", BINDING_START), |p| {
+                        p.parse_binding("'('")
+                    });
+                match bindings.items.len() {
+                    0 => {
+                        if !bindings.failed {
+                            self.errors.push(ParserError::Invalid {
+                                span: bindings.open.to(bindings.close),
+                                message: "Empty pattern payload: remove the `()`.".to_string(),
+                            });
+                        }
+                        None
+                    }
+                    1 => bindings.items.pop(),
+                    _ => Some(Binding::Tuple {
+                        fields: bindings.items,
+                    }),
                 }
             }
         } else {

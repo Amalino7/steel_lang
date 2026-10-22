@@ -1,5 +1,6 @@
 pub(crate) use crate::scanner::span::Span;
 pub use crate::scanner::span::{FileId, PRELUDE_FILE};
+use crate::scanner::token::KEYWORDS;
 pub use crate::scanner::token::{Token, TokenType};
 use std::collections::HashMap;
 
@@ -40,7 +41,7 @@ impl<'src> Scanner<'src> {
 
     pub fn next_token(&mut self) -> Token<'src> {
         let token = self.scan_token();
-        self.prev_type = Some(token.token_type.clone());
+        self.prev_type = Some(token.kind);
         token
     }
 
@@ -198,6 +199,8 @@ impl<'src> Scanner<'src> {
                     self.advance();
                 }
                 '/' if self.peek_next_char() == '*' => {
+                    // The error span below must start at this `/*`, not at the previous token.
+                    self.start = self.current;
                     self.advance();
                     self.advance();
                     let mut depth = 1;
@@ -368,7 +371,7 @@ impl<'src> Scanner<'src> {
             .get(&self.src[self.start..self.current])
             .unwrap_or(&TokenType::Identifier);
 
-        self.make_token(token_type.clone())
+        self.make_token(*token_type)
     }
 }
 
@@ -381,31 +384,7 @@ fn is_valid_digit(digit_char: char) -> bool {
 }
 
 fn keywords() -> HashMap<&'static str, TokenType> {
-    HashMap::from([
-        ("try", TokenType::Try),
-        ("and", TokenType::And),
-        ("or", TokenType::Or),
-        ("is", TokenType::Is),
-        ("if", TokenType::If),
-        ("else", TokenType::Else),
-        ("true", TokenType::True),
-        ("false", TokenType::False),
-        ("func", TokenType::Func),
-        ("return", TokenType::Return),
-        ("let", TokenType::Let),
-        ("while", TokenType::While),
-        ("struct", TokenType::Struct),
-        ("impl", TokenType::Impl),
-        ("self", TokenType::Self_),
-        ("interface", TokenType::Interface),
-        ("extern", TokenType::Extern),
-        ("nil", TokenType::Nil),
-        ("enum", TokenType::Enum),
-        ("match", TokenType::Match),
-        ("import", TokenType::Import),
-        ("public", TokenType::Public),
-        ("as", TokenType::As),
-    ])
+    KEYWORDS.iter().copied().collect()
 }
 
 #[cfg(test)]
@@ -417,10 +396,10 @@ mod tests {
         let mut types = vec![];
         loop {
             let token = scanner.next_token();
-            if token.token_type == TokenType::EOF {
+            if token.kind == TokenType::EOF {
                 return types;
             }
-            types.push(token.token_type);
+            types.push(token.kind);
         }
     }
 
@@ -429,7 +408,7 @@ mod tests {
         let mut lexemes = vec![];
         loop {
             let token = scanner.next_token();
-            if token.token_type == TokenType::EOF {
+            if token.kind == TokenType::EOF {
                 return lexemes;
             }
             lexemes.push(token.lexeme);

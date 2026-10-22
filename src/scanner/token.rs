@@ -1,9 +1,9 @@
 use crate::scanner::span::Span;
 use std::fmt::{Display, Formatter};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Copy)]
 pub struct Token<'src> {
-    pub token_type: TokenType,
+    pub kind: TokenType,
     pub span: Span,
     pub(crate) lexeme: &'src str,
 }
@@ -11,14 +11,14 @@ pub struct Token<'src> {
 impl<'src> Token<'src> {
     pub fn new(token_type: TokenType, span: Span, lexeme: &'src str) -> Self {
         Self {
-            token_type,
+            kind: token_type,
             span,
             lexeme,
         }
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash, Copy)]
 pub enum TokenType {
     LeftParen,    // (
     RightParen,   // )
@@ -100,6 +100,39 @@ pub enum TokenType {
 
     #[allow(clippy::upper_case_acronyms)]
     EOF,
+}
+
+/// Every reserved word and its token kind: the scanner's keyword table and the source of [`TokenType::is_keyword`].
+pub(crate) const KEYWORDS: &[(&str, TokenType)] = &[
+    ("try", TokenType::Try),
+    ("and", TokenType::And),
+    ("or", TokenType::Or),
+    ("is", TokenType::Is),
+    ("if", TokenType::If),
+    ("else", TokenType::Else),
+    ("true", TokenType::True),
+    ("false", TokenType::False),
+    ("func", TokenType::Func),
+    ("return", TokenType::Return),
+    ("let", TokenType::Let),
+    ("while", TokenType::While),
+    ("struct", TokenType::Struct),
+    ("impl", TokenType::Impl),
+    ("self", TokenType::Self_),
+    ("interface", TokenType::Interface),
+    ("extern", TokenType::Extern),
+    ("nil", TokenType::Nil),
+    ("enum", TokenType::Enum),
+    ("match", TokenType::Match),
+    ("import", TokenType::Import),
+    ("public", TokenType::Public),
+    ("as", TokenType::As),
+];
+
+impl TokenType {
+    pub fn is_keyword(self) -> bool {
+        KEYWORDS.iter().any(|&(_, kind)| kind == self)
+    }
 }
 
 impl Display for TokenType {
