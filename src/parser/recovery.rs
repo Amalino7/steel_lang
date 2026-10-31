@@ -137,7 +137,7 @@ impl<'src> Parser<'src> {
         &mut self,
         close: &[TokT],
         recover: fn(&mut Self),
-        mut item: impl FnMut(&mut Self) -> PResult<'src, T>,
+        mut item: impl FnMut(&mut Self) -> PResult<T>,
     ) -> Vec<T> {
         let mut items = vec![];
         while !self.check_any(close) && !self.at_eof() {

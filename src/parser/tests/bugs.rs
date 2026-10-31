@@ -12,7 +12,7 @@ fn test_b1_last_statement_is_kept() {
 
 #[test]
 fn test_b1_trailing_expression_without_semicolon_is_reported() {
-    assert_parse_errors("let x = 1; x", &["1:13"]);
+    assert_parse_errors("let x = 1; x", &[("E1010", "1:13")]);
 }
 
 #[test]
@@ -50,24 +50,30 @@ fn test_b5_tuple_index_after_safe_access_and_float_like_index() {
 
 #[test]
 fn test_b5_tuple_index_with_leading_zero_is_error() {
-    assert_parse_errors("let y = t.01;", &["1:11"]);
-    assert_parse_errors("let y = t?.00;", &["1:12"]);
+    assert_parse_errors("let y = t.01;", &[("E1004", "1:11")]);
+    assert_parse_errors("let y = t?.00;", &[("E1004", "1:12")]);
 }
 
 #[test]
 fn test_b6_invalid_number_is_reported_on_the_literal() {
-    assert_parse_errors("let z = 0xFFFFFFFFFFFFFFFFFF;", &["1:9"]);
+    assert_parse_errors("let z = 0xFFFFFFFFFFFFFFFFFF;", &[("E1003", "1:9")]);
+    assert_error_contains("let z = 0xFFFFFFFFFFFFFFFFFF;", "out of range");
+    assert_parse_errors(
+        "let z = 0x; let y = 1e;",
+        &[("E1003", "1:9"), ("E1003", "1:21")],
+    );
+    assert_error_contains("let z = 0x;", "malformed");
 }
 
 #[test]
 fn test_b7_invalid_assignment_target_is_reported_on_the_target() {
-    assert_parse_errors("5 = a + 1; let y = 1;", &["1:1"]);
+    assert_parse_errors("5 = a + 1; let y = 1;", &[("E1030", "1:1")]);
 }
 
 /// A lexer error is reported once and skipped; it must not also derail the statement after it.
 #[test]
 fn test_b8_lexer_error_is_reported_once() {
-    assert_parse_errors("let a = 1; @ let b = 2;", &["1:12"]);
+    assert_parse_errors("let a = 1; @ let b = 2;", &[("E1000", "1:12")]);
 }
 
 #[test]

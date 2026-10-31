@@ -3,7 +3,7 @@
 
 use crate::parser::ast::{Expr, ImportSegment, ImportStmt, ImportType, Stmt};
 use crate::parser::declarations::Visibility;
-use crate::parser::error::ParserError;
+use crate::parser::error::{ParseError, ParseErrorKind};
 use crate::parser::lists::{Delim, ListSpec};
 use crate::parser::{PResult, Parser, TokT};
 use crate::scanner::{Span, Token};
@@ -53,7 +53,7 @@ impl<'src> BlockItem<'src> {
 
 impl<'src> Parser<'src> {
     /// One top-level item: a declaration or a statement.
-    pub(super) fn top_level_item(&mut self) -> PResult<'src, Stmt<'src>> {
+    pub(super) fn top_level_item(&mut self) -> PResult<Stmt<'src>> {
         self.declaration_or_statement(true, false)
             .map(BlockItem::into_stmt)
     }
@@ -64,13 +64,13 @@ impl<'src> Parser<'src> {
         &mut self,
         top_level: bool,
         allow_tail: bool,
-    ) -> PResult<'src, BlockItem<'src>> {
+    ) -> PResult<BlockItem<'src>> {
         let vis = self.visibility();
         // A nested `public` is reported once, here, and not again by the construct it prefixes.
         let unreported = if top_level {
             vis
         } else {
-            self.forbid_visibility(vis, "`public` is only allowed on top-level declarations.");
+            self.forbid_visibility(vis, "only top-level declarations can be public.");
             Visibility::Private
         };
 
@@ -90,10 +90,10 @@ impl<'src> Parser<'src> {
             }
             TokT::Import => {
                 let import = self.import_statement()?;
-                Err(ParserError::ParseError {
-                    token: import.keyword,
-                    message: "imports must come before all other declarations".to_string(),
-                })
+                Err(ParseError::new(
+                    ParseErrorKind::ImportNotAtTop,
+                    import.keyword.span,
+                ))
             }
             _ => {
                 self.forbid_visibility(unreported, "expected a declaration after `public`.");
@@ -107,7 +107,7 @@ impl<'src> Parser<'src> {
     /// A statement that *starts* with `{`, `if` or `match` is exactly that
     /// construct, with no binary or postfix continuation, and needs no `;`. Everything else is `expression ;`.
     /// With `allow_tail`, an expression directly before `}` is the block's value instead.
-    fn statement(&mut self, allow_tail: bool) -> PResult<'src, BlockItem<'src>> {
+    fn statement(&mut self, allow_tail: bool) -> PResult<BlockItem<'src>> {
         let expr = match self.current.kind {
             TokT::While => return self.while_statement().map(BlockItem::Stmt),
             TokT::LeftBrace => self.block_expr()?,
@@ -132,11 +132,7 @@ impl<'src> Parser<'src> {
     /// `{ stmt* tail? }`. Fails only if the current token isn't `{`. E
     /// Errors inside are recovered per statement.
     /// Function and `while` bodies pass `allow_tail: false`, since there a final expression without `;` is an error.
-    pub(super) fn block(
-        &mut self,
-        allow_tail: bool,
-        after: &'static str,
-    ) -> PResult<'src, Block<'src>> {
+    pub(super) fn block(&mut self, allow_tail: bool, after: &'static str) -> PResult<Block<'src>> {
         let open = self.expect(TokT::LeftBrace, after)?;
         let mut items = self.sequence(&[TokT::RightBrace], Self::recover_stmt, |p| {
             p.declaration_or_statement(false, allow_tail)
@@ -159,11 +155,11 @@ impl<'src> Parser<'src> {
         })
     }
 
-    pub(super) fn block_expr(&mut self) -> PResult<'src, Expr<'src>> {
+    pub(super) fn block_expr(&mut self) -> PResult<Expr<'src>> {
         self.block(true, "block").map(Block::into_expr)
     }
 
-    fn while_statement(&mut self) -> PResult<'src, Stmt<'src>> {
+    fn while_statement(&mut self) -> PResult<Stmt<'src>> {
         self.advance_kind(TokT::While);
         let condition = self.expression()?;
         let body = self.block(false, "while condition")?;
@@ -193,13 +189,13 @@ impl<'src> Parser<'src> {
         self.check(TokT::Import) || (self.check(TokT::Public) && self.check_next(TokT::Import))
     }
 
-    fn header_import(&mut self) -> PResult<'src, ImportStmt<'src>> {
+    fn header_import(&mut self) -> PResult<ImportStmt<'src>> {
         let vis = self.visibility();
         self.forbid_visibility(vis, "re-exports are not supported.");
         self.import_statement()
     }
 
-    fn import_statement(&mut self) -> PResult<'src, ImportStmt<'src>> {
+    fn import_statement(&mut self) -> PResult<ImportStmt<'src>> {
         let keyword = self.advance_kind(TokT::Import);
         let segment = self.import_segment(true)?;
         self.expect(TokT::Semicolon, "import")?;
@@ -212,7 +208,7 @@ impl<'src> Parser<'src> {
 
     /// `top_level` segments (the ones directly after `import`) must name an item: `module/item`.
     /// Segments inside a `{ }` group may be a bare item.
-    fn import_segment(&mut self, top_level: bool) -> PResult<'src, ImportSegment<'src>> {
+    fn import_segment(&mut self, top_level: bool) -> PResult<ImportSegment<'src>> {
         let mut path = vec![self.expect_ident("import")?];
 
         let mut after_slash = false;
@@ -221,7 +217,7 @@ impl<'src> Parser<'src> {
             if self.check(TokT::LeftBrace) {
                 break;
             }
-            path.push(self.expect_ident("'/'")?);
+            path.push(self.expect_ident("`/`")?);
             after_slash = false;
         }
 
@@ -241,10 +237,10 @@ impl<'src> Parser<'src> {
                     |p| p.import_segment(false),
                 );
                 if group.items.is_empty() && !group.failed {
-                    self.errors.push(ParserError::Invalid {
-                        span: group.open.to(group.close),
-                        message: "Import group must not be empty.".to_string(),
-                    });
+                    self.errors.push(ParseError::new(
+                        ParseErrorKind::EmptyImportGroup,
+                        group.open.merge(group.close),
+                    ));
                 }
                 ImportType::Group {
                     options: group.items,
@@ -252,11 +248,11 @@ impl<'src> Parser<'src> {
             }
         } else {
             if top_level && path.len() < 2 {
-                return Err(self.err_expected(TokT::Slash, "module name ('module/item')"));
+                return Err(self.err_expected(TokT::Slash, "module name (`module/item`)"));
             }
             let terminator = path.pop().expect("path starts with an identifier");
             if self.try_consume(TokT::As) {
-                let alias = self.expect_ident("'as'")?;
+                let alias = self.expect_ident("`as`")?;
                 ImportType::Alias { terminator, alias }
             } else {
                 ImportType::Simple { terminator }
@@ -265,10 +261,10 @@ impl<'src> Parser<'src> {
 
         for element in path.iter() {
             if !element.lexeme.is_ascii() {
-                self.errors.push(ParserError::ParseError {
-                    token: *element,
-                    message: "Expected ASCII identifier in import path.".to_string(),
-                })
+                self.errors.push(ParseError::new(
+                    ParseErrorKind::NonAsciiImportPath,
+                    element.span,
+                ))
             }
         }
 

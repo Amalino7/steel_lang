@@ -1,7 +1,7 @@
 pub(crate) use crate::scanner::span::Span;
 pub use crate::scanner::span::{FileId, PRELUDE_FILE};
 use crate::scanner::token::KEYWORDS;
-pub use crate::scanner::token::{Token, TokenType};
+pub use crate::scanner::token::{Token, TokenType, Unterminated};
 use std::collections::HashMap;
 
 mod span;
@@ -164,9 +164,8 @@ impl<'src> Scanner<'src> {
     pub fn is_at_end(&self) -> bool {
         self.current >= self.src.len()
     }
-    fn error(&self, message: &'static str) -> Token<'src> {
-        let span = Span::new(self.start, self.current, self.line, self.file_id);
-        Token::new(TokenType::Error, span, message)
+    fn unterminated(&self, what: Unterminated) -> Token<'src> {
+        self.make_token(TokenType::Unterminated(what))
     }
     fn advance(&mut self) -> char {
         let char = self.peek_char();
@@ -218,7 +217,7 @@ impl<'src> Scanner<'src> {
                         self.advance();
                     }
                     if depth > 0 {
-                        return Some(self.error("Unterminated block comment."));
+                        return Some(self.unterminated(Unterminated::BlockComment));
                     }
                 }
                 '/' if self.peek_next_char() == '/' => {
@@ -237,7 +236,7 @@ impl<'src> Scanner<'src> {
     fn string(&mut self) -> Token<'src> {
         loop {
             if self.is_at_end() {
-                return self.error("Unterminated string.");
+                return self.unterminated(Unterminated::String);
             }
             let c = self.peek_char();
             match c {
@@ -273,7 +272,7 @@ impl<'src> Scanner<'src> {
     fn raw_string(&mut self) -> Token<'src> {
         loop {
             if self.is_at_end() {
-                return self.error("Unterminated raw string.");
+                return self.unterminated(Unterminated::RawString);
             }
             let c = self.advance();
             if c == '\n' {

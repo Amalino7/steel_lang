@@ -1,13 +1,25 @@
-/// Handles escape characters
-pub fn process_escapes(raw: &str) -> Result<String, String> {
+use crate::parser::error::{EscapeError, NumberError};
+use std::iter::Peekable;
+use std::num::IntErrorKind;
+use std::ops::Range;
+use std::str::CharIndices;
+
+/// Processes the escape sequences in `raw`, the text between a string's delimiters. On failure, returns the error
+/// and the byte range in `raw` of the escape sequence, up to where it went wrong.
+pub fn process_escapes(raw: &str) -> Result<String, (EscapeError, Range<usize>)> {
     let mut result = String::with_capacity(raw.len());
-    let mut chars = raw.chars();
-    while let Some(c) = chars.next() {
+    let mut chars = raw.char_indices().peekable();
+    while let Some((start, c)) = chars.next() {
         if c != '\\' {
             result.push(c);
             continue;
         }
-        match chars.next() {
+        // The escape runs from its `\` to the last character consumed.
+        let fail = |chars: &mut Peekable<CharIndices>, error| {
+            let end = chars.peek().map_or(raw.len(), |&(i, _)| i);
+            Err((error, start..end))
+        };
+        match chars.next().map(|(_, c)| c) {
             Some('n') => result.push('\n'),
             Some('t') => result.push('\t'),
             Some('r') => result.push('\r'),
@@ -17,40 +29,33 @@ pub fn process_escapes(raw: &str) -> Result<String, String> {
             Some('$') => result.push('$'),
             Some('u') => {
                 // Expect `{HHHH}` (1-6 hex digits).
-                match chars.next() {
-                    Some('{') => {}
-                    _ => return Err("Expected '{' after \\u in unicode escape.".to_string()),
+                if chars.next_if(|&(_, c)| c == '{').is_none() {
+                    return fail(&mut chars, EscapeError::UnicodeMissingBrace);
                 }
                 let mut hex = String::with_capacity(6);
                 loop {
-                    match chars.next() {
+                    match chars.next().map(|(_, c)| c) {
                         Some('}') => break,
                         Some(h) if h.is_ascii_hexdigit() => hex.push(h),
-                        Some(_) => {
-                            return Err(
-                                "Invalid character in unicode escape; expected hex digit or '}'."
-                                    .to_string(),
-                            );
-                        }
-                        None => return Err("Unterminated unicode escape.".to_string()),
+                        Some(_) => return fail(&mut chars, EscapeError::UnicodeInvalidDigit),
+                        None => return fail(&mut chars, EscapeError::UnicodeUnterminated),
                     }
                     if hex.len() > 6 {
-                        return Err("Unicode escape must be at most 6 hex digits.".to_string());
+                        return fail(&mut chars, EscapeError::UnicodeTooLong);
                     }
                 }
                 if hex.is_empty() {
-                    return Err("Unicode escape must have at least one hex digit.".to_string());
+                    return fail(&mut chars, EscapeError::UnicodeEmpty);
                 }
-                let codepoint = u32::from_str_radix(&hex, 16)
-                    .map_err(|_| "Invalid unicode escape.".to_string())?;
-                let ch = char::from_u32(codepoint)
-                    .ok_or_else(|| "Unicode escape is not a valid scalar value.".to_string())?;
-                result.push(ch);
+                // At most 6 hex digits always fit in a `u32`.
+                let codepoint = u32::from_str_radix(&hex, 16).unwrap_or(u32::MAX);
+                match char::from_u32(codepoint) {
+                    Some(ch) => result.push(ch),
+                    None => return fail(&mut chars, EscapeError::UnicodeNotScalar),
+                }
             }
-            Some(other) => {
-                return Err(format!("Unknown escape sequence '\\{other}'."));
-            }
-            None => return Err("Trailing backslash at end of string.".to_string()),
+            Some(other) => return fail(&mut chars, EscapeError::Unknown(other)),
+            None => return fail(&mut chars, EscapeError::TrailingBackslash),
         }
     }
     Ok(result)
@@ -64,29 +69,39 @@ pub fn process_escapes(raw: &str) -> Result<String, String> {
 /// - Octal prefix: `0o755`, `0O755`
 /// - Hexadecimal prefix: `0xFF`, `0XFF`
 /// - Scientific notation: `1.5e10`, `2.0E-3`
-pub fn parse_number(lexeme: &str) -> Option<f64> {
+///
+/// The scanner only guarantees the characters, so a prefix or exponent without digits (`0x`, `1e`) is
+/// [`NumberError::Malformed`]. Prefixed literals must fit in an `i64`.
+pub fn parse_number(lexeme: &str) -> Result<f64, NumberError> {
     let strip_underscores = |s: &str| -> String { s.chars().filter(|&c| c != '_').collect() };
+    let radix = |rest: &str, radix| {
+        i64::from_str_radix(&strip_underscores(rest), radix)
+            .map(|n| n as f64)
+            .map_err(|e| match e.kind() {
+                IntErrorKind::PosOverflow => NumberError::OutOfRange,
+                _ => NumberError::Malformed,
+            })
+    };
 
     if let Some(rest) = lexeme
         .strip_prefix("0b")
         .or_else(|| lexeme.strip_prefix("0B"))
     {
-        let digits = strip_underscores(rest);
-        i64::from_str_radix(&digits, 2).ok().map(|n| n as f64)
+        radix(rest, 2)
     } else if let Some(rest) = lexeme
         .strip_prefix("0o")
         .or_else(|| lexeme.strip_prefix("0O"))
     {
-        let digits = strip_underscores(rest);
-        i64::from_str_radix(&digits, 8).ok().map(|n| n as f64)
+        radix(rest, 8)
     } else if let Some(rest) = lexeme
         .strip_prefix("0x")
         .or_else(|| lexeme.strip_prefix("0X"))
     {
-        let digits = strip_underscores(rest);
-        i64::from_str_radix(&digits, 16).ok().map(|n| n as f64)
+        radix(rest, 16)
     } else {
-        strip_underscores(lexeme).parse::<f64>().ok()
+        strip_underscores(lexeme)
+            .parse::<f64>()
+            .map_err(|_| NumberError::Malformed)
     }
 }
 

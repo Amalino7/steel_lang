@@ -2,11 +2,13 @@
 //! access, turbofish), literals, collections, lambdas and string interpolation.
 
 use crate::parser::ast::{CallArg, Expr, Literal, StringPart, TypeAst};
-use crate::parser::error::ParserError;
+use crate::parser::error::{Expected, ParenContext, ParseError, ParseErrorKind};
 use crate::parser::lists::{Delim, ListSpec};
 use crate::parser::literals::{parse_number, process_escapes, process_raw_string};
 use crate::parser::{PResult, Parser, TokT};
+use crate::scanner::Span;
 use crate::scanner::token::Token;
+use std::ops::Range;
 
 /// FIRST set of an expression: the prefix operators `unary` takes plus every token `primary` dispatches on.
 /// Keep it in sync with both. A token outside it can't begin an expression.
@@ -45,11 +47,11 @@ fn compound_operator(kind: TokT) -> Option<TokT> {
 }
 
 impl<'src> Parser<'src> {
-    pub(crate) fn expression(&mut self) -> PResult<'src, Expr<'src>> {
+    pub(crate) fn expression(&mut self) -> PResult<Expr<'src>> {
         self.assignment()
     }
 
-    fn assignment(&mut self) -> PResult<'src, Expr<'src>> {
+    fn assignment(&mut self) -> PResult<Expr<'src>> {
         let expr = self.null_coalescing()?;
 
         if self.try_consume(TokT::Equal) {
@@ -101,14 +103,16 @@ impl<'src> Parser<'src> {
                 value,
             },
             other => {
-                self.errors
-                    .push(ParserError::InvalidAssignmentTarget { span: other.span() });
-                Expr::Error(other.span().to(value.span()))
+                self.errors.push(ParseError::new(
+                    ParseErrorKind::InvalidAssignmentTarget,
+                    other.span(),
+                ));
+                Expr::Error(other.span().merge(value.span()))
             }
         }
     }
 
-    fn null_coalescing(&mut self) -> PResult<'src, Expr<'src>> {
+    fn null_coalescing(&mut self) -> PResult<Expr<'src>> {
         let mut expr = self.logical_or()?;
         while self.try_consume(TokT::QuestionQuestion) {
             let operator = self.previous;
@@ -122,7 +126,7 @@ impl<'src> Parser<'src> {
         Ok(expr)
     }
 
-    fn logical_or(&mut self) -> PResult<'src, Expr<'src>> {
+    fn logical_or(&mut self) -> PResult<Expr<'src>> {
         let mut expr = self.logical_and()?;
         while self.try_consume(TokT::Or) {
             let operator = self.previous;
@@ -136,7 +140,7 @@ impl<'src> Parser<'src> {
         Ok(expr)
     }
 
-    fn logical_and(&mut self) -> PResult<'src, Expr<'src>> {
+    fn logical_and(&mut self) -> PResult<Expr<'src>> {
         let mut expr = self.equality()?;
         while self.try_consume(TokT::And) {
             let operator = self.previous;
@@ -154,8 +158,8 @@ impl<'src> Parser<'src> {
     fn binary_level(
         &mut self,
         ops: &[TokT],
-        next: fn(&mut Self) -> PResult<'src, Expr<'src>>,
-    ) -> PResult<'src, Expr<'src>> {
+        next: fn(&mut Self) -> PResult<Expr<'src>>,
+    ) -> PResult<Expr<'src>> {
         let mut expr = next(self)?;
         while self.try_consume_any(ops) {
             let operator = self.previous;
@@ -169,11 +173,11 @@ impl<'src> Parser<'src> {
         Ok(expr)
     }
 
-    fn equality(&mut self) -> PResult<'src, Expr<'src>> {
+    fn equality(&mut self) -> PResult<Expr<'src>> {
         self.binary_level(&[TokT::EqualEqual, TokT::BangEqual], Self::comparison)
     }
 
-    fn comparison(&mut self) -> PResult<'src, Expr<'src>> {
+    fn comparison(&mut self) -> PResult<Expr<'src>> {
         self.binary_level(
             &[
                 TokT::Greater,
@@ -185,15 +189,15 @@ impl<'src> Parser<'src> {
         )
     }
 
-    fn term(&mut self) -> PResult<'src, Expr<'src>> {
+    fn term(&mut self) -> PResult<Expr<'src>> {
         self.binary_level(&[TokT::Minus, TokT::Plus], Self::factor)
     }
 
-    fn factor(&mut self) -> PResult<'src, Expr<'src>> {
+    fn factor(&mut self) -> PResult<Expr<'src>> {
         self.binary_level(&[TokT::Star, TokT::Slash, TokT::Percent], Self::unary)
     }
 
-    fn unary(&mut self) -> PResult<'src, Expr<'src>> {
+    fn unary(&mut self) -> PResult<Expr<'src>> {
         if self.try_consume_any(&[TokT::Bang, TokT::Minus, TokT::Try]) {
             let operator = self.previous;
             let expression = self.unary()?;
@@ -206,8 +210,8 @@ impl<'src> Parser<'src> {
         }
     }
 
-    fn power(&mut self) -> PResult<'src, Expr<'src>> {
-        let base = self.is_type()?;
+    fn power(&mut self) -> PResult<Expr<'src>> {
+        let base = self.type_test()?;
         if self.try_consume(TokT::StarStar) {
             let operator = self.previous;
             let exponent = self.unary()?;
@@ -221,10 +225,11 @@ impl<'src> Parser<'src> {
         }
     }
 
-    fn is_type(&mut self) -> PResult<'src, Expr<'src>> {
+    /// `expr is Type`.
+    fn type_test(&mut self) -> PResult<Expr<'src>> {
         let expr = self.call()?;
         if self.try_consume(TokT::Is) {
-            let type_name = self.expect_ident("'is'")?;
+            let type_name = self.expect_ident("`is`")?;
             return Ok(Expr::Is {
                 expression: Box::new(expr),
                 type_name,
@@ -234,7 +239,7 @@ impl<'src> Parser<'src> {
     }
 
     /// `primary` followed by any chain of calls, indexing, field/tuple access, turbofish and `!`.
-    fn call(&mut self) -> PResult<'src, Expr<'src>> {
+    fn call(&mut self) -> PResult<Expr<'src>> {
         let mut expr = self.primary()?;
         loop {
             expr = match self.current.kind {
@@ -255,7 +260,7 @@ impl<'src> Parser<'src> {
                     self.advance();
                     Expr::TypeSpecialization {
                         callee: Box::new(expr),
-                        generics: self.generic_arg_list(),
+                        generics: self.generic_args(),
                     }
                 }
                 TokT::Question if self.check_next(TokT::LeftBracket) => {
@@ -265,10 +270,10 @@ impl<'src> Parser<'src> {
                 TokT::LeftBracket => self.index(expr, false)?,
                 TokT::Dot | TokT::QuestionDot => {
                     let safe = self.advance().kind == TokT::QuestionDot;
-                    let field = if self.try_consume(TokT::Number) {
+                    let field = if self.check(TokT::Number) {
                         self.tuple_index()
                     } else {
-                        self.expect_ident(if safe { "'?.'" } else { "'.'" })?
+                        self.expect_ident(if safe { "`?.`" } else { "`.`" })?
                     };
                     Expr::Get {
                         safe,
@@ -287,7 +292,7 @@ impl<'src> Parser<'src> {
     }
 
     /// `[index]`, starting at the `[`.
-    fn index(&mut self, object: Expr<'src>, safe: bool) -> PResult<'src, Expr<'src>> {
+    fn index(&mut self, object: Expr<'src>, safe: bool) -> PResult<Expr<'src>> {
         let open = self.advance_kind(TokT::LeftBracket).span;
         let index = self.expression()?;
         self.close_delimiter(open, Delim::Bracket);
@@ -298,7 +303,7 @@ impl<'src> Parser<'src> {
         })
     }
 
-    fn call_arg(&mut self) -> PResult<'src, CallArg<'src>> {
+    fn call_arg(&mut self) -> PResult<CallArg<'src>> {
         let label = if self.check(TokT::Identifier) && self.check_next(TokT::Colon) {
             let label = self.advance();
             self.advance_kind(TokT::Colon);
@@ -310,20 +315,20 @@ impl<'src> Parser<'src> {
         Ok(CallArg { label, expr })
     }
 
-    /// The tuple index just consumed. The scanner guarantees it is decimal digits; a leading zero (`t.01`) is
-    /// reported but the access is still built, since the intended index is clear.
+    /// A tuple index. The scanner guarantees it is decimal digits; a leading zero (`t.01`) is reported but the
+    /// access is still built, since the intended index is clear.
     fn tuple_index(&mut self) -> Token<'src> {
-        let idx = self.previous;
+        let idx = self.advance_kind(TokT::Number);
         if idx.lexeme.len() > 1 && idx.lexeme.starts_with('0') {
-            self.errors.push(ParserError::ParseError {
-                token: idx,
-                message: "Tuple index must not have leading zeros.".to_string(),
-            });
+            self.errors.push(ParseError::new(
+                ParseErrorKind::TupleIndexLeadingZero,
+                idx.span,
+            ));
         }
         idx
     }
 
-    fn primary(&mut self) -> PResult<'src, Expr<'src>> {
+    fn primary(&mut self) -> PResult<Expr<'src>> {
         match self.current.kind {
             TokT::True => Ok(self.literal(Literal::Boolean(true))),
             TokT::False => Ok(self.literal(Literal::Boolean(false))),
@@ -331,15 +336,15 @@ impl<'src> Parser<'src> {
             TokT::Number => {
                 let token = self.advance();
                 match parse_number(token.lexeme) {
-                    Some(num) => Ok(Expr::Literal {
+                    Ok(num) => Ok(Expr::Literal {
                         literal: Literal::Number(num),
                         span: token.span,
                     }),
-                    None => {
-                        self.errors.push(ParserError::ParseError {
-                            token,
-                            message: "Invalid number literal.".to_string(),
-                        });
+                    Err(error) => {
+                        self.errors.push(ParseError::new(
+                            ParseErrorKind::InvalidNumber(error),
+                            token.span,
+                        ));
                         Ok(Expr::Error(token.span))
                     }
                 }
@@ -347,8 +352,7 @@ impl<'src> Parser<'src> {
             TokT::String => {
                 let token = self.advance();
                 // Strip surrounding quotes.
-                let inner = &token.lexeme[1..token.lexeme.len() - 1];
-                let text = self.escaped(token, inner);
+                let text = self.escaped(token, 1..token.lexeme.len() - 1);
                 Ok(Expr::Literal {
                     literal: Literal::String(text),
                     span: token.span,
@@ -372,10 +376,7 @@ impl<'src> Parser<'src> {
             TokT::Match => self.match_expr(),
             TokT::Pipe => self.lambda(),
             TokT::Return => self.return_expr(),
-            _ => Err(ParserError::ParseError {
-                token: self.current,
-                message: format!("Expected expression, but found '{}'.", self.current.lexeme),
-            }),
+            _ => Err(self.err_unexpected(Expected::Expression, None)),
         }
     }
 
@@ -387,10 +388,19 @@ impl<'src> Parser<'src> {
         }
     }
 
-    /// `raw` with escapes processed. A bad escape is reported on `token` and leaves the raw text.
-    fn escaped(&mut self, token: Token<'src>, raw: &str) -> String {
-        process_escapes(raw).unwrap_or_else(|message| {
-            self.errors.push(ParserError::ParseError { token, message });
+    /// The text of `token` in `range` (byte offsets into its lexeme) with escapes processed. A bad escape is
+    /// reported on the escape sequence and leaves the raw text.
+    fn escaped(&mut self, token: Token<'src>, range: Range<usize>) -> String {
+        let raw = &token.lexeme[range.clone()];
+        process_escapes(raw).unwrap_or_else(|(error, at)| {
+            let start = token.span.start + range.start;
+            let span = Span {
+                start: start + at.start,
+                end: start + at.end,
+                ..token.span
+            };
+            self.errors
+                .push(ParseError::new(ParseErrorKind::InvalidEscape(error), span));
             raw.to_string()
         })
     }
@@ -401,12 +411,12 @@ impl<'src> Parser<'src> {
         match (list.items.len(), list.trailing) {
             (0, _) => {
                 if !list.failed {
-                    self.errors.push(ParserError::Invalid {
-                        span: list.open.to(list.close),
-                        message: "`()` is not an expression.".to_string(),
-                    });
+                    self.errors.push(ParseError::new(
+                        ParseErrorKind::EmptyParens(ParenContext::Expression),
+                        list.open.merge(list.close),
+                    ));
                 }
-                Expr::Error(list.open.to(list.close))
+                Expr::Error(list.open.merge(list.close))
             }
             (1, None) => Expr::Grouping {
                 expression: Box::new(list.items.pop().expect("one item")),
@@ -444,21 +454,25 @@ impl<'src> Parser<'src> {
             },
         );
 
-        let is_map = items.items.first().is_some_and(|(_, v)| v.is_some());
+        let (first, is_map) = match items.items.first() {
+            Some((key, Some(value))) => (key.span().merge(value.span()), true),
+            Some((key, None)) => (key.span(), false),
+            None => (bracket_token.span, false),
+        };
         let mut kv_pairs = vec![];
         let mut elements = vec![];
         for (key, value) in items.items {
             match (is_map, value) {
                 (true, Some(value)) => kv_pairs.push((key, value)),
                 (false, None) => elements.push(key),
-                (true, None) => self.errors.push(ParserError::Invalid {
-                    span: key.span(),
-                    message: "Expected `key: value` in map literal.".to_string(),
-                }),
-                (false, Some(value)) => self.errors.push(ParserError::Invalid {
-                    span: key.span().to(value.span()),
-                    message: "Unexpected `key: value` in list literal.".to_string(),
-                }),
+                (true, None) => self.errors.push(ParseError::new(
+                    ParseErrorKind::MixedCollection { first, is_map },
+                    key.span(),
+                )),
+                (false, Some(value)) => self.errors.push(ParseError::new(
+                    ParseErrorKind::MixedCollection { first, is_map },
+                    key.span().merge(value.span()),
+                )),
             }
         }
         if is_map {
@@ -474,10 +488,10 @@ impl<'src> Parser<'src> {
         }
     }
 
-    fn lambda(&mut self) -> PResult<'src, Expr<'src>> {
+    fn lambda(&mut self) -> PResult<Expr<'src>> {
         let pipe_token = self.current;
         let params = self.delimited(ListSpec::pipe("parameter", &[TokT::Identifier]), |p| {
-            let name = p.expect_ident("'|'")?;
+            let name = p.expect_ident("`|`")?;
             let ty = p.type_annotation()?.unwrap_or(TypeAst::Infer);
             Ok((name, ty))
         });
@@ -493,12 +507,12 @@ impl<'src> Parser<'src> {
 
     /// From a `PartialString` through the `String` that closes it, collecting literal parts and `${expr}`
     /// segments.
-    fn string_interp(&mut self) -> PResult<'src, Expr<'src>> {
+    fn string_interp(&mut self) -> PResult<Expr<'src>> {
         let start = self.start_span();
         let first = self.advance_kind(TokT::PartialString);
 
         // PartialString lexeme: `"<content>` (opening quote, then raw content up to `${`).
-        let first_text = self.escaped(first, &first.lexeme[1..]);
+        let first_text = self.escaped(first, 1..first.lexeme.len());
         let mut parts: Vec<StringPart<'src>> = Vec::new();
         if !first_text.is_empty() {
             parts.push(StringPart::Literal(first_text));
@@ -511,7 +525,7 @@ impl<'src> Parser<'src> {
             if self.check(TokT::String) {
                 // String lexeme: `<content>"`.
                 let end = self.advance();
-                let end_text = self.escaped(end, &end.lexeme[..end.lexeme.len() - 1]);
+                let end_text = self.escaped(end, 0..end.lexeme.len() - 1);
                 if !end_text.is_empty() {
                     parts.push(StringPart::Literal(end_text));
                 }
@@ -521,15 +535,15 @@ impl<'src> Parser<'src> {
                 });
             } else if self.check(TokT::PartialString) {
                 let mid = self.advance();
-                let mid_text = self.escaped(mid, mid.lexeme);
+                let mid_text = self.escaped(mid, 0..mid.lexeme.len());
                 if !mid_text.is_empty() {
                     parts.push(StringPart::Literal(mid_text));
                 }
             } else {
-                return Err(ParserError::ParseError {
-                    token: self.current,
-                    message: "Expected string interpolation to continue or close.".to_string(),
-                });
+                return Err(self.err_unexpected(
+                    Expected::Token(TokT::RightBrace),
+                    Some("interpolated expression"),
+                ));
             }
         }
     }

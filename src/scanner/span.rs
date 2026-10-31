@@ -35,39 +35,29 @@ impl Span {
         *self == Self::builtin()
     }
 
-    /// Extends this span to cover another span (useful for combining start/end tokens of an expression).
+    /// The smallest span covering both, in either order; `line` is the line of the one that starts first.
     /// Both spans must be in the same file.
-    pub fn merge(&self, other: Span) -> Self {
+    pub fn merge(self, other: Span) -> Self {
         debug_assert_eq!(
             self.file_id, other.file_id,
             "merging spans from different files"
         );
+        let first = if other.start < self.start {
+            other
+        } else {
+            self
+        };
         Self {
-            start: self.start.min(other.start),
+            start: first.start,
             end: self.end.max(other.end),
-            line: self.line,
-            file_id: self.file_id,
+            ..first
         }
-    }
-    /// The span from the start of `self` to the end of `end`. Unlike [`Self::merge`] the order matters:
-    /// `end` must not start before `self`, which catches swapped arguments.
-    pub fn to(self, end: Span) -> Self {
-        debug_assert!(self.start <= end.start, "Span::to with swapped arguments");
-        self.merge(end)
     }
 
     /// Zero-width span at the end of `self`: where a missing `;` or closer would go.
     pub fn point_after(self) -> Self {
         Self {
             start: self.end,
-            ..self
-        }
-    }
-
-    /// Zero-width span at the start of `self`.
-    pub fn point_before(self) -> Self {
-        Self {
-            end: self.start,
             ..self
         }
     }
@@ -80,5 +70,18 @@ impl Span {
 impl From<Span> for Range<usize> {
     fn from(span: Span) -> Self {
         span.start..span.end
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_merge_takes_the_line_of_the_earlier_span_in_either_order() {
+        let first = Span::new(0, 1, 1, FileId(1));
+        let second = Span::new(10, 12, 3, FileId(1));
+        assert_eq!(first.merge(second), Span::new(0, 12, 1, FileId(1)));
+        assert_eq!(second.merge(first), Span::new(0, 12, 1, FileId(1)));
     }
 }

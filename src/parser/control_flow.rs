@@ -2,14 +2,14 @@
 
 use crate::parser::ast::{Binding, Expr, ExprMatchArm, Literal, Pattern};
 use crate::parser::declarations::{BINDING_START, STRUCT_DESTRUCTURE};
-use crate::parser::error::ParserError;
+use crate::parser::error::{ParenContext, ParseError, ParseErrorKind};
 use crate::parser::expressions::EXPR_START;
 use crate::parser::lists::{Delim, ListSpec};
 use crate::parser::recovery::RECOVERY_STOP;
 use crate::parser::{PResult, Parser, TokT};
 
 impl<'src> Parser<'src> {
-    pub(super) fn if_expr(&mut self) -> PResult<'src, Expr<'src>> {
+    pub(super) fn if_expr(&mut self) -> PResult<Expr<'src>> {
         self.advance_kind(TokT::If);
         let condition = self.expression()?;
         let then_branch = self.block(true, "if condition")?.into_expr();
@@ -18,7 +18,7 @@ impl<'src> Parser<'src> {
             if self.check(TokT::If) {
                 Some(Box::new(self.if_expr()?))
             } else {
-                Some(Box::new(self.block(true, "'else'")?.into_expr()))
+                Some(Box::new(self.block(true, "`else`")?.into_expr()))
             }
         } else {
             None
@@ -32,7 +32,7 @@ impl<'src> Parser<'src> {
     }
 
     /// `return` with an optional value: there is one exactly when the next token can start an expression.
-    pub(super) fn return_expr(&mut self) -> PResult<'src, Expr<'src>> {
+    pub(super) fn return_expr(&mut self) -> PResult<Expr<'src>> {
         let keyword = self.advance_kind(TokT::Return);
         let value = if self.check_any(EXPR_START) {
             self.expression()?
@@ -49,7 +49,7 @@ impl<'src> Parser<'src> {
     }
 
     /// A recovery point: a bad arm is reported and skipped to the next `,` or the closing `}`.
-    pub(super) fn match_expr(&mut self) -> PResult<'src, Expr<'src>> {
+    pub(super) fn match_expr(&mut self) -> PResult<Expr<'src>> {
         self.advance_kind(TokT::Match);
         let value = self.expression()?;
         let open = self.expect(TokT::LeftBrace, "match value")?.span;
@@ -79,7 +79,7 @@ impl<'src> Parser<'src> {
     }
 
     /// `pattern => body`, plus its `,`: optional after a block body, otherwise required unless the arm is last.
-    fn match_arm(&mut self) -> PResult<'src, ExprMatchArm<'src>> {
+    fn match_arm(&mut self) -> PResult<ExprMatchArm<'src>> {
         let pattern = self.pattern()?;
         self.expect(TokT::Arrow, "match pattern")?;
         if self.check(TokT::LeftBrace) {
@@ -94,14 +94,14 @@ impl<'src> Parser<'src> {
         Ok(ExprMatchArm { pattern, body })
     }
 
-    pub(super) fn pattern(&mut self) -> PResult<'src, Pattern<'src>> {
+    pub(super) fn pattern(&mut self) -> PResult<Pattern<'src>> {
         if self.check(TokT::Identifier) && !self.check_next(TokT::Dot) {
             return Ok(Pattern::Variable(self.advance()));
         }
 
         let enum_name = self.try_consume(TokT::Identifier).then_some(self.previous);
         self.expect(TokT::Dot, "enum name")?;
-        let variant_name = self.expect_ident("'.'")?;
+        let variant_name = self.expect_ident("`.`")?;
 
         let bind = if self.check(TokT::LeftParen) {
             // `(` is consumed first: telling `.V(x: a)` from `.V(a)` needs the two tokens after it.
@@ -118,15 +118,15 @@ impl<'src> Parser<'src> {
             } else {
                 let mut bindings =
                     self.delimited_after(open, ListSpec::paren("binding", BINDING_START), |p| {
-                        p.parse_binding("'('")
+                        p.parse_binding("`(`")
                     });
                 match bindings.items.len() {
                     0 => {
                         if !bindings.failed {
-                            self.errors.push(ParserError::Invalid {
-                                span: bindings.open.to(bindings.close),
-                                message: "Empty pattern payload: remove the `()`.".to_string(),
-                            });
+                            self.errors.push(ParseError::new(
+                                ParseErrorKind::EmptyParens(ParenContext::PatternPayload),
+                                bindings.open.merge(bindings.close),
+                            ));
                         }
                         None
                     }

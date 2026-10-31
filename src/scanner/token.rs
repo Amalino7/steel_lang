@@ -18,6 +18,14 @@ impl<'src> Token<'src> {
     }
 }
 
+/// What an [`TokenType::Unterminated`] token failed to close.
+#[derive(Debug, Clone, Eq, PartialEq, Hash, Copy)]
+pub enum Unterminated {
+    String,
+    RawString,
+    BlockComment,
+}
+
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Copy)]
 pub enum TokenType {
     LeftParen,    // (
@@ -95,7 +103,8 @@ pub enum TokenType {
     Pipe, // |
 
     // Reports errors.
-    Error,
+    /// A string or comment that runs to the end of the file. The span starts at its opener.
+    Unterminated(Unterminated),
     UnexpectedSymbolError,
 
     #[allow(clippy::upper_case_acronyms)]
@@ -160,7 +169,7 @@ impl Display for TokenType {
             TokenType::GreaterEqual => f.write_str(">="),
             TokenType::Less => f.write_str("<"),
             TokenType::LessEqual => f.write_str("<="),
-            TokenType::Identifier => f.write_str("binding"),
+            TokenType::Identifier => f.write_str("identifier"),
             TokenType::String => f.write_str("string"),
             TokenType::PartialString => f.write_str("partial string"),
             TokenType::RawString => f.write_str("raw string"),
@@ -175,13 +184,13 @@ impl Display for TokenType {
             TokenType::False => f.write_str("false"),
             TokenType::Let => f.write_str("let"),
             TokenType::While => f.write_str("while"),
-            TokenType::Error => f.write_str("error"),
+            TokenType::Unterminated(_) => f.write_str("unterminated literal"),
             TokenType::UnexpectedSymbolError => f.write_str("unexpected symbol"),
             TokenType::PlusEqual => f.write_str("+="),
             TokenType::MinusEqual => f.write_str("-="),
             TokenType::StarEqual => f.write_str("*="),
             TokenType::SlashEqual => f.write_str("/="),
-            TokenType::EOF => f.write_str("nothing"),
+            TokenType::EOF => f.write_str("end of file"),
             TokenType::Struct => f.write_str("struct"),
             TokenType::Impl => f.write_str("impl"),
             TokenType::Self_ => f.write_str("self"),

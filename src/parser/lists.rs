@@ -7,11 +7,11 @@
 //! reported where it belongs. What a list *means* (grouping vs tuple, empty payloads, `self` placement) is
 //! validated by the caller afterwards, on the returned [`Delimited`].
 
-use crate::parser::error::ParserError;
+use crate::parser::error::{Expected, ParseError, ParseErrorKind};
 use crate::parser::recovery::{RECOVERY_STOP, is_closer};
 use crate::parser::{PResult, Parser};
+use crate::scanner::Span;
 use crate::scanner::TokenType as TokT;
-use crate::scanner::{Span, Token};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Delim {
@@ -113,7 +113,7 @@ impl<'src> Parser<'src> {
     pub(super) fn delimited<T>(
         &mut self,
         spec: ListSpec,
-        item: impl FnMut(&mut Self) -> PResult<'src, T>,
+        item: impl FnMut(&mut Self) -> PResult<T>,
     ) -> Delimited<T> {
         let open = self.advance_kind(spec.delim.open()).span;
         self.delimited_after(open, spec, item)
@@ -125,13 +125,14 @@ impl<'src> Parser<'src> {
         &mut self,
         open: Span,
         spec: ListSpec,
-        item: impl FnMut(&mut Self) -> PResult<'src, T>,
+        item: impl FnMut(&mut Self) -> PResult<T>,
     ) -> Delimited<T> {
         let list = self.list_items(spec.item, spec.item_start, &[spec.delim.close()], item);
         let close = if list.broken {
             self.previous.span.point_after()
         } else {
-            self.close_delimiter(open, spec.delim)
+            let after_item = !list.items.is_empty() && list.trailing.is_none();
+            self.close_list(open, spec.delim, after_item)
         };
         Delimited {
             open,
@@ -149,7 +150,7 @@ impl<'src> Parser<'src> {
         until: &[TokT],
         noun: &'static str,
         item_start: &'static [TokT],
-        item: impl FnMut(&mut Self) -> PResult<'src, T>,
+        item: impl FnMut(&mut Self) -> PResult<T>,
     ) -> Vec<T> {
         self.list_items(noun, item_start, until, item).items
     }
@@ -170,7 +171,7 @@ impl<'src> Parser<'src> {
         noun: &'static str,
         item_start: &'static [TokT],
         close: &[TokT],
-        mut item: impl FnMut(&mut Self) -> PResult<'src, T>,
+        mut item: impl FnMut(&mut Self) -> PResult<T>,
     ) -> ListItems<T> {
         // The opener's line, or for `separated` the line of the token before the first item.
         let start_line = self.previous.span.line;
@@ -187,10 +188,8 @@ impl<'src> Parser<'src> {
             }
             if self.check(TokT::Comma) {
                 // `f(,)` / `f(a,,b)`
-                self.errors.push(ParserError::ParseError {
-                    token: self.current,
-                    message: format!("Expected {noun}, found ','."),
-                });
+                self.errors
+                    .push(self.err_unexpected(Expected::Item(noun), None));
                 self.advance();
                 continue;
             }
@@ -214,12 +213,12 @@ impl<'src> Parser<'src> {
                 continue;
             }
             if self.check_any(item_start) && self.missing_separator(close, start_line) {
-                self.errors.push(ParserError::MissingToken {
-                    expected: TokT::Comma,
-                    after: noun,
-                    found: self.current,
-                    span: self.previous.span.point_after(),
-                });
+                let kind = ParseErrorKind::MissingSeparator {
+                    item: noun,
+                    found: self.found(),
+                };
+                self.errors
+                    .push(ParseError::new(kind, self.previous.span.point_after()));
                 continue;
             }
             break;
@@ -250,21 +249,33 @@ impl<'src> Parser<'src> {
     /// (`List<List<number> = []` would skip past the `=`), and when a list that fit on one line ended at a line
     /// break, where the next line is new code (`f(a, b⏎g(c);`).
     ///
-    /// For `>`, a `>=` is split: `List<number>= []` lexes `>=`, so the `>` is consumed and `=` stays current.
+    /// A closer glued to the next token is split off it (see [`glued_rest`]).
     pub(super) fn close_delimiter(&mut self, open: Span, delim: Delim) -> Span {
+        self.close_list(open, delim, false)
+    }
+
+    /// [`Self::close_delimiter`] for a list. `after_item`: the list ended right after an item, so unless the
+    /// current token ends the statement, a `,` is as likely a fix as the closer, and the error names both. Not for
+    /// `<>` and `|…|`, whose next token always belongs to the code around them (`List<number> =`).
+    fn close_list(&mut self, open: Span, delim: Delim, after_item: bool) -> Span {
         let close = delim.close();
         if self.check(close) {
             return self.advance().span;
         }
-        if close == TokT::Greater && self.check(TokT::GreaterEqual) {
-            return self.split_greater_equal();
+        if let Some(rest) = glued_rest(close, self.current.kind) {
+            return self.split_current(close, rest).span;
         }
-        self.errors.push(ParserError::Unclosed {
-            close,
+        let kind = ParseErrorKind::UnclosedDelimiter {
             open,
-            found: self.current,
-            span: self.expected_span(),
-        });
+            close,
+            found: self.found(),
+            after_item: after_item
+                && !matches!(delim, Delim::Angle | Delim::Pipe)
+                && !self.at_line_start()
+                && !self.at_list_boundary(),
+        };
+        self.errors
+            .push(ParseError::new(kind, self.expected_span()));
         let at_line_break = self.at_line_start() && self.previous.span.line == open.line;
         if matches!(delim, Delim::Angle | Delim::Pipe) || at_line_break {
             return self.previous.span.point_after();
@@ -276,32 +287,14 @@ impl<'src> Parser<'src> {
             self.previous.span.point_after()
         }
     }
+}
 
-    /// Consumes the `>` of a current `>=` and leaves `=` as the current token. Returns the `>`'s span.
-    fn split_greater_equal(&mut self) -> Span {
-        let token = self.current;
-        let mid = token.span.start + 1;
-        let greater = Token::new(
-            TokT::Greater,
-            Span {
-                end: mid,
-                ..token.span
-            },
-            &token.lexeme[..1],
-        );
-        let equal = Token::new(
-            TokT::Equal,
-            Span {
-                start: mid,
-                ..token.span
-            },
-            &token.lexeme[1..],
-        );
-        // A manual `advance` that keeps `next`: the `=` half takes the current slot.
-        self.steps.set(0);
-        self.pos += 1;
-        self.previous = greater;
-        self.current = equal;
-        greater.span
+/// The rest of `found` when it is the closer `close` glued to the next token by the scanner's longest match:
+/// `List<number>= []` lexes `>=`. The only closer that prefixes another token is `>`; `>>` would join here if
+/// it ever becomes an operator.
+fn glued_rest(close: TokT, found: TokT) -> Option<TokT> {
+    match (close, found) {
+        (TokT::Greater, TokT::GreaterEqual) => Some(TokT::Equal),
+        _ => None,
     }
 }

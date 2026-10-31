@@ -4,17 +4,17 @@ use super::helpers::*;
 
 #[test]
 fn test_missing_semicolon_before_a_new_line_points_after_the_previous_token() {
-    assert_parse_errors("let a = 1\nlet b = 2;", &["1:10"]);
+    assert_parse_errors("let a = 1\nlet b = 2;", &[("E1010", "1:10")]);
 }
 
 #[test]
 fn test_missing_semicolon_on_the_same_line_is_reported_once() {
-    assert_parse_errors("let a = 1 2; let b = 3;", &["1:11"]);
+    assert_parse_errors("let a = 1 2; let b = 3;", &[("E1010", "1:11")]);
 }
 
 #[test]
 fn test_function_body_has_no_tail_expression() {
-    assert_parse_errors("func f(): number { 1 }", &["1:22"]);
+    assert_parse_errors("func f(): number { 1 }", &[("E1010", "1:22")]);
 }
 
 #[test]
@@ -26,14 +26,14 @@ fn test_block_expression_tail() {
 #[test]
 fn test_brace_statement_has_no_continuation() {
     // `{ … }` at statement start is a whole statement, so `+ 1` starts a new (invalid) one.
-    assert_parse_errors("func f() { { 1 } + 1; }", &["1:18"]);
+    assert_parse_errors("func f() { { 1 } + 1; }", &[("E1010", "1:18")]);
 }
 
 #[test]
 fn test_recovery_restarts_at_a_line_start_if() {
     let source = "func f() {\n let x = 1 * * 2\n if c { g(); }\n h(;\n}";
     // `if` is parsed: the only other error is the one inside `h(`.
-    assert_parse_errors(source, &["2:14", "4:4"]);
+    assert_parse_errors(source, &[("E1010", "2:14"), ("E1012", "4:4")]);
 }
 
 #[test]
@@ -63,7 +63,10 @@ fn test_one_bad_method_does_not_abort_the_impl() {
     let source =
         "impl P {\n func a(self) { 1 + ; }\n func b(self x) {}\n func c(self) {}\n}\nlet y = 1;";
     // `self x`: a missing `,`, then `x` without a type. Method `c` and the `let` still parse.
-    assert_parse_errors(source, &["2:21", "3:13", "3:15"]);
+    assert_parse_errors(
+        source,
+        &[("E1010", "2:21"), ("E1013", "3:13"), ("E1010", "3:15")],
+    );
 }
 
 #[test]
@@ -85,14 +88,14 @@ fn test_error_inside_interpolation_recovers() {
 
 #[test]
 fn test_lexer_symbol_is_dropped() {
-    assert_parse_errors("let a = 1 @;", &["1:11"]);
+    assert_parse_errors("let a = 1 @;", &[("E1000", "1:11")]);
 }
 
 #[test]
 fn test_unterminated_string_suppresses_later_errors() {
-    assert_error_count("let a = (1; let b = \"abc", 2);
-    assert_error_contains("let b = \"abc", "Unterminated string");
-    assert_error_count("let b = \"abc", 1);
+    assert_error_count(r#"let a = (1; let b = "abc"#, 2);
+    assert_error_contains(r#"let b = "abc"#, "unterminated string");
+    assert_error_count(r#"let b = "abc"#, 1);
 }
 
 #[test]

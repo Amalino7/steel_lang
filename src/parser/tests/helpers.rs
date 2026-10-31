@@ -4,7 +4,7 @@
 //! (1-based, columns counted in characters), and spans as the source text they cover.
 
 use crate::parser::Parser;
-use crate::parser::error::ParserError;
+use crate::parser::error::ParseError;
 use crate::parser::printer::{Node, file_node};
 use crate::scanner::{FileId, Scanner, Span};
 
@@ -12,7 +12,7 @@ fn parser(src: &str) -> Parser<'_> {
     Parser::new(Scanner::new(src, FileId(0)))
 }
 
-fn parse_errors(src: &str) -> Vec<ParserError<'_>> {
+fn parse_errors(src: &str) -> Vec<ParseError> {
     parser(src).parse().err().unwrap_or_default()
 }
 
@@ -81,19 +81,37 @@ pub fn assert_parses_ok(src: &str) {
     parse_tree(src);
 }
 
-/// Every reported error starts at the given `line:col`, in the order reported, and there are no others.
+/// The reported errors, as `(code, line:col)` of their start, in order, and no others.
 #[track_caller]
-pub fn assert_parse_errors(src: &str, positions: &[&str]) {
+pub fn assert_parse_errors(src: &str, expected: &[(&str, &str)]) {
     let errors = parse_errors(src);
     let found: Vec<_> = errors
         .iter()
-        .map(|e| position(src, e.span().start))
+        .map(|e| (e.code(), position(src, e.span.start)))
+        .collect();
+    let expected: Vec<_> = expected
+        .iter()
+        .map(|&(code, pos)| (code, pos.to_string()))
         .collect();
     assert_eq!(
         found,
-        positions,
-        "error positions for `{src}`; messages: {:#?}",
+        expected,
+        "errors for `{src}`; messages: {:#?}",
         errors.iter().map(|e| e.message()).collect::<Vec<_>>()
+    );
+}
+
+/// The file produces exactly one error, and it covers exactly `expected` in the source.
+#[track_caller]
+pub fn assert_span_of_error(src: &str, expected: &str) {
+    let errors = parse_errors(src);
+    let [error] = errors.as_slice() else {
+        panic!("expected one error for `{src}`, got {errors:#?}");
+    };
+    assert_eq!(
+        &src[error.span.to_range()],
+        expected,
+        "error span in `{src}`"
     );
 }
 
