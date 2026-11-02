@@ -62,16 +62,15 @@ mod tests {
             .parse()
             .unwrap_or_else(|errs| panic!("the prelude must parse: {errs:#?}"));
         let mut names = HashSet::new();
-        for stmt in &parsed.body {
+        for stmt in &parsed.stmts {
             match stmt {
-                Stmt::ExternFunction { name, .. } => {
-                    names.insert(name.lexeme.to_string());
+                Stmt::Fn(decl) if decl.is_extern() => {
+                    names.insert(decl.sig.name.name.to_string());
                 }
-                Stmt::Impl { name, methods, .. } => {
-                    for method in methods {
-                        if let Stmt::ExternFunction { name: method, .. } = method {
-                            names.insert(format!("{}.{}", name.0.lexeme, method.lexeme));
-                        }
+                Stmt::Impl(decl) => {
+                    for method in decl.methods.iter().filter(|m| m.is_extern()) {
+                        let target = decl.target.name.name;
+                        names.insert(format!("{target}.{}", method.sig.name.name));
                     }
                 }
                 _ => {}

@@ -39,7 +39,7 @@ fn test_if_else_if_chain() {
 fn test_while_statement() {
     assert_parses(
         "while x > 0 { x = x - 1; }",
-        "(while (> x 0) (block-stmt (assign x (- x 1))))",
+        "(while (> x 0) (body (assign x (- x 1))))",
     );
 }
 
@@ -47,11 +47,11 @@ fn test_while_statement() {
 fn test_return_statement() {
     assert_parses(
         "func foo(): void { return; }",
-        "(func foo (ret (type void)) (block-stmt (return (void))))",
+        "(func foo (ret (type void)) (body (return)))",
     );
     assert_parses(
         "func foo(): number { return 1; }",
-        "(func foo (ret (type number)) (block-stmt (return 1)))",
+        "(func foo (ret (type number)) (body (return 1)))",
     );
 }
 

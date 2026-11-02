@@ -14,11 +14,12 @@
 //! Positions give atoms their meaning: bare identifiers in expression position are variable references, and
 //! every binding site is tagged (`(bind x)`, `(param x T)`, `(field x T)`), so the two never look alike. Types are
 //! always tagged (`(type number)`) because a bare type name would read as a variable. `?` stands for an omitted
-//! type annotation. A field being read or written prints as `.field`. Names that can be confused with a plain identifier are kept as lists: `(void)`, `(text "a")`
-//! for the literal parts of an interpolated string.
+//! type annotation, and an omitted return type prints nothing. A field being read or written prints as `.field`.
+//! The wildcard `_` and a `self` parameter are atoms. The literal parts of an interpolated string are kept as
+//! lists, `(text "a")`, since a bare `"a"` would read as a string literal.
 
 use crate::parser::ast::*;
-use crate::scanner::{Span, Token};
+use crate::scanner::Span;
 use std::fmt::Write;
 
 /// Lines longer than this are broken up by [`Node::pretty_print`].
@@ -60,13 +61,16 @@ impl Node {
     }
 
     /// An identifier that names something being declared or accessed (`name` atoms).
-    fn name(token: &Token) -> Self {
-        Node::atom("name", token.lexeme, token.span)
+    fn name(ident: &Ident) -> Self {
+        Node::atom("name", ident.name, ident.span)
     }
 
     /// The `public` modifier atom, when present.
-    fn public(is_public: bool) -> Option<Self> {
-        is_public.then(|| Node::atom("public", "public", None))
+    fn public(vis: Visibility) -> Option<Self> {
+        match vis {
+            Visibility::Public(span) => Some(Node::atom("public", "public", span)),
+            Visibility::Private => None,
+        }
     }
 
     fn head(mut self, text: impl Into<String>) -> Self {
@@ -216,371 +220,328 @@ impl Node {
 pub fn file_node(file: &ParsedFile) -> Node {
     Node::list("file", None)
         .children(file.imports.iter().map(import_node))
-        .children(file.body.iter().map(stmt_node))
+        .children(file.stmts.iter().map(stmt_node))
 }
 
 pub fn file_to_string(file: &ParsedFile, spans: bool) -> String {
     file_node(file).pretty_print(spans)
 }
 
-pub fn import_node(import: &ImportStmt) -> Node {
-    fn segment(seg: &ImportSegment) -> String {
+pub fn import_node(import: &Import) -> Node {
+    fn tree(node: &ImportTree) -> String {
         let mut s = String::new();
-        for part in &seg.path {
-            let _ = write!(s, "{}/", part.lexeme);
+        for part in &node.path {
+            let _ = write!(s, "{}/", part.name);
         }
-        match &seg.import_type {
-            ImportType::Simple { terminator } => s.push_str(terminator.lexeme),
-            ImportType::Alias { terminator, alias } => {
-                let _ = write!(s, "{} as {}", terminator.lexeme, alias.lexeme);
+        match &node.kind {
+            ImportKind::Item { name } => s.push_str(name.name),
+            ImportKind::Alias { name, alias } => {
+                let _ = write!(s, "{} as {}", name.name, alias.name);
             }
-            ImportType::Group { options } => {
-                let parts: Vec<_> = options.iter().map(segment).collect();
+            ImportKind::Group(group) => {
+                let parts: Vec<_> = group.items.iter().map(tree).collect();
                 let _ = write!(s, "{{{}}}", parts.join(", "));
             }
-            ImportType::Wildcard(_) => s.push('*'),
+            ImportKind::Wildcard(_) => s.push('*'),
         }
         s
     }
-    Node::list("import", import.span()).child(Node::atom("path", segment(&import.segment), None))
+    Node::list("import", import.span).child(Node::atom("path", tree(&import.tree), None))
+}
+
+/// `?` stands for an omitted annotation, which has no source text and so no span.
+fn opt_type_node(ty: Option<&TypeAst>) -> Node {
+    ty.map_or_else(|| Node::atom("infer", "?", None), type_node)
 }
 
 fn type_node(ty: &TypeAst) -> Node {
-    match ty {
-        TypeAst::Optional(inner) => Node::list("optional", ty.span()).child(type_node(inner)),
-        TypeAst::Named(name, args) => Node::list("type", ty.span())
-            .child(Node::name(name))
-            .children(args.iter().map(type_node)),
-        TypeAst::Function(_, sig) => fn_type_node(ty.span(), sig),
-        TypeAst::Tuple(types) => {
-            Node::list("tuple-type", ty.span()).children(types.iter().map(type_node))
+    match &ty.kind {
+        TypeAstKind::Optional(inner) => Node::list("optional", ty.span).child(type_node(inner)),
+        TypeAstKind::Named(named) => named_type_node(named),
+        TypeAstKind::Fn { params, ret } => Node::list("fn-type", ty.span)
+            .children(params.iter().map(type_node))
+            .children(ret.as_deref().map(ret_node)),
+        TypeAstKind::Tuple(types) => {
+            Node::list("tuple-type", ty.span).children(types.iter().map(type_node))
         }
-        // `Infer` has no source text, so it has no span to show.
-        TypeAst::Infer => Node::atom("infer", "?", None),
     }
 }
 
-fn fn_type_node(span: Span, sig: &FunctionSig) -> Node {
-    Node::list("fn-type", span)
-        .children(sig.params.iter().map(|(_, ty)| type_node(ty)))
-        .child(ret_node(&sig.return_type))
+fn named_type_node(named: &NamedType) -> Node {
+    Node::list("type", named.span)
+        .child(Node::name(&named.name))
+        .children(named.args.iter().map(type_node))
 }
 
 fn ret_node(ty: &TypeAst) -> Node {
-    Node::list("ret", None).child(type_node(ty))
+    Node::list("ret", ty.span).child(type_node(ty))
 }
 
-fn param_node(name: &Token, ty: &TypeAst) -> Node {
-    Node::list("param", name.span)
-        .child(Node::name(name))
-        .child(type_node(ty))
+fn param_node(param: &Param) -> Node {
+    match param {
+        Param::SelfParam(span) => Node::atom("self", "self", *span),
+        Param::Named { name, ty } => Node::list("param", param.span())
+            .child(Node::name(name))
+            .child(type_node(ty)),
+    }
 }
 
-fn generics_node(generics: &[Token]) -> Option<Node> {
-    let (first, last) = (generics.first()?, generics.last()?);
-    Some(
-        Node::list("generics", first.span.merge(last.span))
-            .children(generics.iter().map(Node::name)),
-    )
+fn generics_node(generics: &Generics) -> Option<Node> {
+    let list = generics.0.as_ref()?;
+    Some(Node::list("generics", list.span()).children(list.items.iter().map(Node::name)))
 }
 
-fn sig_nodes(sig: &FunctionSig) -> Vec<Node> {
-    let mut nodes: Vec<Node> = sig.params.iter().map(|(n, t)| param_node(n, t)).collect();
-    nodes.push(ret_node(&sig.return_type));
+fn sig_nodes(sig: &FnSig) -> Vec<Node> {
+    let mut nodes = vec![Node::name(&sig.name)];
+    nodes.extend(generics_node(&sig.generics));
+    nodes.extend(sig.params.items.iter().map(param_node));
+    nodes.extend(sig.ret.as_ref().map(ret_node));
     nodes
 }
 
-fn field_node(field: &StructField) -> Node {
-    Node::list("field", field.name.span)
-        .children(Node::public(field.is_public))
+fn field_node(field: &FieldDecl) -> Node {
+    Node::list("field", field.span)
+        .children(Node::public(field.vis))
         .child(Node::name(&field.name))
-        .child(type_node(&field.type_info))
+        .child(type_node(&field.ty))
+}
+
+fn body_node(body: &Block) -> Node {
+    Node::list("body", body.span).children(body.stmts.iter().map(stmt_node))
+}
+
+fn fn_node(decl: &FnDecl) -> Node {
+    let kind = if decl.is_extern() {
+        "extern-func"
+    } else {
+        "func"
+    };
+    Node::list(kind, decl.span)
+        .children(Node::public(decl.vis))
+        .children(sig_nodes(&decl.sig))
+        .children(decl.body.as_ref().map(body_node))
 }
 
 fn binding_node(binding: &Binding) -> Node {
-    match binding {
-        Binding::Variable(name) => Node::list("bind", name.span).child(Node::name(name)),
-        Binding::Tuple { fields } => {
-            Node::list("bind-tuple", binding.span()).children(fields.iter().map(binding_node))
+    let span = binding.span;
+    match &binding.kind {
+        BindingKind::Wildcard => Node::atom("wildcard", "_", span),
+        BindingKind::Name(name) => Node::list("bind", span).child(Node::name(name)),
+        BindingKind::Tuple(fields) => {
+            Node::list("bind-tuple", span).children(fields.iter().map(binding_node))
         }
-        Binding::Struct { name, fields } => Node::list("bind-struct", binding.span())
+        BindingKind::Struct { name, fields } => Node::list("bind-struct", span)
             .child(Node::name(name))
-            .children(fields.iter().map(|(field, inner)| {
-                Node::list("bind-field", field.span.merge(inner.span()))
-                    .child(Node::name(field))
-                    .child(binding_node(inner))
+            .children(fields.iter().map(|field| {
+                Node::list("bind-field", field.span)
+                    .child(Node::name(&field.field))
+                    .child(binding_node(&field.binding))
             })),
     }
 }
 
 fn pattern_node(pattern: &Pattern) -> Node {
-    match pattern {
-        Pattern::Variable(name) => Node::list("pat-var", name.span).child(Node::name(name)),
-        Pattern::Named {
+    let span = pattern.span;
+    match &pattern.kind {
+        PatternKind::Wildcard => Node::atom("wildcard", "_", span),
+        PatternKind::Name(name) => Node::list("pat-name", span).child(Node::name(name)),
+        PatternKind::Variant {
             enum_name,
-            variant_name,
-            bind,
+            variant,
+            payload,
         } => {
-            let (text, span) = match enum_name {
+            let (text, name_span) = match enum_name {
                 Some(e) => (
-                    format!("{}.{}", e.lexeme, variant_name.lexeme),
-                    e.span.merge(variant_name.span),
+                    format!("{}.{}", e.name, variant.name),
+                    e.span.merge(variant.span),
                 ),
-                None => (format!(".{}", variant_name.lexeme), variant_name.span),
+                None => (format!(".{}", variant.name), variant.span),
             };
             Node::list("pat", span)
-                .child(Node::atom("name", text, span))
-                .children(bind.iter().map(binding_node))
+                .child(Node::atom("name", text, name_span))
+                .children(payload.iter().map(binding_node))
         }
     }
 }
 
 fn stmt_node(stmt: &Stmt) -> Node {
-    let span = stmt.span();
     match stmt {
-        Stmt::Expression(e) => expr_node(e),
-        Stmt::Let {
-            is_public,
-            binding,
-            value,
-            type_info,
-        } => Node::list("let", span)
-            .children(Node::public(*is_public))
-            .child(binding_node(binding))
-            .child(type_node(type_info))
-            .child(expr_node(value)),
-        Stmt::Block { body, .. } => {
-            Node::list("block-stmt", span).children(body.iter().map(stmt_node))
-        }
-        Stmt::While { condition, body } => Node::list("while", span)
-            .child(expr_node(condition))
-            .child(stmt_node(body)),
-        Stmt::Function {
-            is_public,
-            name,
-            body,
-            generics,
-            signature,
-        } => Node::list("func", span)
-            .children(Node::public(*is_public))
-            .child(Node::name(name))
-            .children(generics_node(generics))
-            .children(sig_nodes(signature))
-            .child(stmt_node(body)),
-        Stmt::ExternFunction {
-            is_public,
-            name,
-            generics,
-            signature,
-        } => Node::list("extern-func", span)
-            .children(Node::public(*is_public))
-            .child(Node::name(name))
-            .children(generics_node(generics))
-            .children(sig_nodes(signature)),
-        Stmt::Struct {
-            is_public,
-            name,
-            fields,
-            generics,
-        } => Node::list("struct", span)
-            .children(Node::public(*is_public))
-            .child(Node::name(name))
-            .children(generics_node(generics))
-            .children(fields.iter().map(field_node)),
-        Stmt::Impl {
-            interfaces,
-            name,
-            methods,
-            generics,
-        } => {
-            let (target, args) = name;
-            let target_span = args
-                .last()
-                .map_or(target.span, |a| target.span.merge(a.span()));
-            Node::list("impl", span)
-                .children(generics_node(generics))
-                .child(
-                    Node::list("type", target_span)
-                        .child(Node::name(target))
-                        .children(args.iter().map(type_node)),
-                )
-                .children((!interfaces.is_empty()).then(|| {
-                    Node::list("interfaces", None).children(interfaces.iter().map(Node::name))
-                }))
-                .children(methods.iter().map(stmt_node))
-        }
-        Stmt::Interface {
-            is_public,
-            name,
-            methods,
-            generics,
-        } => Node::list("interface", span)
-            .children(Node::public(*is_public))
-            .child(Node::name(name))
-            .children(generics_node(generics))
-            .children(methods.iter().map(|m| {
-                Node::list("method-sig", m.name.span)
-                    .child(Node::name(&m.name))
-                    .children(generics_node(&m.generics))
-                    .children(sig_nodes(&m.signature))
-            })),
-        Stmt::Enum {
-            is_public,
-            name,
-            variants,
-            generics,
-        } => Node::list("enum", span)
-            .children(Node::public(*is_public))
-            .child(Node::name(name))
-            .children(generics_node(generics))
-            .children(variants.iter().map(|(variant, kind)| {
-                let node = Node::list("variant", variant.span).child(Node::name(variant));
-                match kind {
-                    VariantType::Unit => node,
-                    VariantType::Tuple(types) => node.children(types.iter().map(type_node)),
-                    VariantType::Struct(fields) => node.children(fields.iter().map(field_node)),
+        Stmt::Expr(e) => expr_node(e),
+        Stmt::Let(decl) => Node::list("let", decl.span)
+            .children(Node::public(decl.vis))
+            .child(binding_node(&decl.binding))
+            .child(opt_type_node(decl.ty.as_ref()))
+            .child(expr_node(&decl.value)),
+        Stmt::While(stmt) => Node::list("while", stmt.span)
+            .child(expr_node(&stmt.condition))
+            .child(body_node(&stmt.body)),
+        Stmt::Fn(decl) => fn_node(decl),
+        Stmt::Struct(decl) => Node::list("struct", decl.span)
+            .children(Node::public(decl.vis))
+            .child(Node::name(&decl.name))
+            .children(generics_node(&decl.generics))
+            .children(decl.fields.iter().map(field_node)),
+        Stmt::Impl(decl) => Node::list("impl", decl.span)
+            .children(generics_node(&decl.generics))
+            .child(named_type_node(&decl.target))
+            .children((!decl.interfaces.is_empty()).then(|| {
+                Node::list("interfaces", None).children(decl.interfaces.iter().map(named_type_node))
+            }))
+            .children(decl.methods.iter().map(fn_node)),
+        Stmt::Interface(decl) => Node::list("interface", decl.span)
+            .children(Node::public(decl.vis))
+            .child(Node::name(&decl.name))
+            .children(generics_node(&decl.generics))
+            .children(
+                decl.methods
+                    .iter()
+                    .map(|m| Node::list("method-sig", m.span).children(sig_nodes(&m.sig))),
+            ),
+        Stmt::Enum(decl) => Node::list("enum", decl.span)
+            .children(Node::public(decl.vis))
+            .child(Node::name(&decl.name))
+            .children(generics_node(&decl.generics))
+            .children(decl.variants.iter().map(|variant| {
+                let node = Node::list("variant", variant.span).child(Node::name(&variant.name));
+                match &variant.payload {
+                    VariantPayload::Unit => node,
+                    VariantPayload::Tuple(types) => node.children(types.iter().map(type_node)),
+                    VariantPayload::Struct(fields) => node.children(fields.iter().map(field_node)),
                 }
             })),
     }
 }
 
 /// A field being read or written prints as `.field`, so it is not mistaken for a variable next to the object.
-fn field_access(field: &Token) -> Node {
-    Node::atom("name", format!(".{}", field.lexeme), field.span)
+fn member_node(member: &Member) -> Node {
+    let kind = match member {
+        Member::Named(_) => "name",
+        Member::Index(_) => "tuple-index",
+    };
+    Node::atom(kind, format!(".{member}"), member.span())
 }
 
 /// Unlabeled arguments are just their expression; labeled ones print as `(label: expr)`.
 fn arg_node(arg: &CallArg) -> Node {
     match &arg.label {
-        Some(label) => Node::list("arg", arg.expr.span())
-            .head(format!("{}:", label.lexeme))
-            .child(expr_node(&arg.expr)),
-        None => expr_node(&arg.expr),
+        Some(label) => Node::list("arg", arg.span())
+            .head(format!("{}:", label.name))
+            .child(expr_node(&arg.value)),
+        None => expr_node(&arg.value),
     }
 }
 
+/// The kind of a node that has a safe (`?`) form: `call` or `call?`.
+fn safe_kind(safe: Option<Span>, plain: &'static str, safe_name: &'static str) -> &'static str {
+    if safe.is_some() { safe_name } else { plain }
+}
+
 fn expr_node(expr: &Expr) -> Node {
-    let span = expr.span();
-    let safe_kind = |safe: bool, plain: &'static str, safe_name: &'static str| {
-        if safe { safe_name } else { plain }
-    };
-    match expr {
-        Expr::Error(span) => Node::list("error", *span),
-        Expr::Unary {
-            operator,
-            expression,
-        } => Node::list("unary", span)
-            .head(operator.lexeme)
-            .child(expr_node(expression)),
-        Expr::Binary {
-            operator,
-            left,
-            right,
-        } => Node::list("binary", span)
-            .head(operator.lexeme)
+    let span = expr.span;
+    match &expr.kind {
+        ExprKind::Error => Node::list("error", span),
+        ExprKind::Unary { op, operand } => Node::list("unary", span)
+            .head(op.node.as_str())
+            .child(expr_node(operand)),
+        ExprKind::Try { operand, .. } => Node::list("try", span).child(expr_node(operand)),
+        ExprKind::Binary { left, op, right } => Node::list("binary", span)
+            .head(op.node.as_str())
             .child(expr_node(left))
             .child(expr_node(right)),
-        Expr::Logical {
-            left,
-            operator,
-            right,
-        } => Node::list("logical", span)
-            .head(operator.lexeme)
+        ExprKind::Logical { left, op, right } => Node::list("logical", span)
+            .head(op.node.as_str())
             .child(expr_node(left))
             .child(expr_node(right)),
-        Expr::Variable { name } => Node::atom("var", name.lexeme, span),
-        Expr::Grouping { expression } => Node::list("group", span).child(expr_node(expression)),
-        Expr::Literal { literal, .. } => match literal {
+        ExprKind::Coalesce { left, right, .. } => Node::list("coalesce", span)
+            .head("??")
+            .child(expr_node(left))
+            .child(expr_node(right)),
+        ExprKind::Variable(name) => Node::atom("var", name.name, span),
+        ExprKind::Grouping(inner) => Node::list("group", span).child(expr_node(inner)),
+        ExprKind::Literal(literal) => match literal {
             Literal::Number(n) => Node::atom("num", n.to_string(), span),
             Literal::String(s) => Node::atom("str", format!("{s:?}"), span),
             Literal::Boolean(b) => Node::atom("bool", b.to_string(), span),
             Literal::Nil => Node::atom("nil", "nil", span),
-            // `void` is an ordinary identifier, so the value of a bare `return;` stays a list.
+            // `void` is an ordinary identifier, so the literal stays a list.
             Literal::Void => Node::list("void", span),
         },
-        Expr::Is {
-            expression,
-            type_name,
-        } => Node::list("is", span)
-            .child(expr_node(expression))
-            .child(Node::name(type_name)),
-        Expr::Assignment { identifier, value } => Node::list("assign", span)
-            .child(Node::name(identifier))
+        ExprKind::Is { operand, variant } => Node::list("is", span)
+            .child(expr_node(operand))
+            .child(Node::name(variant)),
+        ExprKind::Assign { target, value } => Node::list("assign", span)
+            .child(Node::name(target))
             .child(expr_node(value)),
-        Expr::TypeSpecialization { callee, generics } => Node::list("specialize", span)
+        ExprKind::TypeSpecialization { callee, type_args } => Node::list("specialize", span)
             .child(expr_node(callee))
-            .children(generics.iter().map(type_node)),
-        Expr::Call {
-            callee,
-            arguments,
-            safe,
-        } => Node::list(safe_kind(*safe, "call", "call?"), span)
-            .child(expr_node(callee))
-            .children(arguments.iter().map(arg_node)),
-        Expr::Get {
-            safe,
+            .children(type_args.items.iter().map(type_node)),
+        ExprKind::Call { callee, safe, args } => {
+            Node::list(safe_kind(*safe, "call", "call?"), span)
+                .child(expr_node(callee))
+                .children(args.items.iter().map(arg_node))
+        }
+        ExprKind::Field {
             object,
-            field,
-        } => Node::list(safe_kind(*safe, "get", "get?"), span)
+            safe,
+            member,
+        } => Node::list(safe_kind(*safe, "field", "field?"), span)
             .child(expr_node(object))
-            .child(field_access(field)),
-        Expr::Set {
-            safe,
+            .child(member_node(member)),
+        ExprKind::SetField {
             object,
-            field,
+            safe,
+            member,
             value,
-        } => Node::list(safe_kind(*safe, "set", "set?"), span)
+        } => Node::list(safe_kind(*safe, "set-field", "set-field?"), span)
             .child(expr_node(object))
-            .child(field_access(field))
+            .child(member_node(member))
             .child(expr_node(value)),
-        Expr::Tuple { elements } => {
+        ExprKind::Tuple(elements) => {
             Node::list("tuple", span).children(elements.iter().map(expr_node))
         }
-        Expr::List { elements, .. } => {
+        ExprKind::List(elements) => {
             Node::list("list", span).children(elements.iter().map(expr_node))
         }
-        Expr::Map { kv_pairs, .. } => {
-            Node::list("map", span).children(kv_pairs.iter().map(|(k, v)| {
-                Node::list("entry", k.span().merge(v.span()))
-                    .child(expr_node(k))
-                    .child(expr_node(v))
-            }))
-        }
-        Expr::GetIndex {
-            safe,
+        ExprKind::Map(entries) => Node::list("map", span).children(entries.iter().map(|entry| {
+            Node::list("entry", entry.span())
+                .child(expr_node(&entry.key))
+                .child(expr_node(&entry.value))
+        })),
+        ExprKind::Index {
             object,
+            safe,
             index,
         } => Node::list(safe_kind(*safe, "index", "index?"), span)
             .child(expr_node(object))
             .child(expr_node(index)),
-        Expr::SetIndex {
-            safe,
+        ExprKind::SetIndex {
             object,
+            safe,
             index,
             value,
         } => Node::list(safe_kind(*safe, "set-index", "set-index?"), span)
             .child(expr_node(object))
             .child(expr_node(index))
             .child(expr_node(value)),
-        Expr::ForceUnwrap { expression, .. } => {
-            Node::list("unwrap", span).child(expr_node(expression))
+        ExprKind::ForceUnwrap { operand, .. } => {
+            Node::list("unwrap", span).child(expr_node(operand))
         }
         // Literal parts stay wrapped: a bare `"a"` would read as a string literal inside the interpolation.
-        Expr::StringInterp { parts, .. } => {
+        ExprKind::StringInterp(parts) => {
             Node::list("interp", span).children(parts.iter().map(|part| match part {
-                StringPart::Literal(s) => {
-                    Node::list("text", None).child(Node::atom("str", format!("{s:?}"), None))
+                StringPart::Literal { value, span } => {
+                    Node::list("text", *span).child(Node::atom("str", format!("{value:?}"), *span))
                 }
                 StringPart::Expr(e) => expr_node(e),
             }))
         }
-        Expr::Block { body, tail, .. } => Node::list("block", span)
-            .children(body.iter().map(stmt_node))
+        ExprKind::Block { stmts, tail } => Node::list("block", span)
+            .children(stmts.iter().map(stmt_node))
             .children(
                 tail.iter()
-                    .map(|t| Node::list("tail", t.span()).child(expr_node(t))),
+                    .map(|t| Node::list("tail", t.span).child(expr_node(t))),
             ),
-        Expr::IfExpr {
+        ExprKind::If {
             condition,
             then_branch,
             else_branch,
@@ -588,22 +549,23 @@ fn expr_node(expr: &Expr) -> Node {
             .child(expr_node(condition))
             .child(expr_node(then_branch))
             .children(else_branch.iter().map(|e| expr_node(e))),
-        Expr::MatchExpr { value, arms } => Node::list("match", span)
-            .child(expr_node(value))
+        ExprKind::Match { scrutinee, arms } => Node::list("match", span)
+            .child(expr_node(scrutinee))
             .children(arms.iter().map(|arm| {
-                Node::list("arm", None)
+                Node::list("arm", arm.span)
                     .child(pattern_node(&arm.pattern))
                     .child(expr_node(&arm.body))
             })),
-        Expr::Lambda {
-            params,
-            return_type,
-            body,
-            ..
-        } => Node::list("lambda", span)
-            .children(params.iter().map(|(n, t)| param_node(n, t)))
-            .children(return_type.iter().map(ret_node))
+        ExprKind::Lambda { params, ret, body } => Node::list("lambda", span)
+            .children(params.items.iter().map(|param| {
+                Node::list("param", param.span())
+                    .child(Node::name(&param.name))
+                    .child(opt_type_node(param.ty.as_ref()))
+            }))
+            .children(ret.as_deref().map(ret_node))
             .child(expr_node(body)),
-        Expr::Return { value, .. } => Node::list("return", span).child(expr_node(value)),
+        ExprKind::Return(value) => {
+            Node::list("return", span).children(value.iter().map(|v| expr_node(v)))
+        }
     }
 }

@@ -1,7 +1,7 @@
 //! Control-flow expressions: `if`/`else`, `match` (arms and patterns) and `return`.
 
-use crate::parser::ast::{Binding, Expr, ExprMatchArm, Literal, Pattern};
-use crate::parser::declarations::{BINDING_START, STRUCT_DESTRUCTURE};
+use crate::parser::ast::{Binding, BindingKind, Expr, ExprKind, MatchArm, Pattern, PatternKind};
+use crate::parser::declarations::{BINDING_START, STRUCT_DESTRUCTURE, WILDCARD};
 use crate::parser::error::{ParenContext, ParseError, ParseErrorKind};
 use crate::parser::expressions::EXPR_START;
 use crate::parser::lists::{Delim, ListSpec};
@@ -10,50 +10,47 @@ use crate::parser::{PResult, Parser, TokT};
 
 impl<'src> Parser<'src> {
     pub(super) fn if_expr(&mut self) -> PResult<Expr<'src>> {
-        self.advance_kind(TokT::If);
+        let start = self.advance_kind(TokT::If).span;
         let condition = self.expression()?;
         let then_branch = self.block(true, "if condition")?.into_expr();
 
         let else_branch = if self.try_consume(TokT::Else) {
             if self.check(TokT::If) {
-                Some(Box::new(self.if_expr()?))
+                Some(self.if_expr()?.boxed())
             } else {
-                Some(Box::new(self.block(true, "`else`")?.into_expr()))
+                Some(self.block(true, "`else`")?.into_expr().boxed())
             }
         } else {
             None
         };
 
-        Ok(Expr::IfExpr {
-            condition: Box::new(condition),
-            then_branch: Box::new(then_branch),
-            else_branch,
-        })
+        Ok(Expr::new(
+            ExprKind::If {
+                condition: condition.boxed(),
+                then_branch: then_branch.boxed(),
+                else_branch,
+            },
+            self.span_from(start),
+        ))
     }
 
     /// `return` with an optional value: there is one exactly when the next token can start an expression.
     pub(super) fn return_expr(&mut self) -> PResult<Expr<'src>> {
-        let keyword = self.advance_kind(TokT::Return);
+        let start = self.advance_kind(TokT::Return).span;
         let value = if self.check_any(EXPR_START) {
-            self.expression()?
+            Some(self.expression()?.boxed())
         } else {
-            Expr::Literal {
-                literal: Literal::Void,
-                span: keyword.span,
-            }
+            None
         };
-        Ok(Expr::Return {
-            keyword,
-            value: Box::new(value),
-        })
+        Ok(Expr::new(ExprKind::Return(value), self.span_from(start)))
     }
 
     /// A recovery point: a bad arm is reported and skipped to the next `,` or the closing `}`.
     pub(super) fn match_expr(&mut self) -> PResult<Expr<'src>> {
-        self.advance_kind(TokT::Match);
-        let value = self.expression()?;
+        let start = self.advance_kind(TokT::Match).span;
+        let scrutinee = self.expression()?;
         let open = self.expect(TokT::LeftBrace, "match value")?.span;
-        let mut arms: Vec<ExprMatchArm<'src>> = vec![];
+        let mut arms: Vec<MatchArm<'src>> = vec![];
 
         while !self.check(TokT::RightBrace) && !self.at_eof() {
             let before = self.pos;
@@ -72,67 +69,90 @@ impl<'src> Parser<'src> {
         }
 
         self.close_delimiter(open, Delim::Brace);
-        Ok(Expr::MatchExpr {
-            value: Box::new(value),
-            arms,
-        })
+        Ok(Expr::new(
+            ExprKind::Match {
+                scrutinee: scrutinee.boxed(),
+                arms,
+            },
+            self.span_from(start),
+        ))
     }
 
     /// `pattern => body`, plus its `,`: optional after a block body, otherwise required unless the arm is last.
-    fn match_arm(&mut self) -> PResult<ExprMatchArm<'src>> {
+    fn match_arm(&mut self) -> PResult<MatchArm<'src>> {
         let pattern = self.pattern()?;
         self.expect(TokT::Arrow, "match pattern")?;
-        if self.check(TokT::LeftBrace) {
-            let body = self.block_expr()?;
+        let block_body = self.check(TokT::LeftBrace);
+        let body = if block_body {
+            self.block_expr()?
+        } else {
+            self.expression()?
+        };
+        let span = pattern.span.merge(body.span);
+        if block_body {
             self.try_consume(TokT::Comma);
-            return Ok(ExprMatchArm { pattern, body });
-        }
-        let body = self.expression()?;
-        if !self.check(TokT::RightBrace) {
+        } else if !self.check(TokT::RightBrace) {
             self.expect(TokT::Comma, "match arm")?;
         }
-        Ok(ExprMatchArm { pattern, body })
+        Ok(MatchArm {
+            pattern,
+            body,
+            span,
+        })
     }
 
     pub(super) fn pattern(&mut self) -> PResult<Pattern<'src>> {
+        let start = self.start_span();
         if self.check(TokT::Identifier) && !self.check_next(TokT::Dot) {
-            return Ok(Pattern::Variable(self.advance()));
+            let name = self.advance_ident();
+            let kind = if name.name == WILDCARD {
+                PatternKind::Wildcard
+            } else {
+                PatternKind::Name(name)
+            };
+            return Ok(Pattern {
+                kind,
+                span: name.span,
+            });
         }
 
-        let enum_name = self.try_consume(TokT::Identifier).then_some(self.previous);
+        let enum_name = self.check(TokT::Identifier).then(|| self.advance_ident());
         self.expect(TokT::Dot, "enum name")?;
-        let variant_name = self.expect_ident("`.`")?;
+        let variant = self.expect_ident("`.`")?;
 
-        let bind = if self.check(TokT::LeftParen) {
+        let payload = if self.check(TokT::LeftParen) {
             // `(` is consumed first: telling `.V(x: a)` from `.V(a)` needs the two tokens after it.
             let open = self.advance().span;
             if self.check(TokT::Colon)
                 || (self.check(TokT::Identifier) && self.check_next(TokT::Colon))
             {
-                let fields =
-                    self.delimited_after(open, STRUCT_DESTRUCTURE, Self::destructure_field);
-                Some(Binding::Struct {
-                    name: variant_name,
-                    fields: fields.items,
+                let fields = self.delimited_after(open, STRUCT_DESTRUCTURE, Self::field_binding);
+                Some(Binding {
+                    span: variant.span.merge(fields.close),
+                    kind: BindingKind::Struct {
+                        name: variant,
+                        fields: fields.items,
+                    },
                 })
             } else {
                 let mut bindings =
                     self.delimited_after(open, ListSpec::paren("binding", BINDING_START), |p| {
-                        p.parse_binding("`(`")
+                        p.binding("`(`")
                     });
                 match bindings.items.len() {
                     0 => {
                         if !bindings.failed {
                             self.errors.push(ParseError::new(
                                 ParseErrorKind::EmptyParens(ParenContext::PatternPayload),
-                                bindings.open.merge(bindings.close),
+                                bindings.span(),
                             ));
                         }
                         None
                     }
                     1 => bindings.items.pop(),
-                    _ => Some(Binding::Tuple {
-                        fields: bindings.items,
+                    _ => Some(Binding {
+                        span: bindings.span(),
+                        kind: BindingKind::Tuple(bindings.items),
                     }),
                 }
             }
@@ -140,10 +160,13 @@ impl<'src> Parser<'src> {
             None
         };
 
-        Ok(Pattern::Named {
-            enum_name,
-            variant_name,
-            bind,
+        Ok(Pattern {
+            kind: PatternKind::Variant {
+                enum_name,
+                variant,
+                payload,
+            },
+            span: self.span_from(start),
         })
     }
 }

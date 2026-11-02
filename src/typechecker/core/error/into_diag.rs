@@ -183,6 +183,16 @@ impl IntoDiagnostic for TypeCheckerError {
                 format!("Uncovered pattern: {}", variant),
                 "Uncovered pattern here.",
             ),
+            TypeCheckerError::TupleIndexOnNonTuple { found, span } => DiagBuilder::error(
+                span,
+                code,
+                format!(
+                    "Type '{}' is not a tuple.",
+                    found.display_type(ctx.type_system)
+                ),
+                "Tuple index used here.",
+            )
+            .with_help("Only tuples have numbered elements; access a field or method by name."),
             TypeCheckerError::InvalidTupleIndex {
                 tuple_type,
                 index,
@@ -218,17 +228,20 @@ impl IntoDiagnostic for TypeCheckerError {
                 ).with_optional_origin(err.original, "First defined here.")
             }
             TypeCheckerError::CallParam(err) => {
-                let title = match err.kind {
-                    CallParamKind::Missing => format!("Missing required argument '{}'", err.param_name),
-                    CallParamKind::Undefined => format!("Parameter '{}' does not exist", err.param_name),
+                // A missing argument points at the call's `)`, an undefined one at its label.
+                let (title, label) = match err.kind {
+                    CallParamKind::Missing => (
+                        format!("Missing required argument '{}'", err.param_name),
+                        format!("'{}' is missing here.", err.param_name),
+                    ),
+                    CallParamKind::Undefined => (
+                        format!("Parameter '{}' does not exist", err.param_name),
+                        "No parameter with this name.".to_string(),
+                    ),
                 };
 
-                DiagBuilder::error(
-                    err.span,
-                    code,
-                    title,
-                    "Call occurs here.",
-                ).with_optional_origin(err.callee_origin, "Callee declared here.")
+                DiagBuilder::error(err.span, code, title, label)
+                    .with_optional_origin(err.callee_origin, "Callee declared here.")
             }
             TypeCheckerError::Call(err) => {
                 match err {

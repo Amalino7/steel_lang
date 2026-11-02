@@ -36,6 +36,8 @@ pub enum ParseErrorKind {
     InvalidNumber(NumberError),
     /// `t.01`; the access is still built.
     TupleIndexLeadingZero,
+    /// `t.99999999999999999999`: more than any tuple could hold.
+    TupleIndexTooLarge,
 
     /// Something required is missing. The span is `found`'s, or the point after the previous token when `found`
     /// starts a new line.
@@ -160,6 +162,7 @@ impl ParseError {
             K::InvalidEscape(_) => "E1002",
             K::InvalidNumber(_) => "E1003",
             K::TupleIndexLeadingZero => "E1004",
+            K::TupleIndexTooLarge => "E1005",
 
             K::Expected { .. } => "E1010",
             K::KeywordAsName { .. } => "E1011",
@@ -194,6 +197,7 @@ impl ParseError {
                 "number literal is out of range".to_string()
             }
             K::TupleIndexLeadingZero => "tuple index has a leading zero".to_string(),
+            K::TupleIndexTooLarge => "tuple index is too large".to_string(),
 
             K::Expected {
                 expected,
@@ -291,6 +295,7 @@ impl IntoDiagnostic for ParseError {
             K::InvalidNumber(NumberError::OutOfRange) => error("too large")
                 .with_note("binary, octal and hex literals must fit in a 64-bit integer"),
             K::TupleIndexLeadingZero => error("leading zero").with_help("remove the leading zeros"),
+            K::TupleIndexTooLarge => error("too large"),
 
             K::Expected {
                 expected, found, ..

@@ -2,111 +2,115 @@
 //! (bindings, signatures, generics, annotations) and type syntax.
 
 use crate::parser::ast::{
-    Binding, FunctionSig, MethodSig, Stmt, StructField, TypeAst, VariantType,
+    Binding, BindingKind, EnumDecl, FieldBinding, FieldDecl, FnDecl, FnSig, Generics, Ident,
+    ImplDecl, InterfaceDecl, LetDecl, MethodSig, NamedType, Param, StructDecl, TypeAst,
+    TypeAstKind, Variant, VariantPayload, Visibility,
 };
 use crate::parser::error::{Expected, ParenContext, ParseError, ParseErrorKind};
-use crate::parser::lists::{Delim, Delimited, ListSpec};
+use crate::parser::lists::{Delim, ListSpec, ParsedList};
 use crate::parser::{PResult, Parser, TokT};
-use crate::scanner::{Span, Token, TokenType};
+use crate::scanner::Span;
 
-type FunctionDecl<'src> = (Token<'src>, Vec<Token<'src>>, FunctionSig<'src>);
-type Param<'src> = (Token<'src>, TypeAst<'src>);
-
-/// FIRST set of a type: the tokens `type_block` dispatches on.
+/// FIRST set of a type: the tokens `type_ast` dispatches on.
 pub(super) const TYPE_START: &[TokT] = &[TokT::Identifier, TokT::LeftParen, TokT::Func];
 
-/// FIRST set of a binding: the tokens `parse_binding` accepts.
+/// FIRST set of a binding: the tokens `binding` accepts.
 pub(super) const BINDING_START: &[TokT] = &[TokT::Identifier, TokT::LeftParen];
 
 /// `(key: binding, :name)` after a struct or variant name. Shared by `let` destructuring and match patterns.
 pub(super) const STRUCT_DESTRUCTURE: ListSpec =
     ListSpec::paren("field binding", &[TokT::Identifier, TokT::Colon]);
 
-/// The `void` return type of a signature without `: T`, placed at `span`.
-fn void_at(span: Span) -> TypeAst<'static> {
-    TypeAst::Named(Token::new(TokenType::Identifier, span, "void"), vec![])
-}
+/// The name that matches anything and binds nothing.
+pub(super) const WILDCARD: &str = "_";
 
-/// `public` or nothing, parsed wherever it may appear; the construct decides whether it's allowed.
+/// Where a function declaration appears, which decides whether `self` parameters are allowed.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(super) enum Visibility<'src> {
-    Private,
-    Public(Token<'src>),
-}
-
-impl Visibility<'_> {
-    pub(super) fn is_public(self) -> bool {
-        matches!(self, Visibility::Public(_))
-    }
+pub(super) enum FnContext {
+    Free,
+    Method,
 }
 
 impl<'src> Parser<'src> {
-    pub(super) fn let_declaration(&mut self, vis: Visibility<'src>) -> PResult<Stmt<'src>> {
+    /// `let binding: T = value;`, with `vis` already parsed.
+    pub(super) fn let_declaration(
+        &mut self,
+        vis: Visibility,
+        start: Span,
+    ) -> PResult<LetDecl<'src>> {
         self.advance_kind(TokT::Let);
-        let binding = self.parse_binding("`let`")?;
-        let type_info = self.type_annotation()?.unwrap_or(TypeAst::Infer);
+        let binding = self.binding("`let`")?;
+        let ty = self.type_annotation()?;
         self.expect(TokT::Equal, "variable binding")?;
         let value = self.expression()?;
         self.expect_semi("variable declaration")?;
-        Ok(Stmt::Let {
-            is_public: vis.is_public(),
+        Ok(LetDecl {
+            vis,
             binding,
+            ty,
             value,
-            type_info,
+            span: self.span_from(start),
         })
     }
 
     /// `after` names what precedes the binding, for the "expected a name" error.
-    pub(super) fn parse_binding(&mut self, after: &'static str) -> PResult<Binding<'src>> {
-        match self.current.kind {
+    pub(super) fn binding(&mut self, after: &'static str) -> PResult<Binding<'src>> {
+        let start = self.start_span();
+        let kind = match self.current.kind {
             TokT::LeftParen => {
                 let fields = self.delimited(ListSpec::paren("binding", BINDING_START), |p| {
-                    p.parse_binding("`(`")
+                    p.binding("`(`")
                 });
                 self.validate_tuple(&fields, ParenContext::TuplePattern);
-                Ok(Binding::Tuple {
-                    fields: fields.items,
-                })
+                BindingKind::Tuple(fields.items)
             }
             TokT::Identifier => {
-                let name = self.advance();
+                let name = self.advance_ident();
                 if self.check(TokT::LeftParen) {
-                    let fields = self.delimited(STRUCT_DESTRUCTURE, Self::destructure_field);
-                    Ok(Binding::Struct {
+                    let fields = self.delimited(STRUCT_DESTRUCTURE, Self::field_binding);
+                    BindingKind::Struct {
                         name,
                         fields: fields.items,
-                    })
+                    }
                 } else {
-                    Ok(Binding::Variable(name))
+                    name_binding(name)
                 }
             }
             // Always an error here; reports keywords used as names specifically.
-            _ => self.expect_ident(after).map(Binding::Variable),
-        }
+            _ => return Err(self.err_name(after)),
+        };
+        Ok(Binding {
+            kind,
+            span: self.span_from(start),
+        })
     }
 
-    /// `key: binding`, or `: name` as shorthand for `name: name`.
-    pub(super) fn destructure_field(&mut self) -> PResult<(Token<'src>, Binding<'src>)> {
-        let key = if self.check(TokT::Identifier) {
-            Some(self.advance())
-        } else {
-            None
-        };
+    /// `field: binding`, or `: name` as shorthand for `name: name`.
+    pub(super) fn field_binding(&mut self) -> PResult<FieldBinding<'src>> {
+        let start = self.start_span();
+        let field = self.check(TokT::Identifier).then(|| self.advance_ident());
         self.expect(TokT::Colon, "field name")?;
-        let value = self.parse_binding("`:`")?;
-        match (key, value) {
-            (Some(key), value) => Ok((key, value)),
-            (None, Binding::Variable(name)) => Ok((name, Binding::Variable(name))),
-            (None, value) => Err(ParseError::new(
-                ParseErrorKind::FieldPatternWithoutName,
-                value.span(),
-            )),
-        }
+        let binding = self.binding("`:`")?;
+        let field = match (field, &binding.kind) {
+            (Some(field), _) => field,
+            (None, BindingKind::Name(name)) => *name,
+            (None, _) => {
+                return Err(ParseError::new(
+                    ParseErrorKind::FieldPatternWithoutName,
+                    binding.span,
+                ));
+            }
+        };
+        Ok(FieldBinding {
+            field,
+            binding,
+            span: self.span_from(start),
+        })
     }
 
     /// Parenthesised lists that are tuples: `()` is an error, and one item needs a trailing comma (`(x,)`), since
     /// `(x)` would be a grouping.
-    pub(super) fn validate_tuple<T>(&mut self, list: &Delimited<T>, context: ParenContext) {
+    pub(super) fn validate_tuple<T>(&mut self, list: &ParsedList<T>, context: ParenContext) {
         if list.failed {
             return;
         }
@@ -115,106 +119,100 @@ impl<'src> Parser<'src> {
             (1, None) => ParseErrorKind::OneElementTuple(context),
             _ => return,
         };
-        self.errors
-            .push(ParseError::new(kind, list.open.merge(list.close)));
+        self.errors.push(ParseError::new(kind, list.span()));
     }
 
-    /// `: T` if present (`let`, parameters, lambda parameters).
+    /// `: T` if present (`let`, parameters, lambda parameters, return types).
     pub(super) fn type_annotation(&mut self) -> PResult<Option<TypeAst<'src>>> {
         if self.try_consume(TokT::Colon) {
-            self.type_block().map(Some)
+            self.type_ast().map(Some)
         } else {
             Ok(None)
         }
     }
 
-    /// `: T` after a parameter list, if present (functions, function types, lambdas).
-    pub(super) fn return_type(&mut self) -> PResult<Option<TypeAst<'src>>> {
-        self.type_annotation()
-    }
-
     /// `<T, U>` if the current token is `<`, else nothing.
-    fn generic_params(&mut self) -> Vec<Token<'src>> {
+    fn generic_params(&mut self) -> Generics<'src> {
         if !self.check(TokT::Less) {
-            return vec![];
+            return Generics(None);
         }
-        self.delimited(
+        let list = self.delimited(
             ListSpec::angle("generic parameter", &[TokT::Identifier]),
             |p| p.expect_ident("`<`"),
-        )
-        .items
+        );
+        Generics(Some(list.into_ast()))
     }
 
     /// `<A, B>` if the current token is `<`, else nothing.
-    pub(super) fn generic_args(&mut self) -> Vec<TypeAst<'src>> {
+    fn type_args(&mut self) -> Vec<TypeAst<'src>> {
         if !self.check(TokT::Less) {
             return vec![];
         }
-        self.delimited(
-            ListSpec::angle("type argument", TYPE_START),
-            Self::type_block,
-        )
-        .items
+        self.type_arg_list().items
     }
 
-    /// `in_impl`: whether `self` parameters are allowed.
-    pub(super) fn func_declaration(
-        &mut self,
-        vis: Visibility<'src>,
-        in_impl: bool,
-    ) -> PResult<Stmt<'src>> {
-        self.advance_kind(TokT::Func);
-        let (name, generics, signature) = self.func_signature()?;
-        self.validate_params(&signature.params, in_impl);
-        let body = self.block(false, "function signature")?;
-
-        Ok(Stmt::Function {
-            is_public: vis.is_public(),
-            generics,
-            signature,
-            name,
-            body: Box::new(body.into_stmt()),
-        })
+    /// `<A, B>`, starting at the `<`.
+    pub(super) fn type_arg_list(&mut self) -> ParsedList<TypeAst<'src>> {
+        self.delimited(ListSpec::angle("type argument", TYPE_START), Self::type_ast)
     }
 
-    pub(super) fn visibility(&mut self) -> Visibility<'src> {
+    pub(super) fn visibility(&mut self) -> Visibility {
         if self.try_consume(TokT::Public) {
-            Visibility::Public(self.previous)
+            Visibility::Public(self.previous.span)
         } else {
             Visibility::Private
         }
     }
 
     /// Reports `public` on a construct that doesn't allow it. Parsing continues as if it weren't there.
-    pub(super) fn forbid_visibility(&mut self, vis: Visibility<'src>, reason: &'static str) {
-        if let Visibility::Public(token) = vis {
+    pub(super) fn forbid_visibility(&mut self, vis: Visibility, reason: &'static str) {
+        if let Visibility::Public(span) = vis {
             self.errors.push(ParseError::new(
                 ParseErrorKind::VisibilityNotAllowed { reason },
-                token.span,
+                span,
             ));
         }
     }
 
-    pub(super) fn extern_func_declaration(
+    /// `func sig { body }`, with `vis` already parsed.
+    pub(super) fn func_declaration(
         &mut self,
-        vis: Visibility<'src>,
-        in_impl: bool,
-    ) -> PResult<Stmt<'src>> {
-        self.advance_kind(TokT::Extern);
-        self.expect(TokT::Func, "`extern`")?;
-        let (name, generics, signature) = self.func_signature()?;
-        self.validate_params(&signature.params, in_impl);
-        self.expect_semi("extern function signature")?;
-        Ok(Stmt::ExternFunction {
-            is_public: vis.is_public(),
-            name,
-            generics,
-            signature,
+        vis: Visibility,
+        start: Span,
+        context: FnContext,
+    ) -> PResult<FnDecl<'src>> {
+        self.advance_kind(TokT::Func);
+        let sig = self.func_signature(context)?;
+        let body = self.block(false, "function signature")?.into_body();
+        Ok(FnDecl {
+            vis,
+            sig,
+            body: Some(body),
+            span: self.span_from(start),
         })
     }
 
-    /// `name<G>(params): T`, after `func`. Accepts `self` anywhere; [`Self::validate_params`] decides.
-    fn func_signature(&mut self) -> PResult<FunctionDecl<'src>> {
+    /// `extern func sig;`, with `vis` already parsed.
+    pub(super) fn extern_func_declaration(
+        &mut self,
+        vis: Visibility,
+        start: Span,
+        context: FnContext,
+    ) -> PResult<FnDecl<'src>> {
+        self.advance_kind(TokT::Extern);
+        self.expect(TokT::Func, "`extern`")?;
+        let sig = self.func_signature(context)?;
+        self.expect_semi("extern function signature")?;
+        Ok(FnDecl {
+            vis,
+            sig,
+            body: None,
+            span: self.span_from(start),
+        })
+    }
+
+    /// `name<G>(params): T`, after `func`. Accepts `self` anywhere and reports it where `context` doesn't allow it.
+    fn func_signature(&mut self, context: FnContext) -> PResult<FnSig<'src>> {
         let name = self.expect_ident("`func`")?;
         let generics = self.generic_params();
         let open = self.expect(TokT::LeftParen, "function name")?.span;
@@ -223,108 +221,135 @@ impl<'src> Parser<'src> {
             ListSpec::paren("parameter", &[TokT::Identifier, TokT::Self_]),
             Self::param,
         );
-        let return_type = self.return_type()?.unwrap_or_else(|| void_at(params.close));
-        Ok((
+        self.validate_params(&params.items, context);
+        let ret = self.type_annotation()?;
+        Ok(FnSig {
             name,
             generics,
-            FunctionSig {
-                params: params.items.into_boxed_slice(),
-                return_type: Box::new(return_type),
-            },
-        ))
+            params: params.into_ast(),
+            ret,
+        })
     }
 
     fn param(&mut self) -> PResult<Param<'src>> {
         if self.check(TokT::Self_) {
-            let param = self.advance();
-            let ty = TypeAst::Named(
-                Token::new(TokenType::Identifier, param.span, "Self"),
-                vec![],
-            );
-            return Ok((param, ty));
+            return Ok(Param::SelfParam(self.advance().span));
         }
         let name = self.expect_ident("`(`")?;
         self.expect(TokT::Colon, "parameter name")?;
-        let ty = self.type_block()?;
-        Ok((name, ty))
+        let ty = self.type_ast()?;
+        Ok(Param::Named { name, ty })
     }
 
     /// `self` is only allowed in methods, as the first parameter. A later `self` (including a duplicate) is
     /// reported on its own token.
-    fn validate_params(&mut self, params: &[Param<'src>], allow_self: bool) {
-        for (i, (token, _)) in params.iter().enumerate() {
-            if token.kind != TokT::Self_ {
+    fn validate_params(&mut self, params: &[Param<'src>], context: FnContext) {
+        for (i, param) in params.iter().enumerate() {
+            let Param::SelfParam(span) = param else {
                 continue;
-            }
-            let kind = if !allow_self {
+            };
+            let kind = if context != FnContext::Method {
                 ParseErrorKind::SelfOutsideMethod
             } else if i != 0 {
-                let first = params[0].0;
                 ParseErrorKind::SelfNotFirst {
-                    first: first.span,
-                    duplicate: first.kind == TokT::Self_,
+                    first: params[0].span(),
+                    duplicate: matches!(params[0], Param::SelfParam(_)),
                 }
             } else {
                 continue;
             };
-            self.errors.push(ParseError::new(kind, token.span));
+            self.errors.push(ParseError::new(kind, *span));
         }
     }
 
-    pub(super) fn type_block(&mut self) -> PResult<TypeAst<'src>> {
-        let ty = match self.current.kind {
+    pub(super) fn type_ast(&mut self) -> PResult<TypeAst<'src>> {
+        let start = self.start_span();
+        let kind = match self.current.kind {
             TokT::Func => return self.function_type(),
             TokT::LeftParen => {
-                let types = self.delimited(ListSpec::paren("type", TYPE_START), Self::type_block);
+                let types = self.delimited(ListSpec::paren("type", TYPE_START), Self::type_ast);
                 self.validate_tuple(&types, ParenContext::TupleType);
-                TypeAst::Tuple(types.items)
+                TypeAstKind::Tuple(types.items)
             }
-            TokT::Identifier => {
-                let name = self.advance();
-                TypeAst::Named(name, self.generic_args())
-            }
-            _ => {
-                return Err(self.err_unexpected(Expected::Type, None));
-            }
+            TokT::Identifier => TypeAstKind::Named(self.named_type()),
+            _ => return Err(self.err_unexpected(Expected::Type, None)),
         };
+        let ty = TypeAst {
+            kind,
+            span: self.span_from(start),
+        };
+        Ok(self.optional_suffix(ty, start))
+    }
+
+    /// `ty?` if a `?` follows, else `ty`.
+    fn optional_suffix(&mut self, ty: TypeAst<'src>, start: Span) -> TypeAst<'src> {
         if self.try_consume(TokT::Question) {
-            Ok(TypeAst::Optional(Box::new(ty)))
+            TypeAst {
+                kind: TypeAstKind::Optional(Box::new(ty)),
+                span: self.span_from(start),
+            }
         } else {
-            Ok(ty)
+            ty
+        }
+    }
+
+    /// `Name<A, B>`, starting at the name.
+    fn named_type(&mut self) -> NamedType<'src> {
+        let name = self.advance_ident();
+        let args = self.type_args();
+        NamedType {
+            name,
+            args,
+            span: self.span_from(name.span),
+        }
+    }
+
+    /// `Name<A, B>` where only a named type is allowed (`impl` targets and interfaces).
+    fn expect_named_type(&mut self, after: &'static str) -> PResult<NamedType<'src>> {
+        if self.check(TokT::Identifier) {
+            Ok(self.named_type())
+        } else {
+            Err(self.err_name(after))
         }
     }
 
     /// `func(T, U): R`, or `func?(T): R` for an optional function.
     fn function_type(&mut self) -> PResult<TypeAst<'src>> {
-        let keyword = self.advance_kind(TokT::Func).span;
+        let start = self.advance_kind(TokT::Func).span;
         let optional = self.check(TokT::QuestionParen);
         let open = if optional {
             self.advance().span
         } else {
             self.expect(TokT::LeftParen, "`func`")?.span
         };
-        let params =
-            self.delimited_after(open, ListSpec::paren("parameter type", TYPE_START), |p| {
-                let ty = p.type_block()?;
-                // Function types have no parameter names; the AST still wants one (Phase 4 removes it).
-                Ok((Token::new(TokenType::Identifier, ty.span(), "_"), ty))
-            });
-        let return_type = self.return_type()?.unwrap_or_else(|| void_at(params.close));
-        let func_type = TypeAst::Function(
-            keyword,
-            FunctionSig {
-                params: params.items.into_boxed_slice(),
-                return_type: Box::new(return_type),
-            },
+        let params = self.delimited_after(
+            open,
+            ListSpec::paren("parameter type", TYPE_START),
+            Self::type_ast,
         );
+        let ret = self.type_annotation()?.map(Box::new);
+        let func = TypeAst {
+            kind: TypeAstKind::Fn {
+                params: params.items,
+                ret,
+            },
+            span: self.span_from(start),
+        };
         if optional {
-            Ok(TypeAst::Optional(Box::new(func_type)))
+            Ok(TypeAst {
+                kind: TypeAstKind::Optional(Box::new(func)),
+                span: self.span_from(start),
+            })
         } else {
-            Ok(func_type)
+            Ok(func)
         }
     }
 
-    pub(super) fn struct_declaration(&mut self, vis: Visibility<'src>) -> PResult<Stmt<'src>> {
+    pub(super) fn struct_declaration(
+        &mut self,
+        vis: Visibility,
+        start: Span,
+    ) -> PResult<StructDecl<'src>> {
         self.advance_kind(TokT::Struct);
         let name = self.expect_ident("`struct`")?;
         let generics = self.generic_params();
@@ -333,30 +358,37 @@ impl<'src> Parser<'src> {
             open,
             ListSpec::brace("field", &[TokT::Identifier, TokT::Public]),
             |p| {
+                let start = p.start_span();
                 let vis = p.visibility();
-                p.struct_field(vis)
+                p.field_decl(vis, start)
             },
         );
-        Ok(Stmt::Struct {
-            is_public: vis.is_public(),
+        Ok(StructDecl {
+            vis,
             name,
-            fields: fields.items,
             generics,
+            fields: fields.items,
+            span: self.span_from(start),
         })
     }
 
-    fn struct_field(&mut self, vis: Visibility<'src>) -> PResult<StructField<'src>> {
+    fn field_decl(&mut self, vis: Visibility, start: Span) -> PResult<FieldDecl<'src>> {
         let name = self.expect_ident("`{`")?;
         self.expect(TokT::Colon, "field name")?;
-        let type_info = self.type_block()?;
-        Ok(StructField {
-            is_public: vis.is_public(),
+        let ty = self.type_ast()?;
+        Ok(FieldDecl {
+            vis,
             name,
-            type_info,
+            ty,
+            span: self.span_from(start),
         })
     }
 
-    pub(super) fn enum_declaration(&mut self, vis: Visibility<'src>) -> PResult<Stmt<'src>> {
+    pub(super) fn enum_declaration(
+        &mut self,
+        vis: Visibility,
+        start: Span,
+    ) -> PResult<EnumDecl<'src>> {
         self.advance_kind(TokT::Enum);
         let name = self.expect_ident("`enum`")?;
         let generics = self.generic_params();
@@ -366,56 +398,60 @@ impl<'src> Parser<'src> {
             ListSpec::brace("variant", &[TokT::Identifier, TokT::Public]),
             Self::enum_variant,
         );
-        Ok(Stmt::Enum {
-            is_public: vis.is_public(),
+        Ok(EnumDecl {
+            vis,
             name,
-            variants: variants.items,
             generics,
+            variants: variants.items,
+            span: self.span_from(start),
         })
     }
 
-    fn enum_variant(&mut self) -> PResult<(Token<'src>, VariantType<'src>)> {
+    fn enum_variant(&mut self) -> PResult<Variant<'src>> {
+        let start = self.start_span();
         let vis = self.visibility();
         self.forbid_visibility(vis, "enum variants are always as visible as the enum.");
         let name = self.expect_ident("`{`")?;
         let payload = match self.current.kind {
             TokT::LeftParen => {
-                let types = self.delimited(
-                    ListSpec::paren("payload type", TYPE_START),
-                    Self::type_block,
-                );
+                let types =
+                    self.delimited(ListSpec::paren("payload type", TYPE_START), Self::type_ast);
                 if types.items.is_empty() && !types.failed {
                     self.errors.push(ParseError::new(
                         ParseErrorKind::EmptyParens(ParenContext::VariantPayload),
-                        types.open.merge(types.close),
+                        types.span(),
                     ));
                 }
-                VariantType::Tuple(types.items)
+                VariantPayload::Tuple(types.items)
             }
             TokT::LeftBrace => {
                 let fields = self.delimited(
                     ListSpec::brace("field", &[TokT::Identifier, TokT::Public]),
                     |p| {
+                        let start = p.start_span();
                         let vis = p.visibility();
                         p.forbid_visibility(
                             vis,
                             "enum variant fields are always as visible as the enum.",
                         );
-                        p.struct_field(Visibility::Private)
+                        p.field_decl(Visibility::Private, start)
                     },
                 );
-                VariantType::Struct(fields.items)
+                VariantPayload::Struct(fields.items)
             }
-            _ => VariantType::Unit,
+            _ => VariantPayload::Unit,
         };
-        Ok((name, payload))
+        Ok(Variant {
+            name,
+            payload,
+            span: self.span_from(start),
+        })
     }
 
-    pub(super) fn impl_block(&mut self) -> PResult<Stmt<'src>> {
+    pub(super) fn impl_block(&mut self, start: Span) -> PResult<ImplDecl<'src>> {
         self.advance_kind(TokT::Impl);
         let generics = self.generic_params();
-        let name = self.expect_ident("`impl`")?;
-        let target_generics = self.generic_args();
+        let target = self.expect_named_type("`impl`")?;
 
         let mut interfaces = vec![];
         if self.try_consume(TokT::Colon) {
@@ -423,7 +459,7 @@ impl<'src> Parser<'src> {
                 &[TokT::LeftBrace],
                 "interface name",
                 &[TokT::Identifier],
-                |p| p.expect_ident("`:`"),
+                |p| p.expect_named_type("`:`"),
             );
             if interfaces.is_empty() {
                 return Err(self.err_expected(TokT::Identifier, "`:`"));
@@ -434,57 +470,71 @@ impl<'src> Parser<'src> {
         let methods = self.sequence(&[TokT::RightBrace], Self::recover_item, Self::impl_item);
         self.close_delimiter(open, Delim::Brace);
 
-        // TODO support generic interfaces
-        Ok(Stmt::Impl {
+        Ok(ImplDecl {
             generics,
-            name: (name, target_generics),
+            target,
             interfaces,
             methods,
+            span: self.span_from(start),
         })
     }
 
-    fn impl_item(&mut self) -> PResult<Stmt<'src>> {
+    fn impl_item(&mut self) -> PResult<FnDecl<'src>> {
+        let start = self.start_span();
         let vis = self.visibility();
         match self.current.kind {
-            TokT::Func => self.func_declaration(vis, true),
-            TokT::Extern => self.extern_func_declaration(vis, true),
+            TokT::Func => self.func_declaration(vis, start, FnContext::Method),
+            TokT::Extern => self.extern_func_declaration(vis, start, FnContext::Method),
             _ => Err(self.err_unexpected(Expected::Item("method"), None)),
         }
     }
 
-    pub(super) fn interface_declaration(&mut self, vis: Visibility<'src>) -> PResult<Stmt<'src>> {
+    pub(super) fn interface_declaration(
+        &mut self,
+        vis: Visibility,
+        start: Span,
+    ) -> PResult<InterfaceDecl<'src>> {
         self.advance_kind(TokT::Interface);
         let name = self.expect_ident("`interface`")?;
         let generics = self.generic_params();
         let open = self.expect(TokT::LeftBrace, "interface name")?.span;
         let methods = self.sequence(&[TokT::RightBrace], Self::recover_item, |p| {
+            let start = p.start_span();
             let vis = p.visibility();
             p.forbid_visibility(
                 vis,
                 "interface methods are always as visible as the interface.",
             );
-            p.interface_method_sig()
+            p.interface_method_sig(start)
         });
         self.close_delimiter(open, Delim::Brace);
-        Ok(Stmt::Interface {
-            is_public: vis.is_public(),
+        Ok(InterfaceDecl {
+            vis,
             name,
-            methods,
             generics,
+            methods,
+            span: self.span_from(start),
         })
     }
 
-    fn interface_method_sig(&mut self) -> PResult<MethodSig<'src>> {
+    fn interface_method_sig(&mut self, start: Span) -> PResult<MethodSig<'src>> {
         if !self.try_consume(TokT::Func) {
             return Err(self.err_unexpected(Expected::Item("method signature"), None));
         }
-        let (name, generics, signature) = self.func_signature()?;
-        self.validate_params(&signature.params, true);
+        let sig = self.func_signature(FnContext::Method)?;
         self.expect_semi("interface method signature")?;
         Ok(MethodSig {
-            generics,
-            name,
-            signature,
+            sig,
+            span: self.span_from(start),
         })
+    }
+}
+
+/// `x`, or the wildcard for `_`.
+fn name_binding(name: Ident<'_>) -> BindingKind<'_> {
+    if name.name == WILDCARD {
+        BindingKind::Wildcard
+    } else {
+        BindingKind::Name(name)
     }
 }

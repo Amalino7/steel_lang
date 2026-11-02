@@ -94,3 +94,13 @@ fn test_void_assignment() {
         "#,
     );
 }
+
+#[test]
+fn test_invalid_operand_types_points_at_the_operator() {
+    const SRC: &str = r#"let x = 5 + "hello";"#;
+    Tester::new(SRC)
+        .expect_error(|e| {
+            matches!(e, TypeCheckerError::InvalidOperandTypes(err) if &SRC[err.span.to_range()] == "+")
+        })
+        .run();
+}

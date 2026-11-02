@@ -38,20 +38,21 @@ fn test_b3_function_type_span_starts_at_func_keyword() {
 fn test_b5_nested_tuple_access() {
     assert_parses(
         "let t = ((1, 2), 3); let y = t.0.1;",
-        "(let (bind t) ? (tuple (tuple 1 2) 3)) (let (bind y) ? (get (get t .0) .1))",
+        "(let (bind t) ? (tuple (tuple 1 2) 3)) (let (bind y) ? (field (field t .0) .1))",
     );
 }
 
 #[test]
 fn test_b5_tuple_index_after_safe_access_and_float_like_index() {
-    assert_expr("t?.0.1", "(get (get? t .0) .1)");
-    assert_expr("t.1.5", "(get (get t .1) .5)");
+    assert_expr("t?.0.1", "(field (field? t .0) .1)");
+    assert_expr("t.1.5", "(field (field t .1) .5)");
 }
 
 #[test]
 fn test_b5_tuple_index_with_leading_zero_is_error() {
     assert_parse_errors("let y = t.01;", &[("E1004", "1:11")]);
     assert_parse_errors("let y = t?.00;", &[("E1004", "1:12")]);
+    assert_parse_errors("let y = t.99999999999999999999;", &[("E1005", "1:11")]);
 }
 
 #[test]
@@ -80,10 +81,10 @@ fn test_b8_lexer_error_is_reported_once() {
 fn test_b9_block_statement_span_covers_the_braces() {
     assert_span(
         "func f() { let a = 1; } let y = 1;",
-        "func/block-stmt",
+        "func/body",
         "{ let a = 1; }",
     );
-    assert_span("func f() { } let y = 1;", "func/block-stmt", "{ }");
+    assert_span("func f() { } let y = 1;", "func/body", "{ }");
 }
 
 #[test]
@@ -93,45 +94,38 @@ fn test_b10_import_span_includes_the_terminator() {
 
 // Spans that end too early (issues doc, section B).
 #[test]
-#[ignore = "B-spans"]
 fn test_span_call_includes_closing_paren() {
     assert_span("let x = f(1, 2);", "let/call", "f(1, 2)");
     assert_span("let x = f();", "let/call", "f()");
 }
 
 #[test]
-#[ignore = "B-spans"]
 fn test_span_index_includes_closing_bracket() {
     assert_span("let x = a[0];", "let/index", "a[0]");
 }
 
 #[test]
-#[ignore = "B-spans"]
 fn test_span_grouping_and_tuple_include_parens() {
     assert_span("let x = (a);", "let/group", "(a)");
     assert_span("let x = (a, b);", "let/tuple", "(a, b)");
 }
 
 #[test]
-#[ignore = "B-spans"]
 fn test_span_list_includes_brackets() {
     assert_span("let x = [1, 2];", "let/list", "[1, 2]");
 }
 
 #[test]
-#[ignore = "B-spans"]
 fn test_span_let_includes_keyword_and_semicolon() {
     assert_span("let x = 1;", "let", "let x = 1;");
 }
 
 #[test]
-#[ignore = "B-spans"]
 fn test_span_function_includes_func_keyword() {
     assert_span("public func f() {}", "func", "public func f() {}");
 }
 
 #[test]
-#[ignore = "B-spans"]
 fn test_span_struct_includes_braces() {
     assert_span("struct P { x: number }", "struct", "struct P { x: number }");
 }

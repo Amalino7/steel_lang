@@ -1,6 +1,6 @@
 use crate::compiler::analysis::ResolvedVar;
-use crate::parser::ast::{Expr, FunctionSig, Stmt, TypeAst};
-use crate::scanner::{Span, Token};
+use crate::parser::ast::{Block, Delimited, Expr, FnDecl, LambdaParam, TypeAst};
+use crate::scanner::Span;
 use crate::typechecker::core::ast::{ExprKind, FunctionBody, FunctionDecl, TypedExpr};
 use crate::typechecker::core::error::{MismatchContext, Recoverable, TypeCheckerError};
 use crate::typechecker::core::types::{FunctionType, Type};
@@ -66,83 +66,79 @@ impl<'src> TypeChecker<'src> {
         }
     }
 
+    /// Checks a function's body against its resolved type. Reports a missing `return` after the closing `}`, with
+    /// the header as context.
     pub(crate) fn check_function(
         &mut self,
-        name: &Token<'src>,
-        sig: &FunctionSig<'src>,
-        body: &Stmt<'src>,
+        decl: &FnDecl<'src>,
+        body: &Block<'src>,
         func: Rc<FunctionType>,
-    ) -> (FunctionDecl, Type, Span) {
+    ) -> (FunctionDecl, Type) {
         let func_type = Type::Function(func.clone());
+        let name = decl.sig.name;
 
-        let params: Vec<(Symbol, Type, Span)> = sig
+        let params: Vec<(Symbol, Type, Span)> = decl
+            .sig
             .params
+            .items
             .iter()
             .enumerate()
-            .map(|(i, (param, _))| {
+            .map(|(i, param)| {
                 let ty = func
                     .params
                     .get(i)
                     .map(|(_, t)| t.clone())
                     .unwrap_or(Type::Error);
-                (param.lexeme.into(), ty, param.span)
+                let ident = param.ident();
+                (ident.name.into(), ty, ident.span)
             })
             .collect();
 
         let fn_decl = self.build_function_decl(
-            name.lexeme.into(),
+            name.name.into(),
             func_type.clone(),
             &params,
             func.return_type.clone(),
             name.span,
-            |guard| FunctionBody::Block(Box::new(guard.check_stmt(body))),
+            |guard| FunctionBody::Block(Box::new(guard.check_body(body))),
         );
 
-        let body_span = fn_decl.body.span();
-        let function_span = name.span.merge(body_span);
-
-        let return_type = match &func_type {
-            Type::Function(f) => f.return_type.clone(),
-            _ => unreachable!(),
-        };
-        if return_type != Type::Void
-            && return_type != Type::Error
+        let return_type = &func.return_type;
+        if *return_type != Type::Void
+            && *return_type != Type::Error
             && let FunctionBody::Block(block) = &fn_decl.body
             && !self.stmt_diverges(block).exits_function()
         {
             self.report(TypeCheckerError::MissingReturnStatement {
-                fn_span: name.span.merge(Span {
-                    end: body_span.start,
-                    ..body_span
-                }),
-                fn_name: name.lexeme.to_string(),
-                span: Span {
-                    start: body_span.end,
-                    ..body_span
-                },
+                fn_span: decl.header_span(),
+                fn_name: name.name.to_string(),
+                span: body.span.point_after(),
             });
         }
 
-        (fn_decl, func_type, function_span)
+        (fn_decl, func_type)
     }
 
+    /// `span` is the whole lambda. Its header, the parameter list through the return type, is where a return
+    /// type mismatch points back to.
     pub(crate) fn check_lambda(
         &mut self,
-        params: &[(Token<'src>, TypeAst<'src>)],
-        body: &Expr<'src>,
+        params: &Delimited<LambdaParam<'src>>,
         return_type_ann: Option<&TypeAst<'src>>,
+        body: &Expr<'src>,
         expected: &Type,
         span: Span,
     ) -> TypedExpr {
+        let header = return_type_ann.map_or(params.span(), |ret| params.span().merge(ret.span));
         let expected_fn = if let Type::Function(ft) = expected {
             Some(ft.clone())
         } else {
             None
         };
 
-        let mut resolved_params: Vec<(Symbol, Type)> = Vec::with_capacity(params.len());
-        for (i, (token, type_ast)) in params.iter().enumerate() {
-            let ty = if !matches!(type_ast, TypeAst::Infer) {
+        let mut resolved_params: Vec<(Symbol, Type)> = Vec::with_capacity(params.items.len());
+        for (i, param) in params.items.iter().enumerate() {
+            let ty = if let Some(type_ast) = &param.ty {
                 self.res()
                     .resolve(type_ast)
                     .recover(&mut self.errors, Type::Error)
@@ -151,7 +147,7 @@ impl<'src> TypeChecker<'src> {
             } else {
                 self.infer_ctx.new_type_var()
             };
-            resolved_params.push((token.lexeme.into(), ty));
+            resolved_params.push((param.name.name.into(), ty));
         }
 
         let return_type = if let Some(ann) = return_type_ann {
@@ -173,7 +169,8 @@ impl<'src> TypeChecker<'src> {
         }));
         let params_with_spans: Vec<(Symbol, Type, Span)> = resolved_params
             .iter()
-            .map(|(n, t)| (n.clone(), t.clone(), span))
+            .zip(&params.items)
+            .map(|((n, t), param)| (n.clone(), t.clone(), param.name.span))
             .collect();
 
         let return_type_for_body = return_type.clone();
@@ -182,13 +179,13 @@ impl<'src> TypeChecker<'src> {
             self_type,
             &params_with_spans,
             return_type.clone(),
-            span,
+            header,
             |guard| {
                 let typed_body = guard.coerce_expression(
                     body,
                     &return_type_for_body,
                     MismatchContext::Return,
-                    Some(span),
+                    Some(header),
                 );
                 FunctionBody::Expr(Box::new(typed_body))
             },

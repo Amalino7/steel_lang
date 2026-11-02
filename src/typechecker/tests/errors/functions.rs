@@ -251,3 +251,32 @@ fn test_locals_within_limit_are_accepted() {
     let src = format!("func ok() {{\n{}}}", many_lets(200));
     assert_typechecks(&src);
 }
+
+#[test]
+fn test_missing_argument_points_at_the_closing_paren() {
+    const SRC: &str = "func f(a: number, b: number): number { return a + b; }\nlet x = f(1);";
+    Tester::new(SRC)
+        .expect_error(|e| {
+            matches!(e, TypeCheckerError::CallParam(CallParamError { kind: CallParamKind::Missing, span, .. })
+                if SRC.rfind(')') == Some(span.start))
+        })
+        .run();
+}
+
+#[test]
+fn test_missing_return_labels_the_function_header() {
+    const SRC: &str = "func f(a: number): number { if a > 0 { return a; } }";
+    Tester::new(SRC)
+        .expect_error(|e| {
+            matches!(e, TypeCheckerError::MissingReturnStatement { fn_span, .. }
+                if &SRC[fn_span.to_range()] == "func f(a: number): number")
+        })
+        .run();
+}
+
+#[test]
+fn test_bare_return_in_non_void_function_is_a_mismatch() {
+    Tester::new("func f(): number { return; }")
+        .expect_error(|e| matches!(e, TypeCheckerError::TypeMismatch { .. }))
+        .run();
+}

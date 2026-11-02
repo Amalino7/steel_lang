@@ -25,7 +25,7 @@ mod statements;
 use crate::parser::error::{Expected, Found, ParseError, ParseErrorKind};
 use crate::scanner::TokenType as TokT;
 use crate::scanner::{Scanner, Span, Token, TokenType};
-use ast::ParsedFile;
+use ast::{Ident, ParsedFile};
 use std::cell::Cell;
 use std::mem;
 
@@ -69,14 +69,14 @@ impl<'src> Parser<'src> {
 
     pub fn parse(&mut self) -> Result<ParsedFile<'src>, Vec<ParseError>> {
         let imports = self.parse_imports();
-        let body = self.sequence(&[TokT::EOF], Self::recover_top_level, |p| {
+        let stmts = self.sequence(&[TokT::EOF], Self::recover_top_level, |p| {
             p.top_level_item()
         });
         let errors = self.take_errors();
         if !errors.is_empty() {
             Err(errors)
         } else {
-            Ok(ParsedFile { imports, body })
+            Ok(ParsedFile { imports, stmts })
         }
     }
 
@@ -239,18 +239,34 @@ impl<'src> Parser<'src> {
         }
     }
 
-    fn expect_ident(&mut self, after: &'static str) -> PResult<Token<'src>> {
+    fn expect_ident(&mut self, after: &'static str) -> PResult<Ident<'src>> {
         if self.check(TokT::Identifier) {
-            Ok(self.advance())
-        } else if self.current.kind.is_keyword() {
-            Err(ParseError::new(
+            Ok(self.advance_ident())
+        } else {
+            Err(self.err_name(after))
+        }
+    }
+
+    /// Advances over an identifier the caller has already checked.
+    fn advance_ident(&mut self) -> Ident<'src> {
+        let token = self.advance_kind(TokT::Identifier);
+        Ident {
+            name: token.lexeme,
+            span: token.span,
+        }
+    }
+
+    /// A name is missing after `after`. A keyword where the name belongs gets its own error.
+    fn err_name(&self, after: &'static str) -> ParseError {
+        if self.current.kind.is_keyword() {
+            ParseError::new(
                 ParseErrorKind::KeywordAsName {
                     keyword: self.current.kind,
                 },
                 self.current.span,
-            ))
+            )
         } else {
-            Err(self.err_expected(TokT::Identifier, after))
+            self.err_expected(TokT::Identifier, after)
         }
     }
 

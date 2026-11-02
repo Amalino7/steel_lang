@@ -1,5 +1,5 @@
+use crate::parser::ast::Ident;
 use crate::parser::ast::Literal;
-use crate::scanner::Token;
 use crate::typechecker::core::ast::{ExprKind, TypedExpr};
 use crate::typechecker::core::error::{
     Mismatch, MismatchContext, TypeCheckerError, UndefinedMethodError,
@@ -12,7 +12,7 @@ impl<'src> TypeChecker<'src> {
     pub(crate) fn resolve_static_access(
         &mut self,
         type_id: NameTypeId,
-        member_token: &Token,
+        member_token: &Ident,
         generics: &GenericArgs,
     ) -> Result<TypedExpr, TypeCheckerError> {
         let enum_access = self.handle_enum_variant_access(type_id, member_token, generics);
@@ -25,7 +25,7 @@ impl<'src> TypeChecker<'src> {
     fn handle_enum_variant_access(
         &mut self,
         type_name: NameTypeId,
-        variant_name: &Token,
+        variant_name: &Ident,
         generics: &GenericArgs,
     ) -> Option<TypedExpr> {
         let NameTypeId::Enum(id) = type_name else {
@@ -34,7 +34,7 @@ impl<'src> TypeChecker<'src> {
         let enum_def = self.sys.get_enum(id);
 
         let (idx, variant_type, generics) =
-            enum_def.get_static_variant(variant_name.lexeme, generics, &mut self.infer_ctx)?;
+            enum_def.get_static_variant(variant_name.name, generics, &mut self.infer_ctx)?;
 
         let ty = if variant_type == Type::Void {
             Type::Enum(id, generics)
@@ -60,22 +60,22 @@ impl<'src> TypeChecker<'src> {
     fn handle_static_method_access(
         &mut self,
         type_id: NameTypeId,
-        method_name: &Token,
+        method_name: &Ident,
         generics: &GenericArgs,
     ) -> Result<TypedExpr, TypeCheckerError> {
-        let method = self.lookup_method(type_id, method_name.lexeme);
+        let method = self.lookup_method(type_id, method_name.name);
 
         let method = method.ok_or_else(|| {
             let methods = self.method_names_for_type(type_id);
             let suggestions =
-                similarity::find_similar(method_name.lexeme, methods.iter().map(|s| s.as_ref()), 3);
+                similarity::find_similar(method_name.name, methods.iter().map(|s| s.as_ref()), 3);
 
             let type_origin = self.sys.get_origin(type_id);
             let found = Type::Metatype(type_id, generics.clone());
             TypeCheckerError::UndefinedMethod(Box::new(UndefinedMethodError {
                 span: method_name.span,
                 found,
-                method_name: method_name.lexeme.into(),
+                method_name: method_name.name.into(),
                 type_origin,
                 suggestions,
             }))
@@ -124,7 +124,7 @@ impl<'src> TypeChecker<'src> {
 
         Ok(TypedExpr {
             ty,
-            kind: ExprKind::GetVar(location, method_name.lexeme.into()),
+            kind: ExprKind::GetVar(location, method_name.name.into()),
             span: method_name.span,
         })
     }

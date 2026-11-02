@@ -1,5 +1,5 @@
-use crate::parser::ast::{Stmt, StructField, VariantType};
-use crate::scanner::{Span, Token};
+use crate::parser::ast::{FieldDecl, Ident, Stmt, VariantPayload};
+use crate::scanner::Span;
 use crate::typechecker::core::error::{
     DuplicateDefinition, DuplicateKind, Recoverable, TypeCheckerError,
 };
@@ -20,44 +20,34 @@ impl<'src> TypeChecker<'src> {
 
         for stmt in ast.iter() {
             match stmt {
-                Stmt::Struct {
-                    name,
-                    generics,
-                    is_public,
-                    ..
-                } => {
+                Stmt::Struct(decl) => {
+                    let public = decl.vis.is_public();
                     let id = self.sys.declare_struct(
-                        stmt.span(),
-                        name.lexeme.into(),
-                        generics,
-                        *is_public,
+                        decl.span,
+                        decl.name.name.into(),
+                        decl.generics.params(),
+                        public,
                     );
-
-                    self.declare_local_type(name, id.into(), stmt.span(), *is_public);
+                    self.declare_local_type(&decl.name, id.into(), decl.span, public);
                     tasks.push((id.into(), stmt))
                 }
-                Stmt::Interface {
-                    name, is_public, ..
-                } => {
-                    let id =
-                        self.sys
-                            .declare_interface(name.lexeme.into(), stmt.span(), *is_public);
-                    self.declare_local_type(name, id.into(), stmt.span(), *is_public);
+                Stmt::Interface(decl) => {
+                    let public = decl.vis.is_public();
+                    let id = self
+                        .sys
+                        .declare_interface(decl.name.name.into(), decl.span, public);
+                    self.declare_local_type(&decl.name, id.into(), decl.span, public);
                     tasks.push((id.into(), stmt))
                 }
-                Stmt::Enum {
-                    name,
-                    generics,
-                    is_public,
-                    ..
-                } => {
+                Stmt::Enum(decl) => {
+                    let public = decl.vis.is_public();
                     let id = self.sys.declare_enum(
-                        stmt.span(),
-                        name.lexeme.into(),
-                        generics,
-                        *is_public,
+                        decl.span,
+                        decl.name.name.into(),
+                        decl.generics.params(),
+                        public,
                     );
-                    self.declare_local_type(name, id.into(), stmt.span(), *is_public);
+                    self.declare_local_type(&decl.name, id.into(), decl.span, public);
                     tasks.push((id.into(), stmt))
                 }
                 _ => {}
@@ -67,11 +57,11 @@ impl<'src> TypeChecker<'src> {
     }
 
     /// Binds a type declared in this module. The binding's `public` repeats the definition's flag.
-    fn declare_local_type(&mut self, name: &Token, id: NameTypeId, span: Span, public: bool) {
+    fn declare_local_type(&mut self, name: &Ident, id: NameTypeId, span: Span, public: bool) {
         debug_assert_eq!(self.sys.is_public(id), public);
         let binding = Binding::new(id, Origin::Defined { span, public });
-        let res = self.type_scopes.declare_global(name.lexeme.into(), binding);
-        self.redeclaration_type(res, name.lexeme, name.span);
+        let res = self.type_scopes.declare_global(name.name.into(), binding);
+        self.redeclaration_type(res, name.name, name.span);
     }
 
     /// Reports a clash between `name`'s previous binding and a new one at `new_location`.
@@ -109,22 +99,20 @@ impl<'src> TypeChecker<'src> {
     }
 
     fn define_interface(&mut self, id: InterfaceId, stmt: &Stmt<'src>) {
-        if let Stmt::Interface {
-            methods, generics, ..
-        } = stmt
-        {
+        if let Stmt::Interface(decl) = stmt {
             let generic_ids = self.sys.get_generic_param_names(id.into());
 
-            let mut guard = TypeScopeGuard::new_type_params(self, generics, &generic_ids);
+            let mut guard =
+                TypeScopeGuard::new_type_params(self, decl.generics.params(), &generic_ids);
             let mut guard = TypeScopeGuard::new_impl(&mut guard, Type::Never);
             let mut method_map: HashMap<String, (usize, Type)> = HashMap::new();
-            for (i, sig) in methods.iter().enumerate() {
+            for (i, method) in decl.methods.iter().enumerate() {
                 let ty = guard
                     .res()
-                    .resolve_generic_func(&sig.signature)
+                    .resolve_generic_func(&method.sig)
                     .map(Type::Function);
                 let ty = ty.recover(&mut guard.errors, Type::Error);
-                method_map.insert(sig.name.lexeme.to_string(), (i, ty));
+                method_map.insert(method.sig.name.name.to_string(), (i, ty));
             }
 
             guard.sys.define_interface(&id, method_map);
@@ -132,38 +120,32 @@ impl<'src> TypeChecker<'src> {
     }
 
     fn define_struct(&mut self, id: StructId, stmt: &Stmt<'src>) {
-        if let Stmt::Struct {
-            fields, generics, ..
-        } = stmt
-        {
+        if let Stmt::Struct(decl) = stmt {
             let generic_ids = self.sys.get_generic_param_names(id.into());
 
-            let mut guard = TypeScopeGuard::new_type_params(self, generics, &generic_ids);
-            let field_types = guard.define_struct_fields(fields, false);
+            let mut guard =
+                TypeScopeGuard::new_type_params(self, decl.generics.params(), &generic_ids);
+            let field_types = guard.define_struct_fields(&decl.fields, false);
             guard.sys.define_struct(id, field_types);
         }
     }
 
     fn define_enum(&mut self, id: EnumId, stmt: &Stmt<'src>) {
-        if let Stmt::Enum {
-            name,
-            variants,
-            generics,
-            ..
-        } = stmt
-        {
+        if let Stmt::Enum(decl) = stmt {
             let generic_ids = self.sys.get_generic_param_names(id.into());
 
-            let mut guard = TypeScopeGuard::new_type_params(self, generics, &generic_ids);
+            let mut guard =
+                TypeScopeGuard::new_type_params(self, decl.generics.params(), &generic_ids);
             let mut typed_variants: HashMap<Symbol, (usize, Type)> = HashMap::new();
             let mut seen_variants: HashMap<Symbol, Span> = HashMap::new();
             let mut valid_idx = 0usize;
-            for (v_name, fields) in variants.iter() {
-                let sym: Symbol = v_name.lexeme.into();
+            for variant in &decl.variants {
+                let v_name = &variant.name;
+                let sym: Symbol = v_name.name.into();
                 if let Some(&original) = seen_variants.get(&sym) {
                     guard.report(TypeCheckerError::Duplicate(DuplicateDefinition {
                         kind: DuplicateKind::Variant,
-                        name: v_name.lexeme.to_string(),
+                        name: v_name.name.to_string(),
                         span: v_name.span,
                         original: Some(original),
                     }));
@@ -171,14 +153,15 @@ impl<'src> TypeChecker<'src> {
                 }
                 seen_variants.insert(sym.clone(), v_name.span);
 
-                let ty = match fields {
-                    VariantType::Tuple(tuple_def) => {
+                let ty = match &variant.payload {
+                    VariantPayload::Tuple(tuple_def) => {
                         let res = guard.res().resolve_tuple(tuple_def);
                         res.recover(&mut guard.errors, Type::Error)
                     }
-                    VariantType::Struct(struct_def) => {
+                    VariantPayload::Struct(struct_def) => {
                         let field_types = guard.define_struct_fields(struct_def, true);
-                        let full_name: Symbol = format!("{}.{}", name.lexeme, v_name.lexeme).into();
+                        let full_name: Symbol =
+                            format!("{}.{}", decl.name.name, v_name.name).into();
 
                         let id =
                             guard
@@ -187,7 +170,7 @@ impl<'src> TypeChecker<'src> {
                         guard.sys.define_struct(id, field_types);
                         Type::Struct(id, vec![].into())
                     }
-                    VariantType::Unit => Type::Void,
+                    VariantPayload::Unit => Type::Void,
                 };
 
                 typed_variants.insert(sym, (valid_idx, ty));
@@ -197,25 +180,16 @@ impl<'src> TypeChecker<'src> {
         }
     }
 
-    fn define_struct_fields(
-        &mut self,
-        fields: &[StructField<'src>],
-        is_enum: bool,
-    ) -> Vec<FieldDef> {
+    fn define_struct_fields(&mut self, fields: &[FieldDecl<'src>], is_enum: bool) -> Vec<FieldDef> {
         let mut field_defs = vec![];
         let mut seen: HashMap<Symbol, Span> = HashMap::new();
 
-        for StructField {
-            name,
-            is_public,
-            type_info,
-        } in fields
-        {
-            let sym_name: Symbol = name.lexeme.into();
+        for FieldDecl { vis, name, ty, .. } in fields {
+            let sym_name: Symbol = name.name.into();
             if let Some(&original) = seen.get(&sym_name) {
                 self.report(TypeCheckerError::Duplicate(DuplicateDefinition {
                     kind: DuplicateKind::Field,
-                    name: name.lexeme.to_string(),
+                    name: name.name.to_string(),
                     span: name.span,
                     original: Some(original),
                 }));
@@ -223,13 +197,13 @@ impl<'src> TypeChecker<'src> {
                 seen.insert(sym_name.clone(), name.span);
                 let field_type = self
                     .res()
-                    .resolve(type_info)
+                    .resolve(ty)
                     .recover(&mut self.errors, Type::Error);
                 field_defs.push(FieldDef {
                     name: sym_name,
                     index: field_defs.len(),
                     ty: field_type,
-                    is_public: *is_public || is_enum,
+                    is_public: vis.is_public() || is_enum,
                     name_span: name.span,
                 });
             }

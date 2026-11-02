@@ -101,7 +101,7 @@ impl<'ctx> TypeChecker<'ctx> {
     }
 
     pub fn check(&mut self, file: &ParsedFile<'ctx>) -> CheckResult {
-        let ast = &file.body[..];
+        let ast = &file.stmts[..];
         self.scopes.begin_scope(ScopeKind::Global);
 
         self.import_std();
@@ -128,7 +128,7 @@ impl<'ctx> TypeChecker<'ctx> {
         let module_span = file
             .imports
             .first()
-            .map(|i| i.span())
+            .map(|i| i.span)
             .or_else(|| ast.first().map(|s| s.span()))
             .unwrap_or_default();
         let reserved = self.limit_locals(self.scopes.max_index(), module_span);

@@ -1,6 +1,6 @@
 use crate::compiler::analysis::ResolvedVar;
-use crate::parser::ast::{FunctionSig, Stmt};
-use crate::scanner::{Span, Token};
+use crate::parser::ast::{Block, FnDecl, Stmt};
+use crate::scanner::Span;
 use crate::typechecker::core::ast::{StmtKind, TypedStmt};
 use crate::typechecker::core::error::{Recoverable, TypeCheckerError};
 use crate::typechecker::core::types::{FunctionType, Type};
@@ -11,9 +11,8 @@ use std::rc::Rc;
 
 /// A global function or impl method whose body is checked after all globals are declared.
 pub(crate) type GlobalFn<'a, 'src> = (
-    &'a Token<'src>,
-    &'a FunctionSig<'src>,
-    &'a Stmt<'src>,
+    &'a FnDecl<'src>,
+    &'a Block<'src>,
     Rc<FunctionType>,
     ResolvedVar,
 );
@@ -27,60 +26,29 @@ impl<'src> TypeChecker<'src> {
         let mut func_types = vec![];
         for stmt in ast.iter() {
             match stmt {
-                Stmt::ExternFunction {
-                    name,
-                    generics,
-                    signature,
-                    is_public,
-                    ..
-                } => {
-                    self.check_extern(name.lexeme, name.span);
-                    let mut guard = TypeScopeGuard::new_function(self, generics);
+                Stmt::Fn(decl) => {
+                    let name = decl.sig.name;
+                    if decl.is_extern() {
+                        self.check_extern(name.name, name.span);
+                    }
+                    let mut guard = TypeScopeGuard::new_function(self, decl.sig.generics.params());
                     let func_ty = guard
                         .res()
-                        .resolve_generic_func(signature)
-                        .map(Type::Function);
-
-                    guard.declare_function(name.lexeme.into(), name.span, func_ty, *is_public);
-                }
-                Stmt::Function {
-                    name,
-                    generics,
-                    signature,
-                    body,
-                    is_public,
-                    ..
-                } => {
-                    let mut guard = TypeScopeGuard::new_function(self, generics);
-                    let func_ty = guard
-                        .res()
-                        .resolve_generic_func(signature)
+                        .resolve_generic_func(&decl.sig)
                         .map(Type::Function);
 
                     let location = guard.declare_function(
-                        name.lexeme.into(),
+                        name.name.into(),
                         name.span,
                         func_ty.clone(),
-                        *is_public,
+                        decl.vis.is_public(),
                     );
 
-                    if let Ok(Type::Function(ty)) = &func_ty {
-                        func_types.push((name, signature, body.as_ref(), ty.clone(), location));
+                    if let (Ok(Type::Function(ty)), Some(body)) = (&func_ty, &decl.body) {
+                        func_types.push((&**decl, body, ty.clone(), location));
                     }
                 }
-                Stmt::Impl {
-                    interfaces,
-                    name,
-                    methods,
-                    generics,
-                } => self.declare_impl_methods(
-                    name,
-                    interfaces,
-                    methods,
-                    generics,
-                    typed_ast,
-                    &mut func_types,
-                ),
+                Stmt::Impl(decl) => self.declare_impl_methods(decl, typed_ast, &mut func_types),
                 _ => {}
             }
         }
@@ -92,14 +60,14 @@ impl<'src> TypeChecker<'src> {
         funcs: Vec<GlobalFn<'a, 'src>>,
         typed_ast: &mut Vec<TypedStmt>,
     ) {
-        for (name, sig, body, ty, target) in funcs {
+        for (fn_decl, body, ty, target) in funcs {
             let mut guard = TypeScopeGuard::old_function(self, &ty.type_params);
-            let (decl, _, fn_span) = guard.check_function(name, sig, body, ty);
+            let (decl, _) = guard.check_function(fn_decl, body, ty);
             typed_ast.push(TypedStmt {
-                span: fn_span,
+                span: fn_decl.span,
                 type_info: Type::Void,
                 kind: StmtKind::Function {
-                    name: name.lexeme.into(),
+                    name: fn_decl.sig.name.name.into(),
                     target,
                     decl,
                 },

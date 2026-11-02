@@ -54,6 +54,17 @@ impl Span {
         }
     }
 
+    /// From the start of `self` to the end of `end`, which must not end before `self` starts. Unlike
+    /// [`Self::merge`], this can cut a span short: a declaration's header is `decl.until(signature)`.
+    pub fn until(self, end: Span) -> Self {
+        debug_assert_eq!(self.file_id, end.file_id, "spans from different files");
+        debug_assert!(self.start <= end.end, "`end` ends before `self` starts");
+        Self {
+            end: end.end,
+            ..self
+        }
+    }
+
     /// Zero-width span at the end of `self`: where a missing `;` or closer would go.
     pub fn point_after(self) -> Self {
         Self {
@@ -83,5 +94,12 @@ mod tests {
         let second = Span::new(10, 12, 3, FileId(1));
         assert_eq!(first.merge(second), Span::new(0, 12, 1, FileId(1)));
         assert_eq!(second.merge(first), Span::new(0, 12, 1, FileId(1)));
+    }
+
+    #[test]
+    fn test_until_can_end_before_self_does() {
+        let decl = Span::new(0, 40, 1, FileId(1));
+        let signature_end = Span::new(15, 20, 1, FileId(1));
+        assert_eq!(decl.until(signature_end), Span::new(0, 20, 1, FileId(1)));
     }
 }

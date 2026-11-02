@@ -279,22 +279,22 @@ impl Type {
 
     /// Unwraps optional for safe access, emitting a warning instead if used on non-optional
     /// Returns also whether this is should be a safe access or a normal one.
+    /// For a safe access (`safe` is its `?.`, `?[` or `?(`), the type inside the optional and `true`. A safe
+    /// access on a non-optional type is warned about on that operator and treated as a plain one.
     pub fn unwrap_optional_safe(
         &self,
-        safe: bool,
-        span: Span,
+        safe: Option<Span>,
         warnings: &mut Vec<TypeCheckerWarning>,
     ) -> (Type, bool) {
-        if safe {
-            match self {
-                Type::Optional(inner) => (inner.as_ref().clone(), true),
-                ty => {
-                    warnings.push(TypeCheckerWarning::SafeAccessOnNonOptional { span });
-                    (ty.clone(), false)
-                }
+        let Some(span) = safe else {
+            return (self.clone(), false);
+        };
+        match self {
+            Type::Optional(inner) => (inner.as_ref().clone(), true),
+            ty => {
+                warnings.push(TypeCheckerWarning::SafeAccessOnNonOptional { span });
+                (ty.clone(), false)
             }
-        } else {
-            (self.clone(), false)
         }
     }
 

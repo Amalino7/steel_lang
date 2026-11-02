@@ -1,4 +1,5 @@
-use crate::scanner::{Span, Token};
+use crate::parser::ast::Ident;
+use crate::scanner::Span;
 use crate::typechecker::core::error::{BindingError, TypeCheckerError};
 use crate::typechecker::core::types::NameTypeId;
 use crate::typechecker::scope::binding::{Binding, Origin};
@@ -93,13 +94,13 @@ impl<'src> TypeChecker<'src> {
         }
     }
 
-    pub(crate) fn check_method_access(&mut self, binding: Binding<MethodId>, name: &Token) {
+    pub(crate) fn check_method_access(&mut self, binding: Binding<MethodId>, name: &Ident) {
         if self.is_method_visible(binding) {
             return;
         }
         let info = self.sys.get_method_info(binding.target);
         let error = TypeCheckerError::PrivateMethod {
-            method_name: name.lexeme.into(),
+            method_name: name.name.into(),
             module: self.module_graph.module_name_of_file(info.origin.file_id),
             span: name.span,
             definition: info.origin,

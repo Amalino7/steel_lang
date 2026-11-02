@@ -5,8 +5,9 @@
 //! required, a trailing `,` is allowed, a missing `,` between two items is reported and recovered as if present,
 //! a bad item is reported by its own parser and skipped to the next `,` or the closer, and a missing closer is
 //! reported where it belongs. What a list *means* (grouping vs tuple, empty payloads, `self` placement) is
-//! validated by the caller afterwards, on the returned [`Delimited`].
+//! validated by the caller afterwards, on the returned [`ParsedList`].
 
+use crate::parser::ast::Delimited;
 use crate::parser::error::{Expected, ParseError, ParseErrorKind};
 use crate::parser::recovery::{RECOVERY_STOP, is_closer};
 use crate::parser::{PResult, Parser};
@@ -44,10 +45,10 @@ impl Delim {
     }
 }
 
-/// A parsed list. `close` is always a real span: when the closer is missing it's the point after the last
-/// token, and the error has already been reported.
+/// A parsed list, with what the parser needs to validate its shape. `close` is always a real span: when the
+/// closer is missing it's the point after the last token, and the error has already been reported.
 #[derive(Debug, Clone)]
-pub(super) struct Delimited<T> {
+pub(super) struct ParsedList<T> {
     pub open: Span,
     pub items: Vec<T>,
     /// The last `,` when no item followed it. `(x)` vs `(x,)` differ only here.
@@ -56,6 +57,21 @@ pub(super) struct Delimited<T> {
     /// An item failed and was reported. `items` is then incomplete, so checks on the list's shape (empty
     /// payload, one-element tuple) would only repeat that error and are skipped.
     pub failed: bool,
+}
+
+impl<T> ParsedList<T> {
+    pub(super) fn span(&self) -> Span {
+        self.open.merge(self.close)
+    }
+
+    /// The AST form, once the shape has been validated.
+    pub(super) fn into_ast(self) -> Delimited<T> {
+        Delimited {
+            open: self.open,
+            items: self.items,
+            close: self.close,
+        }
+    }
 }
 
 /// One kind of delimited list. Written at the call site, next to the item parser that `item_start` mirrors.
@@ -114,7 +130,7 @@ impl<'src> Parser<'src> {
         &mut self,
         spec: ListSpec,
         item: impl FnMut(&mut Self) -> PResult<T>,
-    ) -> Delimited<T> {
+    ) -> ParsedList<T> {
         let open = self.advance_kind(spec.delim.open()).span;
         self.delimited_after(open, spec, item)
     }
@@ -126,7 +142,7 @@ impl<'src> Parser<'src> {
         open: Span,
         spec: ListSpec,
         item: impl FnMut(&mut Self) -> PResult<T>,
-    ) -> Delimited<T> {
+    ) -> ParsedList<T> {
         let list = self.list_items(spec.item, spec.item_start, &[spec.delim.close()], item);
         let close = if list.broken {
             self.previous.span.point_after()
@@ -134,7 +150,7 @@ impl<'src> Parser<'src> {
             let after_item = !list.items.is_empty() && list.trailing.is_none();
             self.close_list(open, spec.delim, after_item)
         };
-        Delimited {
+        ParsedList {
             open,
             items: list.items,
             trailing: list.trailing,

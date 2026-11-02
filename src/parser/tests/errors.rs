@@ -127,7 +127,7 @@ fn test_e1020_public_where_not_allowed() {
 
 #[test]
 fn test_e1025_shorthand_field_pattern_needs_a_name() {
-    assert_parse_errors("let P(: (a, b)) = p;", &[("E1025", "1:10")]);
+    assert_parse_errors("let P(: (a, b)) = p;", &[("E1025", "1:9")]);
 }
 
 #[test]

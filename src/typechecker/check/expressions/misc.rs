@@ -1,5 +1,5 @@
-use crate::parser::ast::Expr;
-use crate::scanner::Token;
+use crate::parser::ast::{Expr, Ident, MapEntry, TypeAst};
+use crate::scanner::Span;
 use crate::typechecker::TypeChecker;
 use crate::typechecker::core::ast::{ExprKind, LogicalOp, TypedExpr, UnaryOp};
 use crate::typechecker::core::error::{
@@ -15,7 +15,7 @@ impl<'src> TypeChecker<'src> {
         &mut self,
         expr: &Expr<'src>,
         callee: &Expr<'src>,
-        generics_provided: &[crate::parser::ast::TypeAst<'src>],
+        generics_provided: &[TypeAst<'src>],
     ) -> TypedExpr {
         let mut callee_typed = self.check_expression(callee, &Type::Unknown);
         let generic_args = match self.res().resolve_many(generics_provided) {
@@ -58,7 +58,7 @@ impl<'src> TypeChecker<'src> {
                 let map = make_substitution_map(&func.type_params, &generic_args);
                 let new_ty = callee_typed.ty.generic_to_concrete(&map);
                 callee_typed.ty = new_ty;
-                callee_typed.span = expr.span();
+                callee_typed.span = expr.span;
                 callee_typed
             }
             Type::Metatype(type_id, generics) => {
@@ -82,7 +82,7 @@ impl<'src> TypeChecker<'src> {
                     callee_typed
                 } else {
                     callee_typed.ty = Type::Metatype(*type_id, Rc::from(generic_args));
-                    callee_typed.span = expr.span();
+                    callee_typed.span = expr.span;
                     callee_typed
                 }
             }
@@ -96,10 +96,10 @@ impl<'src> TypeChecker<'src> {
     pub(crate) fn check_is(
         &mut self,
         expr: &Expr<'src>,
-        expression: &Expr<'src>,
-        type_name: &Token<'src>,
+        operand: &Expr<'src>,
+        type_name: &Ident<'src>,
     ) -> TypedExpr {
-        let target = self.check_expression(expression, &Type::Unknown);
+        let target = self.check_expression(operand, &Type::Unknown);
         let Type::Enum(enum_id, _) = &target.ty else {
             self.report(TypeCheckerError::InvalidIsUsage {
                 span: type_name.span,
@@ -108,17 +108,17 @@ impl<'src> TypeChecker<'src> {
             return TypedExpr {
                 ty: Type::Boolean,
                 kind: ExprKind::NoOp,
-                span: expr.span(),
+                span: expr.span,
             };
         };
         let enum_def = self.sys.get_enum(*enum_id);
 
-        let Some(&variant_idx) = enum_def.variants.get(type_name.lexeme) else {
+        let Some(&variant_idx) = enum_def.variants.get(type_name.name) else {
             self.report(TypeCheckerError::InvalidIsUsage {
                 span: type_name.span,
                 message: "Enum variant does not exist.",
             });
-            return TypedExpr::new_blank(expr.span());
+            return TypedExpr::new_blank(expr.span);
         };
 
         TypedExpr {
@@ -127,7 +127,7 @@ impl<'src> TypeChecker<'src> {
                 target: Box::new(target),
                 variant_idx: variant_idx as u16,
             },
-            span: expr.span(),
+            span: expr.span,
         }
     }
 
@@ -157,18 +157,18 @@ impl<'src> TypeChecker<'src> {
             kind: ExprKind::Tuple {
                 elements: typed_elements,
             },
-            span: expr.span(),
+            span: expr.span,
         }
     }
 
     pub(crate) fn check_try(
         &mut self,
         expr: &Expr<'src>,
-        operator: &Token<'src>,
-        expression: &Expr<'src>,
+        keyword: Span,
+        operand: &Expr<'src>,
     ) -> TypedExpr {
-        let typed_expr = self.check_expression(expression, &Type::Unknown);
-        let span = expr.span();
+        let typed_expr = self.check_expression(operand, &Type::Unknown);
+        let span = expr.span;
         let expr_ty = typed_expr.ty.clone();
 
         if let Type::Enum(id, instance) = &expr_ty
@@ -184,9 +184,7 @@ impl<'src> TypeChecker<'src> {
                 .expect("Result type missing");
 
             let Some((func_return_type, defined)) = self.scopes.return_type() else {
-                self.report(TypeCheckerError::InvalidReturnOutsideFunction {
-                    span: operator.span,
-                });
+                self.report(TypeCheckerError::InvalidReturnOutsideFunction { span: keyword });
                 return TypedExpr::new_blank(span);
             };
 
@@ -219,7 +217,7 @@ impl<'src> TypeChecker<'src> {
                 operand: Operand::Unary,
                 found: expr_ty,
                 requirement: TypeRequirement::Structural("Result<T, E>"),
-                span: operator.span,
+                span: keyword,
             });
             TypedExpr::new_blank(span)
         } else {
@@ -230,7 +228,6 @@ impl<'src> TypeChecker<'src> {
     pub(crate) fn check_coalesce(
         &mut self,
         expr: &Expr<'src>,
-        _operator: &Token<'src>,
         left: &Expr<'src>,
         right: &Expr<'src>,
         expected: &Type,
@@ -243,7 +240,7 @@ impl<'src> TypeChecker<'src> {
 
         let left_typed = self.check_expression(left, &wrapped_expected);
         let right_typed = self.check_expression(right, expected);
-        let span = expr.span();
+        let span = expr.span;
 
         let left_inner = match &left_typed.ty {
             Type::Optional(inner) => inner.as_ref().clone(),
@@ -278,8 +275,8 @@ impl<'src> TypeChecker<'src> {
     pub(crate) fn check_force_unwrap(
         &mut self,
         expr: &Expr<'src>,
-        expression: &Expr<'src>,
-        operator: &Token<'src>,
+        operand: &Expr<'src>,
+        bang: Span,
         expected: &Type,
     ) -> TypedExpr {
         let expected_opt = if *expected == Type::Unknown {
@@ -288,7 +285,7 @@ impl<'src> TypeChecker<'src> {
             Type::Optional(Box::new(expected.clone()))
         };
 
-        let expr_typed = self.check_expression(expression, &expected_opt);
+        let expr_typed = self.check_expression(operand, &expected_opt);
         match expr_typed.ty.clone() {
             Type::Optional(inner) => TypedExpr {
                 ty: *inner,
@@ -296,12 +293,10 @@ impl<'src> TypeChecker<'src> {
                     operator: UnaryOp::Unwrap,
                     operand: Box::new(expr_typed),
                 },
-                span: expr.span(),
+                span: expr.span,
             },
             _ => {
-                self.warn(TypeCheckerWarning::RedundantForceUnwrap {
-                    span: operator.span,
-                });
+                self.warn(TypeCheckerWarning::RedundantForceUnwrap { span: bang });
                 expr_typed
             }
         }
@@ -310,7 +305,7 @@ impl<'src> TypeChecker<'src> {
     pub(crate) fn check_map(
         &mut self,
         expr: &Expr<'src>,
-        kv_pairs: &[(Expr<'src>, Expr<'src>)],
+        entries: &[MapEntry<'src>],
         expected: &Type,
     ) -> TypedExpr {
         let key_ty = expected
@@ -322,13 +317,13 @@ impl<'src> TypeChecker<'src> {
             .cloned()
             .unwrap_or_else(|| self.infer_ctx.new_type_var());
 
-        let mut typed_pairs = Vec::with_capacity(kv_pairs.len());
+        let mut typed_pairs = Vec::with_capacity(entries.len());
 
-        for (key_expr, val_expr) in kv_pairs.iter() {
+        for MapEntry { key, value } in entries {
             let typed_key =
-                self.coerce_expression(key_expr, &key_ty, MismatchContext::ListElement, None);
+                self.coerce_expression(key, &key_ty, MismatchContext::ListElement, None);
             let typed_val =
-                self.coerce_expression(val_expr, &val_ty, MismatchContext::ListElement, None);
+                self.coerce_expression(value, &val_ty, MismatchContext::ListElement, None);
             typed_pairs.push((typed_key, typed_val));
         }
 
@@ -338,7 +333,7 @@ impl<'src> TypeChecker<'src> {
         TypedExpr {
             ty: inferred,
             kind: ExprKind::Map { pairs: typed_pairs },
-            span: expr.span(),
+            span: expr.span,
         }
     }
 
@@ -346,7 +341,6 @@ impl<'src> TypeChecker<'src> {
         &mut self,
         expr: &Expr<'src>,
         elements: &[Expr<'src>],
-        _bracket_token: &Token<'src>,
         expected: &Type,
     ) -> TypedExpr {
         // Empty `[]` can be used as an empty map literal when the expected type is Map.
@@ -376,7 +370,7 @@ impl<'src> TypeChecker<'src> {
             kind: ExprKind::List {
                 elements: typed_elements,
             },
-            span: expr.span(),
+            span: expr.span,
         }
     }
 }

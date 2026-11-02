@@ -1,4 +1,5 @@
-use crate::scanner::{Span, Token};
+use crate::parser::ast::Ident;
+use crate::scanner::Span;
 use crate::typechecker::core::error::{
     DuplicateDefinition, DuplicateKind, TypeCheckerError, TypeCheckerWarning,
 };
@@ -39,7 +40,7 @@ impl<'a, 'src> std::ops::DerefMut for TypeScopeGuard<'a, 'src> {
 impl<'a, 'src> TypeScopeGuard<'a, 'src> {
     pub fn new_type_params(
         checker: &'a mut TypeChecker<'src>,
-        generics: &[Token<'src>],
+        generics: &[Ident<'src>],
         ids: &[GenericTypeId],
     ) -> Self {
         let generic_map = Self::create_generic_map(checker.sys, ids);
@@ -51,7 +52,7 @@ impl<'a, 'src> TypeScopeGuard<'a, 'src> {
         check_duplicate_generics(&mut checker.errors, generics, res);
         Self { checker }
     }
-    pub fn new_function(checker: &'a mut TypeChecker<'src>, generics: &[Token<'src>]) -> Self {
+    pub fn new_function(checker: &'a mut TypeChecker<'src>, generics: &[Ident<'src>]) -> Self {
         let ids = checker.sys.declare_ids(generics);
         let generic_map = Self::create_generic_map(checker.sys, &ids);
 
@@ -93,7 +94,7 @@ impl<'a, 'src> TypeScopeGuard<'a, 'src> {
 }
 fn check_duplicate_generics(
     errors: &mut Vec<TypeCheckerError>,
-    generics: &[Token],
+    generics: &[Ident],
     scope_errors: Result<(), Vec<TypeScopeError>>,
 ) {
     let Err(scope_errors) = scope_errors else {

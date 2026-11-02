@@ -1,6 +1,6 @@
-use crate::parser::ast::{ImportSegment, ImportStmt, ImportType};
+use crate::parser::ast::{Ident, Import, ImportKind, ImportTree};
 use crate::resolver::ModuleInfo;
-use crate::scanner::{Span, Token};
+use crate::scanner::Span;
 use crate::typechecker::Exports;
 use crate::typechecker::core::error::{Recoverable, TypeCheckerError, TypeCheckerWarning};
 use crate::typechecker::core::types::{NameTypeId, PrimitiveTypeId, Type};
@@ -11,14 +11,14 @@ use crate::typechecker::similarity::find_similar;
 use crate::typechecker::{Symbol, TypeChecker};
 
 impl<'src> TypeChecker<'src> {
-    pub fn imports(&mut self, imports: &[ImportStmt<'src>]) {
+    pub fn imports(&mut self, imports: &[Import<'src>]) {
         for import in imports {
-            self.handle_import(None, &import.segment)
+            self.handle_import(None, &import.tree)
         }
     }
 
-    fn handle_import(&mut self, prefix: Option<&str>, import: &ImportSegment) {
-        let mut path_segments = import.path.iter().map(|p| p.lexeme).collect::<Vec<_>>();
+    fn handle_import(&mut self, prefix: Option<&str>, import: &ImportTree) {
+        let mut path_segments = import.path.iter().map(|p| p.name).collect::<Vec<_>>();
 
         if let Some(prefix) = prefix {
             path_segments.insert(0, prefix);
@@ -26,23 +26,23 @@ impl<'src> TypeChecker<'src> {
 
         let path = path_segments.join("/");
 
-        match &import.import_type {
-            ImportType::Simple { terminator } => {
-                self.import_named(&path, terminator, terminator);
+        match &import.kind {
+            ImportKind::Item { name } => {
+                self.import_named(&path, name, name);
             }
-            ImportType::Alias { terminator, alias } => {
-                self.import_named(&path, terminator, alias);
+            ImportKind::Alias { name, alias } => {
+                self.import_named(&path, name, alias);
             }
-            ImportType::Group { options } => {
-                for option in options {
-                    self.handle_import(Some(&path), option);
+            ImportKind::Group(group) => {
+                for tree in &group.items {
+                    self.handle_import(Some(&path), tree);
                 }
             }
-            ImportType::Wildcard(star) => {
+            ImportKind::Wildcard(star) => {
                 let Some((_, exports)) = self.import_target(&path) else {
                     return;
                 };
-                self.import_all(exports, star.span);
+                self.import_all(exports, *star);
             }
         }
     }
@@ -63,13 +63,13 @@ impl<'src> TypeChecker<'src> {
         Some((target_mod, exports))
     }
 
-    fn import_named(&mut self, path: &str, terminator: &Token, target: &Token) {
+    fn import_named(&mut self, path: &str, terminator: &Ident, target: &Ident) {
         let Some((module_info, exports)) = self.import_target(path) else {
             self.bind_unavailable(target);
             return;
         };
 
-        let type_lookup = exports.lookup_type(terminator.lexeme);
+        let type_lookup = exports.lookup_type(terminator.name);
         if let TypeLookup::Found {
             binding,
             extension_only,
@@ -84,16 +84,16 @@ impl<'src> TypeChecker<'src> {
                 );
                 let res = self
                     .type_scopes
-                    .declare_global(target.lexeme.into(), imported);
-                self.redeclaration_type(res, target.lexeme, target.span);
+                    .declare_global(target.name.into(), imported);
+                self.redeclaration_type(res, target.name, target.span);
             }
             self.import_extensions(binding.target, exports, extension_only, terminator, target)
         }
 
-        let var_lookup = exports.lookup_var(terminator.lexeme);
+        let var_lookup = exports.lookup_var(terminator.name);
 
         if let VarLookup::Found(var) = var_lookup {
-            self.declare_imported(var, target.lexeme.into(), target.span);
+            self.declare_imported(var, target.name.into(), target.span);
         }
 
         if type_lookup.has_succeeded() || var_lookup.has_succeeded() {
@@ -104,12 +104,12 @@ impl<'src> TypeChecker<'src> {
             let note = reexport.then(|| {
                 format!(
                     "`{}` imports `{}` but does not export it; re-exports are not supported",
-                    module_info.name, terminator.lexeme
+                    module_info.name, terminator.name
                 )
             });
 
             TypeCheckerError::PrivateImport {
-                name: terminator.lexeme.into(),
+                name: terminator.name.into(),
                 module: module_info.name.clone(),
                 span: terminator.span,
                 definition: span,
@@ -131,7 +131,7 @@ impl<'src> TypeChecker<'src> {
             );
             let _ = self
                 .type_scopes
-                .declare_global(target.lexeme.into(), imported);
+                .declare_global(target.name.into(), imported);
             self.import_extensions(binding.target, exports, false, terminator, target);
             self.report(private_err(span, is_reexport));
         }
@@ -142,7 +142,7 @@ impl<'src> TypeChecker<'src> {
             span,
         } = var_lookup
         {
-            self.declare_imported(var, target.lexeme.into(), target.span);
+            self.declare_imported(var, target.name.into(), target.span);
             self.report(private_err(span, is_reexport));
         }
 
@@ -151,9 +151,9 @@ impl<'src> TypeChecker<'src> {
 
             let visible_names = Self::public_names(exports);
             let candidates = visible_names.iter().map(|name| name.as_ref());
-            let suggestions = find_similar(terminator.lexeme, candidates, 3);
+            let suggestions = find_similar(terminator.name, candidates, 3);
             self.report(TypeCheckerError::ImportNotFound {
-                name: terminator.lexeme.into(),
+                name: terminator.name.into(),
                 span: terminator.span,
                 suggestions,
             });
@@ -161,11 +161,11 @@ impl<'src> TypeChecker<'src> {
     }
 
     /// Adds fallback bindings for missing items and unavailable modules.
-    fn bind_unavailable(&mut self, target: &Token) {
+    fn bind_unavailable(&mut self, target: &Ident) {
         let _ = self
             .scopes
             .declare(Declaration::variable(
-                target.lexeme.into(),
+                target.name.into(),
                 Type::Error,
                 target.span,
             ))
@@ -177,9 +177,7 @@ impl<'src> TypeChecker<'src> {
                 import_span: target.span,
             },
         );
-        let _ = self
-            .type_scopes
-            .declare_global(target.lexeme.into(), binding);
+        let _ = self.type_scopes.declare_global(target.name.into(), binding);
     }
 
     /// Imports the extensions a module defines on an external type.
@@ -188,13 +186,13 @@ impl<'src> TypeChecker<'src> {
         id: NameTypeId,
         exports: &Exports,
         is_extension_only: bool,
-        terminator: &Token,
-        target: &Token,
+        terminator: &Ident,
+        target: &Ident,
     ) {
-        if target.lexeme != terminator.lexeme && is_extension_only {
+        if target.name != terminator.name && is_extension_only {
             self.warn(TypeCheckerWarning::UnboundExtensionAlias {
-                alias: target.lexeme.to_string(),
-                name: terminator.lexeme.to_string(),
+                alias: target.name.to_string(),
+                name: terminator.name.to_string(),
                 span: target.span,
             });
         }

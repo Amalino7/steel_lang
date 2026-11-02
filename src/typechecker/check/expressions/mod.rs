@@ -7,9 +7,8 @@ pub(crate) mod static_access;
 
 use crate::compiler::analysis::ResolvedVar;
 use crate::compiler::analysis::ResolvedVar::Global;
-use crate::parser::ast::{Expr, Literal, StringPart};
+use crate::parser::ast::{Expr, ExprKind as AstKind, Literal, StringPart};
 use crate::scanner::Span;
-use crate::scanner::TokenType;
 use crate::typechecker::TypeChecker;
 use crate::typechecker::core::ast::{ExprKind, TypedExpr, TypedStringPart};
 use crate::typechecker::core::error::{
@@ -21,63 +20,49 @@ use crate::typechecker::similarity::find_similar;
 
 impl<'src> TypeChecker<'src> {
     pub(crate) fn check_expression(&mut self, expr: &Expr<'src>, expected: &Type) -> TypedExpr {
-        let span = expr.span();
+        let span = expr.span;
         let fallback = || TypedExpr::new_blank(span);
-        match expr {
-            Expr::TypeSpecialization {
-                callee,
-                generics: generics_provided,
-            } => self.check_type_specialization(expr, callee, generics_provided),
+        match &expr.kind {
+            AstKind::TypeSpecialization { callee, type_args } => {
+                self.check_type_specialization(expr, callee, &type_args.items)
+            }
 
-            Expr::Is {
-                expression,
-                type_name,
-            } => self.check_is(expr, expression, type_name),
+            AstKind::Is { operand, variant } => self.check_is(expr, operand, variant),
 
-            Expr::Tuple { elements } => self.check_tuple(expr, elements, expected),
+            AstKind::Tuple(elements) => self.check_tuple(expr, elements, expected),
 
-            Expr::Unary {
-                operator,
-                expression,
-            } if operator.kind == TokenType::Try => self.check_try(expr, operator, expression),
+            AstKind::Try { keyword, operand } => self.check_try(expr, *keyword, operand),
 
-            Expr::Unary {
-                operator,
-                expression,
-            } => self.check_unary_expression(operator, expression),
+            AstKind::Unary { op, operand } => self.check_unary_expression(*op, operand, span),
 
-            Expr::Binary {
-                operator,
-                left,
-                right,
-            } => self
-                .check_binary_expression(operator, left, right, expected)
+            AstKind::Binary { left, op, right } => self
+                .check_binary_expression(*op, left, right, expected)
                 .recover(&mut self.errors, fallback()),
 
-            Expr::Variable { name } => {
-                let var = self.scopes.lookup(name.lexeme);
+            AstKind::Variable(name) => {
+                let var = self.scopes.lookup(name.name);
                 if let Some((ctx, resolved)) = var {
                     TypedExpr {
                         ty: ctx.type_info.clone(),
                         kind: ExprKind::GetVar(resolved, ctx.name.clone()),
                         span: name.span,
                     }
-                } else if let Some(type_id) = self.res().get_type_id(name.lexeme) {
+                } else if let Some(type_id) = self.res().get_type_id(name.name) {
                     TypedExpr {
                         ty: Type::Metatype(type_id, vec![].into()),
-                        kind: ExprKind::GetVar(Global(0), name.lexeme.into()),
+                        kind: ExprKind::GetVar(Global(0), name.name.into()),
                         span: name.span,
                     }
                 } else {
-                    if name.lexeme == "self" {
+                    if name.name == "self" {
                         self.report(TypeCheckerError::SelfOutsideOfImpl { span: name.span });
                         return fallback();
                     }
 
                     let visible_vars = self.scopes.visible_variable_names();
-                    let suggestions = find_similar(name.lexeme, visible_vars, 3);
+                    let suggestions = find_similar(name.name, visible_vars, 3);
                     self.report(TypeCheckerError::UndefinedVariable {
-                        name: name.lexeme.to_string(),
+                        name: name.name.to_string(),
                         span: name.span,
                         suggestions,
                     });
@@ -85,13 +70,15 @@ impl<'src> TypeChecker<'src> {
                 }
             }
 
-            Expr::Grouping { expression } => self.check_expression(expression, expected),
+            AstKind::Grouping(inner) => self.check_expression(inner, expected),
 
-            Expr::StringInterp { parts, span } => {
+            AstKind::StringInterp(parts) => {
                 let typed_parts = parts
                     .iter()
                     .map(|part| match part {
-                        StringPart::Literal(s) => TypedStringPart::Literal(s.clone()),
+                        StringPart::Literal { value, .. } => {
+                            TypedStringPart::Literal(value.clone())
+                        }
                         StringPart::Expr(e) => TypedStringPart::Expr(Box::new(
                             self.check_expression(e, &Type::Unknown),
                         )),
@@ -100,11 +87,11 @@ impl<'src> TypeChecker<'src> {
                 TypedExpr {
                     ty: Type::String,
                     kind: ExprKind::StringInterpolation { parts: typed_parts },
-                    span: *span,
+                    span,
                 }
             }
 
-            Expr::Literal { literal, span } => {
+            AstKind::Literal(literal) => {
                 let ty = match literal {
                     Literal::Number(_) => Type::Number,
                     Literal::String(_) => Type::String,
@@ -116,12 +103,15 @@ impl<'src> TypeChecker<'src> {
                 TypedExpr {
                     ty,
                     kind: ExprKind::Literal(literal.clone()),
-                    span: *span,
+                    span,
                 }
             }
 
-            Expr::Assignment { identifier, value } => {
-                let var_lookup = self.scopes.lookup_for_write(identifier.lexeme);
+            AstKind::Assign {
+                target: identifier,
+                value,
+            } => {
+                let var_lookup = self.scopes.lookup_for_write(identifier.name);
                 if let Some((ctx, resolved)) = var_lookup {
                     let is_closure = matches!(&resolved, ResolvedVar::Closure(_));
                     let is_reassignable = ctx.is_reassignable();
@@ -157,13 +147,13 @@ impl<'src> TypeChecker<'src> {
                             && inner.as_ref() == &coerced_value.ty
                         {
                             self.scopes.widen_type(
-                                identifier.lexeme,
+                                identifier.name,
                                 coerced_value.ty.clone(),
                                 old_resolved.clone(),
                             )
                         } else {
                             self.scopes.widen_type(
-                                identifier.lexeme,
+                                identifier.name,
                                 old_ty.clone(),
                                 old_resolved.clone(),
                             );
@@ -186,19 +176,19 @@ impl<'src> TypeChecker<'src> {
                             target: resolved,
                             value: Box::new(coerced_value),
                         },
-                        span: expr.span(),
+                        span,
                     }
                 } else {
-                    if identifier.lexeme == "self" {
+                    if identifier.name == "self" {
                         self.report(TypeCheckerError::SelfOutsideOfImpl {
                             span: identifier.span,
                         });
                         return fallback();
                     }
                     let visible_vars = self.scopes.visible_variable_names();
-                    let suggestions = find_similar(identifier.lexeme, visible_vars, 3);
+                    let suggestions = find_similar(identifier.name, visible_vars, 3);
                     self.report(TypeCheckerError::UndefinedVariable {
-                        name: identifier.lexeme.to_string(),
+                        name: identifier.name.to_string(),
                         span: identifier.span,
                         suggestions,
                     });
@@ -206,82 +196,66 @@ impl<'src> TypeChecker<'src> {
                 }
             }
 
-            Expr::Logical {
-                operator,
-                left,
-                right,
-            } if operator.kind == TokenType::QuestionQuestion => {
-                self.check_coalesce(expr, operator, left, right, expected)
+            AstKind::Coalesce { left, right, .. } => {
+                self.check_coalesce(expr, left, right, expected)
             }
 
-            Expr::Logical {
-                left,
-                operator,
-                right,
-            } => self.check_logical_expression(operator, left, right),
+            AstKind::Logical { left, op, right } => {
+                self.check_logical_expression(*op, left, right, span)
+            }
 
-            Expr::Call {
-                callee,
-                arguments,
-                safe,
-            } => self
-                .check_call(expr, callee, arguments, safe, expected)
+            AstKind::Call { callee, safe, args } => self
+                .check_call(expr, callee, args, *safe, expected)
                 .recover(&mut self.errors, fallback()),
 
-            Expr::Get {
+            AstKind::Field {
                 object,
-                field,
                 safe,
+                member,
             } => self
-                .check_get(expr, object, field, safe)
+                .check_get(object, member, *safe)
                 .recover(&mut self.errors, fallback()),
 
-            Expr::Set {
+            AstKind::SetField {
                 object,
-                field,
+                safe,
+                member,
                 value,
-                safe,
             } => self
-                .check_set(object, field, value, safe)
+                .check_set(object, member, value, *safe)
                 .recover(&mut self.errors, fallback()),
 
-            Expr::ForceUnwrap {
-                expression,
-                operator,
-            } => self.check_force_unwrap(expr, expression, operator, expected),
-            Expr::List {
-                elements,
-                bracket_token,
-            } => self.check_list(expr, elements, bracket_token, expected),
-            Expr::Map { kv_pairs, .. } => self.check_map(expr, kv_pairs, expected),
+            AstKind::ForceUnwrap { operand, bang } => {
+                self.check_force_unwrap(expr, operand, *bang, expected)
+            }
+            AstKind::List(elements) => self.check_list(expr, elements, expected),
+            AstKind::Map(entries) => self.check_map(expr, entries, expected),
 
-            Expr::GetIndex {
-                safe,
+            AstKind::Index {
                 object,
+                safe,
                 index,
             } => self
-                .check_get_index(expr, safe, object, index)
+                .check_get_index(expr, *safe, object, index)
                 .recover(&mut self.errors, fallback()),
 
-            Expr::SetIndex {
-                safe,
+            AstKind::SetIndex {
                 object,
+                safe,
                 index,
                 value,
             } => self
-                .check_set_index(expr, safe, object, index, value)
+                .check_set_index(expr, *safe, object, index, value)
                 .recover(&mut self.errors, fallback()),
 
-            Expr::Error(span) => {
-                // Already reported by parser
-                TypedExpr::new_blank(*span)
+            // Already reported by the parser.
+            AstKind::Error => fallback(),
+
+            AstKind::Block { stmts, tail } => {
+                self.check_block_expr(stmts, tail.as_deref(), expected, span)
             }
 
-            Expr::Block { body, tail, .. } => {
-                self.check_block_expr(body, tail.as_deref(), expected, span)
-            }
-
-            Expr::IfExpr {
+            AstKind::If {
                 condition,
                 then_branch,
                 else_branch,
@@ -293,39 +267,38 @@ impl<'src> TypeChecker<'src> {
                 span,
             ),
 
-            Expr::MatchExpr { value, arms } => self
-                .check_match_expr(value, arms)
+            AstKind::Match { scrutinee, arms } => self
+                .check_match_expr(scrutinee, arms, span)
                 .recover(&mut self.errors, fallback()),
 
-            Expr::Lambda {
-                params,
-                body,
-                return_type,
-                pipe_token,
-            } => self.check_lambda(
-                params,
-                body,
-                return_type.as_ref(),
-                expected,
-                pipe_token.span,
-            ),
+            AstKind::Lambda { params, ret, body } => {
+                self.check_lambda(params, ret.as_deref(), body, expected, span)
+            }
 
-            Expr::Return { keyword, value } => {
-                if let Some((func_return_type, func_span)) = self.scopes.return_type() {
-                    let coerced = self.coerce_expression(
-                        value,
-                        &func_return_type,
-                        MismatchContext::Return,
-                        Some(func_span),
-                    );
-                    TypedExpr {
-                        ty: Type::Never,
-                        kind: ExprKind::Return(Box::new(coerced)),
-                        span: keyword.span.merge(value.span()),
-                    }
-                } else {
+            AstKind::Return(value) => {
+                let Some((func_return_type, func_span)) = self.scopes.return_type() else {
                     self.report(TypeCheckerError::InvalidReturnOutsideFunction { span });
-                    fallback()
+                    return fallback();
+                };
+                let typed = match value {
+                    Some(value) => self.check_expression(value, &func_return_type),
+                    // A bare `return` returns `void`, from the keyword.
+                    None => TypedExpr {
+                        ty: Type::Void,
+                        kind: ExprKind::Literal(Literal::Void),
+                        span,
+                    },
+                };
+                let coerced = self.coerce_typed(
+                    typed,
+                    &func_return_type,
+                    MismatchContext::Return,
+                    Some(func_span),
+                );
+                TypedExpr {
+                    ty: Type::Never,
+                    kind: ExprKind::Return(Box::new(coerced)),
+                    span,
                 }
             }
         }

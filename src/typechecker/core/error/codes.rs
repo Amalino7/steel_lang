@@ -22,6 +22,7 @@ impl TypeCheckerError {
             TypeCheckerError::MissingInterfaceMethods { .. } => "E020",
             TypeCheckerError::UncoveredPattern { .. } => "E021",
             TypeCheckerError::InvalidTupleIndex { .. } => "E022",
+            TypeCheckerError::TupleIndexOnNonTuple { .. } => "E035",
             TypeCheckerError::InvalidIsUsage { .. } => "E024",
             TypeCheckerError::InterfaceMethodTypeMismatch { .. } => "E028",
             TypeCheckerError::InvalidOperandTypes { .. } => "E030",

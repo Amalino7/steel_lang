@@ -1,4 +1,4 @@
-use crate::typechecker::core::error::TypeCheckerError;
+use crate::typechecker::core::error::{GenericError, TypeCheckerError};
 use crate::typechecker::tests::helpers::*;
 
 #[test]
@@ -95,4 +95,31 @@ fn test_valid_interface_multiple_methods() {
         }
         "#,
     );
+}
+
+#[test]
+fn test_missing_interface_method_points_at_the_impl_header() {
+    const SRC: &str = "interface Show { func show(self): string; }\nstruct P {}\nimpl P: Show { }";
+    Tester::new(SRC)
+        .expect_error(|e| {
+            matches!(e, TypeCheckerError::MissingInterfaceMethods { span, .. }
+                if &SRC[span.to_range()] == "impl P: Show")
+        })
+        .run();
+}
+
+#[test]
+fn test_interface_in_impl_header_takes_no_type_arguments() {
+    Tester::new(
+        r#"
+        interface Show { func show(self): string; }
+        struct P {}
+        impl P: Show<number> { func show(self): string { return "p"; } }
+        "#,
+    )
+    .expect_error(|e| {
+        matches!(e, TypeCheckerError::Generic(GenericError::CountMismatch { type_name, expected: 0, found: 1, .. })
+            if type_name == "Show")
+    })
+    .run();
 }

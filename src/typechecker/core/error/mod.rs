@@ -311,7 +311,12 @@ pub enum TypeCheckerError {
     },
     InvalidTupleIndex {
         tuple_type: Type,
-        index: String,
+        index: usize,
+        span: Span,
+    },
+    /// `point.0`: a tuple index on a type that isn't a tuple.
+    TupleIndexOnNonTuple {
+        found: Type,
         span: Span,
     },
     InvalidIsUsage {
@@ -405,7 +410,7 @@ pub struct InvalidOperandTypes {
     operator: String,
     left: Type,
     right: Type,
-    span: Span,
+    pub(crate) span: Span,
     help: &'static str,
 }
 

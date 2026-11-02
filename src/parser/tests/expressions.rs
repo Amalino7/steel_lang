@@ -34,8 +34,8 @@ fn test_null_coalescing_is_left_associative() {
 #[test]
 fn test_assignment_forms() {
     assert_parses("let x = 10; x = 20;", "(let (bind x) ? 10) (assign x 20)");
-    assert_expr("a.f = 1", "(set a .f 1)");
-    assert_expr("a?.f = 1", "(set? a .f 1)");
+    assert_expr("a.f = 1", "(set-field a .f 1)");
+    assert_expr("a?.f = 1", "(set-field? a .f 1)");
     assert_expr("a[0] = 1", "(set-index a 0 1)");
 }
 
@@ -43,7 +43,7 @@ fn test_assignment_forms() {
 fn test_compound_assignment_desugars_to_binary() {
     assert_parses(
         "let x = 1; x += 5;",
-        "(let (bind x) ? 1) (assign x (+= x 5))",
+        "(let (bind x) ? 1) (assign x (+ x 5))",
     );
 }
 
@@ -54,14 +54,14 @@ fn test_call_with_labels() {
 
 #[test]
 fn test_postfix_chain() {
-    assert_expr("f(1)(2).x[3]", "(index (get (call (call f 1) 2) .x) 3)");
+    assert_expr("f(1)(2).x[3]", "(index (field (call (call f 1) 2) .x) 3)");
 }
 
 #[test]
 fn test_safe_navigation() {
-    assert_expr("obj?.field", "(get? obj .field)");
+    assert_expr("obj?.field", "(field? obj .field)");
     assert_expr("a?[0]", "(index? a 0)");
-    assert_expr("a.b?.c!", "(unwrap (get? (get a .b) .c))");
+    assert_expr("a.b?.c!", "(unwrap (field? (field a .b) .c))");
 }
 
 #[test]
@@ -111,7 +111,7 @@ fn test_if_and_match_expressions() {
     );
     assert_expr(
         "match v { .A => 1, E.B(x) => 2, other => 3 }",
-        "(match v (arm (pat .A) 1) (arm (pat E.B (bind x)) 2) (arm (pat-var other) 3))",
+        "(match v (arm (pat .A) 1) (arm (pat E.B (bind x)) 2) (arm (pat-name other) 3))",
     );
 }
 
@@ -125,7 +125,7 @@ fn test_expression_spans() {
     assert_span("let x = 1 + 2 * 3;", "let/binary", "1 + 2 * 3");
     assert_span("let x = 1 + 2 * 3;", "let/binary/binary", "2 * 3");
     assert_span("let x = -a.b;", "let/unary", "-a.b");
-    assert_span("let x = obj.field;", "let/get", "obj.field");
+    assert_span("let x = obj.field;", "let/field", "obj.field");
     assert_span("let x = (1, 2);", "let/tuple/num", "1");
 }
 
@@ -133,7 +133,7 @@ fn test_expression_spans() {
 fn test_printer_shows_spans() {
     assert_parses_with_spans(
         "let x = 1 + 2;",
-        "(let@4..13 (bind@4..5 x@4..5) ? (+@8..13 1@8..9 2@12..13))",
+        "(let@0..14 (bind@4..5 x@4..5) ? (+@8..13 1@8..9 2@12..13))",
     );
 }
 

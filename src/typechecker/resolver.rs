@@ -1,7 +1,7 @@
-use crate::parser::ast::{FunctionSig, TypeAst};
-use crate::scanner::{Span, Token};
+use crate::parser::ast::{FnSig, NamedType, Param, TypeAst, TypeAstKind};
+use crate::scanner::Span;
 use crate::typechecker::core::error::{GenericError, TypeCheckerError};
-use crate::typechecker::core::types::{FunctionType, GenericTypeId, NameTypeId, TupleType, Type};
+use crate::typechecker::core::types::{FunctionType, NameTypeId, TupleType, Type};
 use crate::typechecker::scope::types::TypeScopeManager;
 use crate::typechecker::system::{TypeBlueprint, TypeSystem};
 use std::rc::Rc;
@@ -19,38 +19,52 @@ impl<'a> TypeResolver<'a> {
     }
 
     pub fn resolve(&self, ast: &TypeAst<'_>) -> Result<Type, TypeCheckerError> {
-        match ast {
-            TypeAst::Optional(inner) => Ok(self.resolve(inner)?.wrap_in_optional()),
-            TypeAst::Named(name, generics) => self.resolve_named(name, generics),
-            TypeAst::Function(_, sig) => self.resolve_func(sig, vec![]).map(Type::Function),
-            TypeAst::Tuple(param) => self.resolve_tuple(param),
-            TypeAst::Infer => Ok(Type::Unknown),
+        match &ast.kind {
+            TypeAstKind::Optional(inner) => Ok(self.resolve(inner)?.wrap_in_optional()),
+            TypeAstKind::Named(named) => self.resolve_named(named),
+            TypeAstKind::Fn { params, ret } => {
+                let params = params
+                    .iter()
+                    .map(|ty| Ok(("_".into(), self.resolve(ty)?)))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(Type::Function(Rc::new(FunctionType {
+                    is_vararg: false,
+                    params,
+                    return_type: self.resolve_return(ret.as_deref())?,
+                    type_params: vec![],
+                })))
+            }
+            TypeAstKind::Tuple(types) => self.resolve_tuple(types),
         }
     }
-    pub fn resolve_named(
-        &self,
-        token: &Token,
-        generics: &[TypeAst<'_>],
-    ) -> Result<Type, TypeCheckerError> {
-        let span = token.span.merge(
-            generics
-                .last()
-                .map(|t: &TypeAst| t.span())
-                .unwrap_or(token.span),
-        );
 
-        let name = token.lexeme;
+    /// An omitted annotation (`None`) is inferred: `Type::Unknown`.
+    pub fn resolve_annotation(&self, ast: Option<&TypeAst<'_>>) -> Result<Type, TypeCheckerError> {
+        ast.map_or(Ok(Type::Unknown), |ty| self.resolve(ty))
+    }
+
+    /// An omitted return type (`None`) is `void`.
+    fn resolve_return(&self, ret: Option<&TypeAst<'_>>) -> Result<Type, TypeCheckerError> {
+        ret.map_or(Ok(Type::Void), |ty| self.resolve(ty))
+    }
+
+    pub fn resolve_named(&self, named: &NamedType<'_>) -> Result<Type, TypeCheckerError> {
+        let name = named.name.name;
         if name == "Self" {
-            check_generic_arity(name, 0, generics.len(), span)?;
-            return self
-                .scope_manager
-                .get_self_type()
-                .cloned()
-                .ok_or(TypeCheckerError::SelfOutsideOfImpl { span: token.span });
+            check_generic_arity(name, 0, named.args.len(), named.span)?;
+            return self.self_type(named.name.span);
         }
-        let resolved_generics = self.resolve_many(generics)?;
+        let resolved_generics = self.resolve_many(&named.args)?;
 
-        self.instantiate(name, resolved_generics, span)
+        self.instantiate(name, resolved_generics, named.span)
+    }
+
+    /// The `impl` target, for `Self` and `self` at `span`.
+    fn self_type(&self, span: Span) -> Result<Type, TypeCheckerError> {
+        self.scope_manager
+            .get_self_type()
+            .cloned()
+            .ok_or(TypeCheckerError::SelfOutsideOfImpl { span })
     }
 
     pub fn instantiate(
@@ -110,28 +124,26 @@ impl<'a> TypeResolver<'a> {
     }
     pub fn resolve_generic_func(
         &self,
-        signature: &FunctionSig<'_>,
-    ) -> Result<Rc<FunctionType>, TypeCheckerError> {
-        self.resolve_func(signature, self.scope_manager.active_generics())
-    }
-
-    fn resolve_func(
-        &self,
-        signature: &FunctionSig<'_>,
-        active_generics: Vec<GenericTypeId>,
+        signature: &FnSig<'_>,
     ) -> Result<Rc<FunctionType>, TypeCheckerError> {
         let params = signature
             .params
+            .items
             .iter()
-            .map(|(name, ty)| Ok((name.lexeme.into(), self.resolve(ty)?)))
+            .map(|param| {
+                let ty = match param {
+                    Param::SelfParam(span) => self.self_type(*span)?,
+                    Param::Named { ty, .. } => self.resolve(ty)?,
+                };
+                Ok((param.ident().name.into(), ty))
+            })
             .collect::<Result<Vec<_>, _>>()?;
 
-        let return_type = self.resolve(&signature.return_type)?;
         Ok(Rc::new(FunctionType {
             is_vararg: false,
             params,
-            return_type,
-            type_params: active_generics,
+            return_type: self.resolve_return(signature.ret.as_ref())?,
+            type_params: self.scope_manager.active_generics(),
         }))
     }
 }

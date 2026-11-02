@@ -9,4 +9,5 @@ mod expressions;
 mod imports;
 mod lists;
 mod recovery;
+mod spans;
 mod statements;

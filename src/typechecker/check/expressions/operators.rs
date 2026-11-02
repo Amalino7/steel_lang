@@ -1,5 +1,5 @@
-use crate::parser::ast::Expr;
-use crate::scanner::{Span, Token, TokenType};
+use crate::parser::ast::{self, Expr, Spanned};
+use crate::scanner::Span;
 use crate::typechecker::TypeChecker;
 use crate::typechecker::core::ast::{BinaryOp, ExprKind, LogicalOp, TypedExpr, UnaryOp};
 use crate::typechecker::core::error::{Operand, TypeCheckerError, TypeRequirement};
@@ -10,19 +10,17 @@ use crate::typechecker::scope::manager::ScopeKind;
 impl<'src> TypeChecker<'src> {
     pub(crate) fn check_unary_expression(
         &mut self,
-        operator: &Token,
+        op: Spanned<ast::UnaryOp>,
         expr: &Expr<'src>,
+        total_span: Span,
     ) -> TypedExpr {
-        let (hint_ty, unary_op, op_str) = if operator.kind == TokenType::Bang {
-            (Type::Boolean, UnaryOp::Not, "!")
-        } else if operator.kind == TokenType::Minus {
-            (Type::Number, UnaryOp::Negate, "-")
-        } else {
-            unreachable!("Ast should have checked for invalid operators before this point.")
+        let (hint_ty, unary_op) = match op.node {
+            ast::UnaryOp::Not => (Type::Boolean, UnaryOp::Not),
+            ast::UnaryOp::Negate => (Type::Number, UnaryOp::Negate),
         };
+        let op_str = op.node.as_str();
 
         let typed_operand = self.check_expression(expr, &hint_ty);
-        let total_span = typed_operand.span.merge(operator.span);
 
         let is_success = self.check_operand(
             hint_ty.clone(),
@@ -47,15 +45,12 @@ impl<'src> TypeChecker<'src> {
 
     pub(crate) fn check_logical_expression(
         &mut self,
-        operator: &Token,
+        op: Spanned<ast::LogicalOp>,
         left: &Expr<'src>,
         right: &Expr<'src>,
+        span: Span,
     ) -> TypedExpr {
-        let op_str = if TokenType::And == operator.kind {
-            "and"
-        } else {
-            "or"
-        };
+        let op_str = op.node.as_str();
 
         let left_typed = self.check_expression(left, &Type::Boolean);
 
@@ -68,12 +63,9 @@ impl<'src> TypeChecker<'src> {
         );
 
         let refinements = self.analyze_condition(&left_typed);
-        let refinement_path = if TokenType::And == operator.kind {
-            refinements.true_path
-        } else if TokenType::Or == operator.kind {
-            refinements.false_path
-        } else {
-            unreachable!("Invalid logical operator");
+        let refinement_path = match op.node {
+            ast::LogicalOp::And => refinements.true_path,
+            ast::LogicalOp::Or => refinements.false_path,
         };
 
         let (right_typed, typed_refinements) = {
@@ -96,37 +88,35 @@ impl<'src> TypeChecker<'src> {
             right_typed.span,
         );
 
-        let op = match operator.kind {
-            TokenType::And => LogicalOp::And,
-            TokenType::Or => LogicalOp::Or,
-            _ => unreachable!("Invalid logical operator"),
+        let operator = match op.node {
+            ast::LogicalOp::And => LogicalOp::And,
+            ast::LogicalOp::Or => LogicalOp::Or,
         };
 
         TypedExpr {
             ty: Type::Boolean,
             kind: ExprKind::Logical {
                 left: Box::new(left_typed),
-                operator: op,
+                operator,
                 right: Box::new(right_typed),
                 typed_refinements,
             },
-            span: operator.span,
+            span,
         }
     }
 
+    /// An operand type error is reported on the operator.
     pub(crate) fn check_binary_expression(
         &mut self,
-        operator: &Token,
+        op: Spanned<ast::BinaryOp>,
         left: &Expr<'src>,
         right: &Expr<'src>,
         expected: &Type,
     ) -> Result<TypedExpr, TypeCheckerError> {
-        match operator.kind {
-            TokenType::Minus
-            | TokenType::Slash
-            | TokenType::Star
-            | TokenType::Percent
-            | TokenType::StarStar => {
+        use ast::BinaryOp as Op;
+        let op_str = op.node.as_str().to_string();
+        match op.node {
+            Op::Subtract | Op::Divide | Op::Multiply | Op::Modulo | Op::Power => {
                 let left_typed = self.check_expression(left, &Type::Number);
                 let right_typed = self.check_expression(right, &Type::Number);
 
@@ -140,35 +130,34 @@ impl<'src> TypeChecker<'src> {
 
                 if left_type != Type::Number || right_type != Type::Number {
                     let err = TypeCheckerError::new_invalid_operand(
-                        operator.lexeme.to_string(),
+                        op_str,
                         left_type,
                         right_type,
-                        total_span,
+                        op.span,
                         "Arithmetic operators require both operands to be numbers.",
                     );
                     return Err(err);
                 }
 
-                let op = match operator.kind {
-                    TokenType::Minus => BinaryOp::Subtract,
-                    TokenType::Slash => BinaryOp::Divide,
-                    TokenType::Star => BinaryOp::Multiply,
-                    TokenType::Percent => BinaryOp::Modulo,
-                    TokenType::StarStar => BinaryOp::Power,
-                    _ => unreachable!(),
+                let operator = match op.node {
+                    Op::Subtract => BinaryOp::Subtract,
+                    Op::Divide => BinaryOp::Divide,
+                    Op::Multiply => BinaryOp::Multiply,
+                    Op::Modulo => BinaryOp::Modulo,
+                    _ => BinaryOp::Power,
                 };
                 Ok(TypedExpr {
                     ty: Type::Number,
                     kind: ExprKind::Binary {
                         left: Box::new(left_typed),
-                        operator: op,
+                        operator,
                         right: Box::new(right_typed),
                     },
                     span: total_span,
                 })
             }
 
-            TokenType::Plus => {
+            Op::Add => {
                 let left_hint = match expected {
                     Type::Number | Type::String => expected.clone(),
                     _ => Type::Unknown,
@@ -208,20 +197,17 @@ impl<'src> TypeChecker<'src> {
                     })
                 } else {
                     let err = TypeCheckerError::new_invalid_operand(
-                        operator.lexeme.to_string(),
+                        op_str,
                         left_type,
                         right_type,
-                        total_span,
+                        op.span,
                         "The '+' operator requires both operands to be numbers, or both to be strings (concatenation).",
                     );
                     Err(err)
                 }
             }
 
-            TokenType::Greater
-            | TokenType::GreaterEqual
-            | TokenType::Less
-            | TokenType::LessEqual => {
+            Op::Greater | Op::GreaterEqual | Op::Less | Op::LessEqual => {
                 let left_typed = self.check_expression(left, &Type::Unknown);
                 let right_typed = self.check_expression(right, &left_typed.ty);
 
@@ -237,39 +223,39 @@ impl<'src> TypeChecker<'src> {
                     && left_type == right_type;
                 if !cmp_compatible {
                     let err = TypeCheckerError::new_invalid_operand(
-                        operator.lexeme.to_string(),
+                        op_str,
                         left_type,
                         right_type,
-                        total_span,
+                        op.span,
                         "Comparison operators require both operands to be numbers or both to be strings.",
                     );
                     return Err(err);
                 }
 
-                let op = match (operator.kind, &left_type) {
-                    (TokenType::Greater, Type::String) => BinaryOp::GreaterString,
-                    (TokenType::GreaterEqual, Type::String) => BinaryOp::GreaterEqualString,
-                    (TokenType::Less, Type::String) => BinaryOp::LessString,
-                    (TokenType::LessEqual, Type::String) => BinaryOp::LessEqualString,
-                    (TokenType::Greater, Type::Number) => BinaryOp::GreaterNumber,
-                    (TokenType::GreaterEqual, Type::Number) => BinaryOp::GreaterEqualNumber,
-                    (TokenType::Less, Type::Number) => BinaryOp::LessNumber,
-                    (TokenType::LessEqual, Type::Number) => BinaryOp::LessEqualNumber,
-                    _ => unreachable!("Invalid comparison operator"),
+                let is_string = left_type == Type::String;
+                let operator = match (op.node, is_string) {
+                    (Op::Greater, true) => BinaryOp::GreaterString,
+                    (Op::GreaterEqual, true) => BinaryOp::GreaterEqualString,
+                    (Op::Less, true) => BinaryOp::LessString,
+                    (Op::LessEqual, true) => BinaryOp::LessEqualString,
+                    (Op::Greater, false) => BinaryOp::GreaterNumber,
+                    (Op::GreaterEqual, false) => BinaryOp::GreaterEqualNumber,
+                    (Op::Less, false) => BinaryOp::LessNumber,
+                    _ => BinaryOp::LessEqualNumber,
                 };
 
                 Ok(TypedExpr {
                     ty: Type::Boolean,
                     kind: ExprKind::Binary {
                         left: Box::new(left_typed),
-                        operator: op,
+                        operator,
                         right: Box::new(right_typed),
                     },
                     span: total_span,
                 })
             }
 
-            TokenType::EqualEqual | TokenType::BangEqual => {
+            Op::Equal | Op::NotEqual => {
                 let left_typed = self.check_expression(left, &Type::Unknown);
                 let right_typed = self.check_expression(right, &left_typed.ty);
 
@@ -279,16 +265,16 @@ impl<'src> TypeChecker<'src> {
 
                 if !Type::can_compare(&left_type, &right_type) {
                     let err = TypeCheckerError::new_invalid_operand(
-                        operator.lexeme.to_string(),
+                        op_str,
                         left_type,
                         right_type,
-                        total_span,
+                        op.span,
                         "Values can only be compared with '==' and '!=' if they have compatible types.",
                     );
                     return Err(err);
                 }
 
-                let op = match &left_type {
+                let operator = match &left_type {
                     Type::Number => BinaryOp::EqualEqualNumber,
                     Type::String => BinaryOp::EqualEqualString,
                     _ => BinaryOp::EqualEqual,
@@ -297,12 +283,12 @@ impl<'src> TypeChecker<'src> {
                     ty: Type::Boolean,
                     kind: ExprKind::Binary {
                         left: Box::new(left_typed),
-                        operator: op,
+                        operator,
                         right: Box::new(right_typed),
                     },
                     span: total_span,
                 };
-                if operator.kind == TokenType::BangEqual {
+                if op.node == Op::NotEqual {
                     Ok(TypedExpr {
                         ty: Type::Boolean,
                         kind: ExprKind::Unary {
@@ -314,10 +300,6 @@ impl<'src> TypeChecker<'src> {
                 } else {
                     Ok(binary_expr)
                 }
-            }
-
-            _ => {
-                unreachable!("Ast should be checked for invalid operators before this point.")
             }
         }
     }

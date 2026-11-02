@@ -1,5 +1,6 @@
 use crate::compiler::analysis::ResolvedVar;
-use crate::scanner::{FileId, Span, Token};
+use crate::parser::ast::Ident;
+use crate::scanner::{FileId, Span};
 use crate::typechecker::core::types::type_defs::{
     EnumType, FieldDef, GenericType, InterfaceType, StructType,
 };
@@ -145,7 +146,7 @@ impl TypeSystem {
         &mut self,
         origin: Span,
         name: Symbol,
-        generic_params: &[Token],
+        generic_params: &[Ident],
         is_public: bool,
     ) -> StructId {
         let id = StructId(self.structs.len());
@@ -160,7 +161,7 @@ impl TypeSystem {
         &mut self,
         origin: Span,
         name: Symbol,
-        generic_params: &[Token],
+        generic_params: &[Ident],
         is_public: bool,
     ) -> EnumId {
         let ids = self.declare_ids(generic_params);
@@ -199,10 +200,10 @@ impl TypeSystem {
         id
     }
 
-    pub fn declare_ids(&mut self, generic_params: &[Token<'_>]) -> Vec<GenericTypeId> {
+    pub fn declare_ids(&mut self, generic_params: &[Ident<'_>]) -> Vec<GenericTypeId> {
         generic_params
             .iter()
-            .map(|generic| self.declare_generic(generic.lexeme.into(), generic.span))
+            .map(|generic| self.declare_generic(generic.name.into(), generic.span))
             .collect()
     }
 

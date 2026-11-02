@@ -1,5 +1,5 @@
 use crate::parser::Parser;
-use crate::parser::ast::{ImportSegment, ImportStmt, ImportType};
+use crate::parser::ast::{Import, ImportKind, ImportTree};
 use crate::resolver::error::{EntryError, LoadError, ResolverError};
 use crate::resolver::{
     FileId, ModuleGraph, ModuleId, ModuleInfo, PRELUDE_FILE, STD_MODULE, collisions,
@@ -333,10 +333,10 @@ impl ModuleResolver {
         }
     }
 
-    fn get_dependencies(&mut self, imports: &[ImportStmt]) -> Vec<Dependency> {
+    fn get_dependencies(&mut self, imports: &[Import]) -> Vec<Dependency> {
         let mut deps = vec![];
         for import in imports {
-            self.handle_import(None, &import.segment, &mut deps);
+            self.handle_import(None, &import.tree, &mut deps);
         }
         // `a/{x, y}` has one leaf per item but a single module path: one edge and one error.
         let mut seen = HashSet::new();
@@ -347,14 +347,14 @@ impl ModuleResolver {
     fn handle_import(
         &mut self,
         prefix: Option<&Dependency>,
-        import: &ImportSegment,
+        import: &ImportTree,
         deps: &mut Vec<Dependency>,
     ) {
         let mut names = prefix
             .map(|dep| dep.module_name.as_str())
             .into_iter()
             .collect::<Vec<_>>();
-        names.extend(import.path.iter().map(|p| p.lexeme));
+        names.extend(import.path.iter().map(|p| p.name));
         let module_name = names.join("/");
 
         let span = prefix
@@ -390,9 +390,9 @@ impl ModuleResolver {
             return;
         }
 
-        if let ImportType::Group { options } = &import.import_type {
-            for option in options {
-                self.handle_import(Some(&module), option, deps);
+        if let ImportKind::Group(group) = &import.kind {
+            for tree in &group.items {
+                self.handle_import(Some(&module), tree, deps);
             }
         } else {
             deps.push(module);

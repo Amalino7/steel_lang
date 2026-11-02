@@ -1,5 +1,5 @@
-use crate::parser::ast::{Binding, Expr, ExprMatchArm, Pattern};
-use crate::scanner::{Span, Token};
+use crate::parser::ast::{Binding, BindingKind, Expr, FieldBinding, Ident, MatchArm, PatternKind};
+use crate::scanner::Span;
 use crate::typechecker::core::ast::{ExprKind, MatchCase, TypedBinding, TypedExpr};
 use crate::typechecker::core::error::TypeRequirement::Structural;
 use crate::typechecker::core::error::{
@@ -40,10 +40,11 @@ fn check_match_exhaustiveness(ctx: &MatchContext<'_>, span: Span) -> Result<(), 
 impl<'src> TypeChecker<'src> {
     pub(crate) fn check_match_expr(
         &mut self,
-        value: &Expr<'src>,
-        arms: &[ExprMatchArm<'src>],
+        scrutinee: &Expr<'src>,
+        arms: &[MatchArm<'src>],
+        span: Span,
     ) -> Result<TypedExpr, TypeCheckerError> {
-        let value_typed = self.check_expression(value, &Type::Unknown);
+        let value_typed = self.check_expression(scrutinee, &Type::Unknown);
         let Type::Enum(enum_id, generics) = &value_typed.ty else {
             return Err(TypeCheckerError::OperatorConstraint {
                 operator: "match",
@@ -67,7 +68,7 @@ impl<'src> TypeChecker<'src> {
         for arm in arms {
             if ctx.has_fallthrough {
                 self.warn(TypeCheckerWarning::UnreachablePattern {
-                    span: arm.body.span(),
+                    span: arm.span,
                     message: "Default case must be the last arm.".to_string(),
                 });
                 continue;
@@ -88,7 +89,6 @@ impl<'src> TypeChecker<'src> {
         check_match_exhaustiveness(&ctx, value_typed.span)?;
 
         let result_type = unified_type.unwrap_or(Type::Void);
-        let span = value.span();
         Ok(TypedExpr {
             ty: result_type,
             kind: ExprKind::Match {
@@ -103,19 +103,19 @@ impl<'src> TypeChecker<'src> {
         &mut self,
         ctx: &mut MatchContext<'src>,
         value_typed: &TypedExpr,
-        arm: &ExprMatchArm<'src>,
+        arm: &MatchArm<'src>,
         expected_ty: Option<&Type>,
     ) -> Result<(MatchCase, Type), TypeCheckerError> {
         let hint = expected_ty.unwrap_or(&Type::Unknown);
 
-        match &arm.pattern {
-            Pattern::Named {
+        match &arm.pattern.kind {
+            PatternKind::Variant {
                 enum_name,
-                variant_name,
-                bind,
+                variant: variant_name,
+                payload,
             } => {
                 if let Some(explicit_name) = enum_name
-                    && explicit_name.lexeme != ctx.enum_def.name.as_ref()
+                    && explicit_name.name != ctx.enum_def.name.as_ref()
                 {
                     return Err(TypeCheckerError::TypeMismatch {
                         mismatch: Mismatch::simple(
@@ -130,32 +130,32 @@ impl<'src> TypeChecker<'src> {
 
                 let (variant_idx, payload_type) = ctx
                     .enum_def
-                    .get_variant_from_instance(variant_name.lexeme, &ctx.generic_args)
+                    .get_variant_from_instance(variant_name.name, &ctx.generic_args)
                     .ok_or_else(|| {
                         let variant_names: Vec<&str> =
                             ctx.enum_def.variants.keys().map(|s| s.as_ref()).collect();
                         let suggestions =
-                            similarity::find_similar(variant_name.lexeme, variant_names, 3);
+                            similarity::find_similar(variant_name.name, variant_names, 3);
                         TypeCheckerError::UndefinedField {
                             struct_name: ctx.enum_def.name.clone(),
-                            field_name: variant_name.lexeme.into(),
+                            field_name: variant_name.name.into(),
                             span: variant_name.span,
                             struct_origin: Some(ctx.enum_def.origin),
                             suggestions,
                         }
                     })?;
 
-                if ctx.matched_variants.contains(variant_name.lexeme) {
+                if ctx.matched_variants.contains(variant_name.name) {
                     self.warn(TypeCheckerWarning::UnreachablePattern {
-                        span: arm.body.span(),
-                        message: format!("Repeated pattern {}", variant_name.lexeme),
+                        span: arm.span,
+                        message: format!("Repeated pattern {}", variant_name.name),
                     });
                 }
-                ctx.matched_variants.insert(variant_name.lexeme);
+                ctx.matched_variants.insert(variant_name.name);
 
                 let (typed_binding, typed_body) = {
                     let mut guard = ScopeGuard::new(self, ScopeKind::Block);
-                    let typed_binding = match bind {
+                    let typed_binding = match payload {
                         Some(binding) => {
                             let result = guard.check_binding(binding, &payload_type, false, false);
                             result.recover(&mut guard.errors, TypedBinding::Ignored)
@@ -163,7 +163,7 @@ impl<'src> TypeChecker<'src> {
                         None => {
                             if !matches!(payload_type, Type::Void) {
                                 guard.warn(TypeCheckerWarning::UnusedBinding {
-                                    name: format!("{} payload", variant_name.lexeme),
+                                    name: format!("{} payload", variant_name.name),
                                     span: variant_name.span,
                                 });
                             }
@@ -186,15 +186,17 @@ impl<'src> TypeChecker<'src> {
                 ))
             }
 
-            Pattern::Variable(name) => {
+            PatternKind::Name(_) | PatternKind::Wildcard => {
+                let binding = Binding {
+                    kind: match &arm.pattern.kind {
+                        PatternKind::Name(name) => BindingKind::Name(*name),
+                        _ => BindingKind::Wildcard,
+                    },
+                    span: arm.pattern.span,
+                };
                 let (typed_binding, typed_body) = {
                     let mut guard = ScopeGuard::new(self, ScopeKind::Block);
-                    let result = guard.check_binding(
-                        &Binding::Variable(*name),
-                        &value_typed.ty,
-                        false,
-                        false,
-                    );
+                    let result = guard.check_binding(&binding, &value_typed.ty, false, false);
                     let typed_binding = result.recover(&mut guard.errors, TypedBinding::Ignored);
                     let typed_body =
                         guard.coerce_expression(&arm.body, hint, MismatchContext::Generic, None);
@@ -220,8 +222,8 @@ impl<'src> TypeChecker<'src> {
         nested: bool,
         is_public: bool,
     ) -> Result<TypedBinding, TypeCheckerError> {
-        match binding {
-            Binding::Struct { name, fields } => {
+        match &binding.kind {
+            BindingKind::Struct { name, fields } => {
                 let Type::Struct(struct_id, generics) = type_to_match else {
                     return Err(TypeCheckerError::TypeMismatch {
                         mismatch: Mismatch::simple(
@@ -229,7 +231,7 @@ impl<'src> TypeChecker<'src> {
                             type_to_match.clone(),
                         ),
                         context: MismatchContext::Generic,
-                        primary_span: binding.span(),
+                        primary_span: binding.span,
                         defined_at: None,
                     });
                 };
@@ -237,10 +239,10 @@ impl<'src> TypeChecker<'src> {
                 // Matches plain structs ("StructName") and variant payload structs stored
                 // as "EnumName.VariantName" in the type system.
                 let struct_name = self.sys.get_struct(*struct_id).name.as_ref();
-                let name_matches = struct_name == name.lexeme
+                let name_matches = struct_name == name.name
                     || struct_name
                         .rsplit_once('.')
-                        .is_some_and(|(_, variant)| variant == name.lexeme);
+                        .is_some_and(|(_, variant)| variant == name.name);
 
                 if !name_matches {
                     return Err(TypeCheckerError::TypeMismatch {
@@ -249,33 +251,37 @@ impl<'src> TypeChecker<'src> {
                             type_to_match.clone(),
                         ),
                         context: MismatchContext::Generic,
-                        primary_span: binding.span(),
+                        primary_span: binding.span,
                         defined_at: None,
                     });
                 }
 
                 let struct_def = self.sys.get_struct(*struct_id);
 
-                let mut resolved: Vec<(usize, Type, &Binding, &Token)> =
+                let mut resolved: Vec<(usize, Type, &Binding, &Ident)> =
                     Vec::with_capacity(fields.len());
-                for (field_name, field_binding) in fields {
+                for FieldBinding {
+                    field: field_name,
+                    binding: field_binding,
+                    ..
+                } in fields
+                {
                     let (field_idx, field_type) = struct_def
-                        .get_field(field_name.lexeme, generics)
+                        .get_field(field_name.name, generics)
                         .ok_or_else(|| {
-                            let field_names: Vec<&str> = struct_def
-                                .visible_field_names(self.file_id)
-                                .map(|s| s.as_ref())
-                                .collect();
-                            let suggestions =
-                                similarity::find_similar(field_name.lexeme, field_names, 3);
-                            TypeCheckerError::UndefinedField {
-                                struct_name: struct_def.name.clone(),
-                                field_name: field_name.lexeme.into(),
-                                span: field_name.span,
-                                struct_origin: Some(struct_def.origin),
-                                suggestions,
-                            }
-                        })?;
+                        let field_names: Vec<&str> = struct_def
+                            .visible_field_names(self.file_id)
+                            .map(|s| s.as_ref())
+                            .collect();
+                        let suggestions = similarity::find_similar(field_name.name, field_names, 3);
+                        TypeCheckerError::UndefinedField {
+                            struct_name: struct_def.name.clone(),
+                            field_name: field_name.name.into(),
+                            span: field_name.span,
+                            struct_origin: Some(struct_def.origin),
+                            suggestions,
+                        }
+                    })?;
                     resolved.push((field_idx, field_type, field_binding, field_name));
                 }
 
@@ -296,7 +302,7 @@ impl<'src> TypeChecker<'src> {
                 Ok(TypedBinding::Struct(typed_fields))
             }
 
-            Binding::Tuple { fields } => {
+            BindingKind::Tuple(fields) => {
                 let Type::Tuple(tuple) = type_to_match else {
                     return Err(TypeCheckerError::TypeMismatch {
                         mismatch: Mismatch::simple(
@@ -304,7 +310,7 @@ impl<'src> TypeChecker<'src> {
                             type_to_match.clone(),
                         ),
                         context: MismatchContext::Generic,
-                        primary_span: binding.span(),
+                        primary_span: binding.span,
                         defined_at: None,
                     });
                 };
@@ -318,7 +324,7 @@ impl<'src> TypeChecker<'src> {
                             type_to_match.clone(),
                         ),
                         context: MismatchContext::Generic,
-                        primary_span: binding.span(),
+                        primary_span: binding.span,
                         defined_at: None,
                     });
                 }
@@ -332,19 +338,17 @@ impl<'src> TypeChecker<'src> {
                 Ok(TypedBinding::Tuple(typed_fields))
             }
 
-            Binding::Variable(token) => {
-                if token.lexeme == "_" {
-                    return Ok(TypedBinding::Ignored);
-                }
+            BindingKind::Wildcard => Ok(TypedBinding::Ignored),
+            BindingKind::Name(token) => {
                 let decl = if nested {
-                    Declaration::binding(token.lexeme.into(), type_to_match.clone(), token.span)
+                    Declaration::binding(token.name.into(), type_to_match.clone(), token.span)
                 } else {
-                    Declaration::mutable(token.lexeme.into(), type_to_match.clone(), token.span)
+                    Declaration::mutable(token.name.into(), type_to_match.clone(), token.span)
                 }
                 .public(is_public);
                 self.scopes.declare(decl)?;
                 // TODO: migrate to a non-write lookup once one exists that still
-                let (ctx, resolved) = self.scopes.lookup_for_write(token.lexeme).unwrap();
+                let (ctx, resolved) = self.scopes.lookup_for_write(token.name).unwrap();
                 Ok(TypedBinding::Variable(resolved, ctx.name.clone()))
             }
         }

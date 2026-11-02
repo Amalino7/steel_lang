@@ -1,5 +1,5 @@
-use crate::parser::ast::Expr;
-use crate::scanner::{FileId, Token};
+use crate::parser::ast::{Expr, Ident, Member};
+use crate::scanner::{FileId, Span};
 use crate::typechecker::core::ast::{ExprKind, TypedExpr};
 use crate::typechecker::core::error::{
     Mismatch, MismatchContext, Operand, TypeCheckerError, TypeCheckerWarning, TypeRequirement,
@@ -13,43 +13,48 @@ use std::rc::Rc;
 impl<'src> TypeChecker<'src> {
     pub(crate) fn check_get(
         &mut self,
-        expr: &Expr<'src>,
         object: &Expr<'src>,
-        field: &Token<'src>,
-        safe: &bool,
+        member: &Member<'src>,
+        safe: Option<Span>,
     ) -> Result<TypedExpr, TypeCheckerError> {
         let object_typed = self.check_expression(object, &Type::Unknown);
         if object_typed.ty == Type::Error {
             return Ok(TypedExpr::new_blank(object_typed.span));
         }
         if let Type::Metatype(id, generics) = &object_typed.ty {
-            if *safe {
+            if let Some(span) = safe {
                 self.warnings
-                    .push(TypeCheckerWarning::SafeAccessOnNonOptional { span: expr.span() })
+                    .push(TypeCheckerWarning::SafeAccessOnNonOptional { span })
             }
-            return self.resolve_static_access(*id, field, generics);
+            return match member {
+                Member::Named(name) => self.resolve_static_access(*id, name, generics),
+                Member::Index(index) => Err(TypeCheckerError::TupleIndexOnNonTuple {
+                    found: object_typed.ty.clone(),
+                    span: index.span,
+                }),
+            };
         }
 
-        self.resolve_instance_access(object_typed, field, *safe)
+        self.resolve_instance_access(object_typed, member, safe)
     }
 
     pub(crate) fn check_set(
         &mut self,
         object: &Expr<'src>,
-        field: &Token,
+        member: &Member,
         value: &Expr<'src>,
-        safe: &bool,
+        safe: Option<Span>,
     ) -> Result<TypedExpr, TypeCheckerError> {
         self.with_member_access(
             object,
-            field,
-            *safe,
+            member,
+            safe,
             |this, typed_obj, index, field_type, safe| {
                 let typed_value = this.coerce_expression(
                     value,
                     &field_type,
                     MismatchContext::Field {
-                        name: field.lexeme.to_string(),
+                        name: member.to_string(),
                     },
                     None,
                 );
@@ -70,15 +75,14 @@ impl<'src> TypeChecker<'src> {
     pub(crate) fn check_get_index(
         &mut self,
         expr: &Expr<'src>,
-        safe: &bool,
+        safe: Option<Span>,
         object: &Expr<'src>,
         index: &Expr<'src>,
     ) -> Result<TypedExpr, TypeCheckerError> {
         let object_typed = self.check_expression(object, &Type::Unknown);
-        let (parent_type, safe) =
-            object_typed
-                .ty
-                .unwrap_optional_safe(*safe, object_typed.span, &mut self.warnings);
+        let (parent_type, safe) = object_typed
+            .ty
+            .unwrap_optional_safe(safe, &mut self.warnings);
 
         // Map indexing: always returns V? (Optional)
         if let (Some(key_ty), Some(val_ty)) = (
@@ -95,7 +99,7 @@ impl<'src> TypeChecker<'src> {
 
             return Ok(TypedExpr {
                 ty,
-                span: expr.span(),
+                span: expr.span,
                 kind: ExprKind::MapGet {
                     object: Box::new(object_typed),
                     key: Box::new(index_typed),
@@ -130,7 +134,7 @@ impl<'src> TypeChecker<'src> {
 
         Ok(TypedExpr {
             ty,
-            span: expr.span(),
+            span: expr.span,
             kind: ExprKind::GetIndex {
                 object: Box::new(object_typed),
                 index: Box::new(index_typed),
@@ -142,16 +146,15 @@ impl<'src> TypeChecker<'src> {
     pub(crate) fn check_set_index(
         &mut self,
         expr: &Expr,
-        safe: &bool,
+        safe: Option<Span>,
         object: &Expr<'src>,
         index: &Expr<'src>,
         value: &Expr<'src>,
     ) -> Result<TypedExpr, TypeCheckerError> {
         let object_typed = self.check_expression(object, &Type::Unknown);
-        let (parent_type, safe) =
-            object_typed
-                .ty
-                .unwrap_optional_safe(*safe, object_typed.span, &mut self.warnings);
+        let (parent_type, safe) = object_typed
+            .ty
+            .unwrap_optional_safe(safe, &mut self.warnings);
 
         // Map set-indexing: upsert key -> value
         if let (Some(key_ty), Some(val_ty)) = (
@@ -165,7 +168,7 @@ impl<'src> TypeChecker<'src> {
 
             return Ok(TypedExpr {
                 ty: val_ty,
-                span: expr.span(),
+                span: expr.span,
                 kind: ExprKind::MapSet {
                     object: Box::new(object_typed),
                     key: Box::new(index_typed),
@@ -198,7 +201,7 @@ impl<'src> TypeChecker<'src> {
 
         Ok(TypedExpr {
             ty: inner,
-            span: expr.span(),
+            span: expr.span,
             kind: ExprKind::SetIndex {
                 object: Box::new(object_typed),
                 index: Box::new(index_typed),
@@ -208,35 +211,40 @@ impl<'src> TypeChecker<'src> {
         })
     }
 
+    /// A tuple index must select an element. A name selects a field, or else a method.
     pub(crate) fn resolve_instance_access(
         &mut self,
         object_typed: TypedExpr,
-        member_token: &Token,
-        safe: bool,
+        member: &Member,
+        safe: Option<Span>,
     ) -> Result<TypedExpr, TypeCheckerError> {
-        let (actual_ty, safe) =
-            object_typed
-                .ty
-                .unwrap_optional_safe(safe, member_token.span, &mut self.warnings);
+        let (actual_ty, safe) = object_typed
+            .ty
+            .unwrap_optional_safe(safe, &mut self.warnings);
 
-        if let Ok((idx, field_type)) =
-            resolve_member_type(&actual_ty, member_token, self.sys, self.file_id)
-        {
-            self.check_field_access(&actual_ty, idx, member_token);
-            let mut expr = TypedExpr {
-                ty: field_type,
-                span: object_typed.span.merge(member_token.span),
-                kind: ExprKind::GetField {
-                    object: Box::new(object_typed),
-                    index: idx,
-                    safe,
-                },
-            };
-            if safe {
-                expr.ty = expr.ty.wrap_in_optional();
+        let field = resolve_member_type(&actual_ty, member, self.sys, self.file_id);
+        let member_token = match (member, field) {
+            (Member::Index(_), Err(err)) => return Err(err),
+            (_, Ok((idx, field_type))) => {
+                if let Member::Named(name) = member {
+                    self.check_field_access(&actual_ty, idx, name);
+                }
+                let mut expr = TypedExpr {
+                    ty: field_type,
+                    span: object_typed.span.merge(member.span()),
+                    kind: ExprKind::GetField {
+                        object: Box::new(object_typed),
+                        index: idx,
+                        safe,
+                    },
+                };
+                if safe {
+                    expr.ty = expr.ty.wrap_in_optional();
+                }
+                return Ok(expr);
             }
-            return Ok(expr);
-        }
+            (Member::Named(name), Err(_)) => name,
+        };
 
         if let Type::Interface(id) = &actual_ty {
             return self.resolve_interface_method(*id, object_typed, member_token, safe);
@@ -248,18 +256,18 @@ impl<'src> TypeChecker<'src> {
         &self,
         id: InterfaceId,
         object_typed: TypedExpr,
-        member_token: &Token,
+        member_token: &Ident,
         is_safe: bool,
     ) -> Result<TypedExpr, TypeCheckerError> {
         let iface = self.sys.get_interface(id);
-        let Some((idx, method_ty)) = iface.methods.get(member_token.lexeme) else {
+        let Some((idx, method_ty)) = iface.methods.get(member_token.name) else {
             let method_names: Vec<&str> = iface.methods.keys().map(|s| s.as_str()).collect();
-            let suggestions = similarity::find_similar(member_token.lexeme, method_names, 3);
+            let suggestions = similarity::find_similar(member_token.name, method_names, 3);
             return Err(TypeCheckerError::UndefinedMethod(Box::new(
                 UndefinedMethodError {
                     span: member_token.span,
                     found: Type::Interface(id),
-                    method_name: member_token.lexeme.into(),
+                    method_name: member_token.name.into(),
                     type_origin: Some(iface.origin),
                     suggestions,
                 },
@@ -289,7 +297,7 @@ impl<'src> TypeChecker<'src> {
         &mut self,
         obj_type: Type,
         object_expr: TypedExpr,
-        method_token: &Token,
+        method_token: &Ident,
         safe: bool,
     ) -> Result<TypedExpr, TypeCheckerError> {
         let type_id = obj_type
@@ -299,7 +307,7 @@ impl<'src> TypeChecker<'src> {
                 span: object_expr.span,
             })?;
 
-        let lookup_result = self.lookup_method(type_id, method_token.lexeme);
+        let lookup_result = self.lookup_method(type_id, method_token.name);
 
         let Some(method) = lookup_result else {
             let mut candidates = self.method_names_for_type(type_id);
@@ -310,7 +318,7 @@ impl<'src> TypeChecker<'src> {
             }
 
             let suggestions = similarity::find_similar(
-                method_token.lexeme,
+                method_token.name,
                 candidates.iter().map(|s| s.as_ref()),
                 3,
             );
@@ -319,7 +327,7 @@ impl<'src> TypeChecker<'src> {
                 UndefinedMethodError {
                     span: method_token.span,
                     found: obj_type.clone(),
-                    method_name: method_token.lexeme.into(),
+                    method_name: method_token.name.into(),
                     type_origin,
                     suggestions,
                 },
@@ -343,7 +351,7 @@ impl<'src> TypeChecker<'src> {
 
         if func.is_static() {
             return Err(TypeCheckerError::StaticMethodOnInstance {
-                method_name: method_token.lexeme.to_string(),
+                method_name: method_token.name.to_string(),
                 span: method_token.span,
             });
         }
@@ -393,7 +401,7 @@ impl<'src> TypeChecker<'src> {
             },
         })
     }
-    pub(crate) fn check_field_access(&mut self, ty: &Type, idx: u8, field: &Token) {
+    pub(crate) fn check_field_access(&mut self, ty: &Type, idx: u8, field: &Ident) {
         let Type::Struct(id, _) = ty else { return };
         let def = self.sys.get_struct(*id);
         if def.is_field_public(idx as usize) || def.origin.file_id == self.file_id {
@@ -401,7 +409,7 @@ impl<'src> TypeChecker<'src> {
         }
         let error = TypeCheckerError::PrivateField {
             struct_name: def.name.clone(),
-            field_name: field.lexeme.into(),
+            field_name: field.name.into(),
             module: self.module_graph.module_name_of_file(def.origin.file_id),
             span: field.span,
             definition: def.field_span(idx as usize),
@@ -412,78 +420,85 @@ impl<'src> TypeChecker<'src> {
     pub(crate) fn with_member_access<F>(
         &mut self,
         object_expr: &Expr<'src>,
-        field: &Token,
-        safe: bool,
+        member: &Member,
+        safe: Option<Span>,
         callback: F,
     ) -> Result<TypedExpr, TypeCheckerError>
     where
         F: FnOnce(&mut Self, TypedExpr, u8, Type, bool) -> Result<TypedExpr, TypeCheckerError>,
     {
         let object_typed = self.check_expression(object_expr, &Type::Unknown);
-        let (parent_type, safe) =
-            object_typed
-                .ty
-                .unwrap_optional_safe(safe, field.span, &mut self.warnings);
+        let (parent_type, safe) = object_typed
+            .ty
+            .unwrap_optional_safe(safe, &mut self.warnings);
 
-        let (index, field_type) = resolve_member_type(&parent_type, field, self.sys, self.file_id)?;
-        self.check_field_access(&parent_type, index, field);
+        let (index, field_type) =
+            resolve_member_type(&parent_type, member, self.sys, self.file_id)?;
+        if let Member::Named(name) = member {
+            self.check_field_access(&parent_type, index, name);
+        }
         callback(self, object_typed, index, field_type, safe)
     }
 }
 
+/// The slot and type of a tuple element or struct field. A name on a tuple, or anything on a type without
+/// fields, is `TypeHasNoFields`.
 fn resolve_member_type(
     parent_type: &Type,
-    field: &Token,
+    member: &Member,
     sys: &TypeSystem,
     file_id: FileId,
 ) -> Result<(u8, Type), TypeCheckerError> {
+    let field = match member {
+        Member::Index(index) => return resolve_tuple_index(parent_type, index.node, index.span),
+        Member::Named(name) => name,
+    };
     match parent_type {
-        Type::Tuple(tuple_type) => {
-            let idx =
-                field
-                    .lexeme
-                    .parse::<u8>()
-                    .map_err(|_| TypeCheckerError::InvalidTupleIndex {
-                        tuple_type: parent_type.clone(),
-                        index: field.lexeme.to_string(),
-                        span: field.span,
-                    })?;
-
-            if idx as usize >= tuple_type.types.len() {
-                return Err(TypeCheckerError::InvalidTupleIndex {
-                    tuple_type: parent_type.clone(),
-                    index: idx.to_string(),
-                    span: field.span,
-                });
-            }
-
-            Ok((idx, tuple_type.types[idx as usize].clone()))
-        }
         Type::Struct(id, generics) => {
             let struct_def = sys.get_struct(*id);
 
-            let (field_id, ty) = struct_def
-                .get_field(field.lexeme, generics)
-                .ok_or_else(|| {
-                    let field_names: Vec<&str> = struct_def
-                        .visible_field_names(file_id)
-                        .map(|name| name.as_ref())
-                        .collect();
-                    let suggestions = similarity::find_similar(field.lexeme, field_names, 3);
-                    TypeCheckerError::UndefinedField {
-                        struct_name: struct_def.name.clone(),
-                        field_name: field.lexeme.into(),
-                        span: field.span,
-                        struct_origin: Some(struct_def.origin),
-                        suggestions,
-                    }
-                })?;
+            let (field_id, ty) = struct_def.get_field(field.name, generics).ok_or_else(|| {
+                let field_names: Vec<&str> = struct_def
+                    .visible_field_names(file_id)
+                    .map(|name| name.as_ref())
+                    .collect();
+                let suggestions = similarity::find_similar(field.name, field_names, 3);
+                TypeCheckerError::UndefinedField {
+                    struct_name: struct_def.name.clone(),
+                    field_name: field.name.into(),
+                    span: field.span,
+                    struct_origin: Some(struct_def.origin),
+                    suggestions,
+                }
+            })?;
 
             Ok((field_id as u8, ty))
         }
         _ => Err(TypeCheckerError::TypeHasNoFields {
             found: parent_type.clone(),
             span: field.span,
+        }),
+    }
+}
+
+/// The slot and type of element `index` of `parent_type`, which must be a tuple.
+fn resolve_tuple_index(
+    parent_type: &Type,
+    index: usize,
+    span: Span,
+) -> Result<(u8, Type), TypeCheckerError> {
+    let Type::Tuple(tuple_type) = parent_type else {
+        return Err(TypeCheckerError::TupleIndexOnNonTuple {
+            found: parent_type.clone(),
+            span,
+        });
+    };
+    match (u8::try_from(index), tuple_type.types.get(index)) {
+        (Ok(slot), Some(ty)) => Ok((slot, ty.clone())),
+        _ => Err(TypeCheckerError::InvalidTupleIndex {
+            tuple_type: parent_type.clone(),
+            index,
+            span,
         }),
     }
 }

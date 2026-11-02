@@ -1,4 +1,4 @@
-use crate::parser::ast::{CallArg, Expr};
+use crate::parser::ast::{CallArg, Delimited, Expr};
 use crate::scanner::Span;
 use crate::typechecker::core::ast::{ExprKind, TypedExpr};
 use crate::typechecker::core::error::{
@@ -16,43 +16,35 @@ impl<'src> TypeChecker<'src> {
         &mut self,
         expr: &Expr<'src>,
         callee: &Expr<'src>,
-        arguments: &Vec<CallArg<'src>>,
-        safe: &bool,
+        arguments: &Delimited<CallArg<'src>>,
+        safe: Option<Span>,
         expected: &Type,
     ) -> Result<TypedExpr, TypeCheckerError> {
         let callee_typed = self.check_expression(callee, &Type::Unknown);
 
-        let safe = if let ExprKind::MethodGet { safe, .. } = callee_typed.kind {
-            safe
-        } else if let ExprKind::InterfaceMethodGet { safe, .. } = callee_typed.kind {
-            safe
-        } else {
-            *safe
+        // `a?.m()` is safe through its method access, whose `?.` was already checked.
+        let safe = match callee_typed.kind {
+            ExprKind::MethodGet { safe: true, .. }
+            | ExprKind::InterfaceMethodGet { safe: true, .. } => Some(callee_typed.span),
+            _ => safe,
         };
 
-        let (lookup_type, safe) =
-            callee_typed
-                .ty
-                .unwrap_optional_safe(safe, callee_typed.span, &mut self.warnings);
+        let (lookup_type, safe) = callee_typed
+            .ty
+            .unwrap_optional_safe(safe, &mut self.warnings);
 
         // Handle Struct constructor
         if let Type::Metatype(id, generics) = &lookup_type {
             if let NameTypeId::Struct(id) = id {
-                return self.struct_constructor(
-                    id,
-                    generics,
-                    arguments,
-                    callee.span(),
-                    expr.span(),
-                );
+                return self.struct_constructor(id, generics, arguments, callee.span, expr.span);
             } else if let NameTypeId::Enum(id) = id {
                 return self.enum_constructor(
                     *id,
                     generics,
                     arguments,
                     callee_typed,
-                    callee.span(),
-                    expr.span(),
+                    callee.span,
+                    expr.span,
                 );
             }
         }
@@ -85,7 +77,7 @@ impl<'src> TypeChecker<'src> {
             };
 
             let bound_args = self.bind_arguments(
-                callee.span(),
+                callee.span,
                 definition_span,
                 &func.params,
                 arguments,
@@ -100,7 +92,7 @@ impl<'src> TypeChecker<'src> {
                 if !resolved.is_concrete() {
                     let uninferred_generics = self.infer_ctx.uninferred_names(&resolved, self.sys);
                     return Err(TypeCheckerError::Generic(GenericError::CannotInfer {
-                        span: expr.span(),
+                        span: expr.span,
                         uninferred_generics,
                     }));
                 }
@@ -108,7 +100,7 @@ impl<'src> TypeChecker<'src> {
 
             return Ok(TypedExpr {
                 ty: ret_type,
-                span: expr.span(),
+                span: expr.span,
                 kind: ExprKind::Call {
                     callee: Box::new(callee_typed),
                     arguments: bound_args,
@@ -122,7 +114,7 @@ impl<'src> TypeChecker<'src> {
             return Ok(TypedExpr {
                 ty: Type::Error,
                 kind: ExprKind::NoOp,
-                span: expr.span(),
+                span: expr.span,
             });
         }
         Err(TypeCheckerError::CalleeIsNotCallable {
@@ -135,7 +127,7 @@ impl<'src> TypeChecker<'src> {
         &mut self,
         id: &StructId,
         generics: &[Type],
-        arguments: &Vec<CallArg<'src>>,
+        arguments: &Delimited<CallArg<'src>>,
         callee_span: Span,
         expr_span: Span,
     ) -> Result<TypedExpr, TypeCheckerError> {
@@ -180,7 +172,7 @@ impl<'src> TypeChecker<'src> {
         &mut self,
         id: EnumId,
         generics: &GenericArgs,
-        arguments: &Vec<CallArg<'src>>,
+        arguments: &Delimited<CallArg<'src>>,
         callee_typed: TypedExpr,
         callee_span: Span,
         expr_span: Span,
@@ -245,7 +237,7 @@ impl<'src> TypeChecker<'src> {
         callee: Span,
         definition_span: Option<Span>,
         params: &[(Symbol, Type)],
-        args: &[CallArg<'src>],
+        args: &Delimited<CallArg<'src>>,
         is_vararg: bool,
     ) -> Result<Vec<TypedExpr>, TypeCheckerError> {
         let fixed_len = params.len();
@@ -255,13 +247,13 @@ impl<'src> TypeChecker<'src> {
         let mut pos_cursor = 0;
         let mut seen_named = false;
 
-        for CallArg { label, expr } in args {
-            let span = expr.span();
+        for CallArg { label, value: expr } in &args.items {
+            let span = expr.span;
             match label {
                 Some(name) => {
                     seen_named = true;
 
-                    let idx = resolve_named_arg(params, name.lexeme, name.span, definition_span)?;
+                    let idx = resolve_named_arg(params, name.name, name.span, definition_span)?;
 
                     if used[idx] {
                         return Err(TypeCheckerError::Call(CallError::DuplicateArgument {
@@ -334,10 +326,7 @@ impl<'src> TypeChecker<'src> {
                 TypeCheckerError::CallParam(CallParamError {
                     kind: CallParamKind::Missing,
                     param_name: params[i].0.to_string(),
-                    span: args
-                        .last()
-                        .map(|arg| arg.expr.span().merge(callee))
-                        .unwrap_or_else(|| callee),
+                    span: args.close,
                     callee_origin: definition_span,
                 })
             })?);

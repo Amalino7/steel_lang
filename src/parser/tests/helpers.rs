@@ -4,6 +4,7 @@
 //! (1-based, columns counted in characters), and spans as the source text they cover.
 
 use crate::parser::Parser;
+use crate::parser::ast::ParsedFile;
 use crate::parser::error::ParseError;
 use crate::parser::printer::{Node, file_node};
 use crate::scanner::{FileId, Scanner, Span};
@@ -24,15 +25,18 @@ fn position(src: &str, offset: usize) -> String {
     format!("{line}:{col}")
 }
 
+/// The AST of a file that must parse without errors, for tests that inspect it directly.
+#[track_caller]
+pub fn parse_file(src: &str) -> ParsedFile<'_> {
+    parser(src).parse().unwrap_or_else(|errors| {
+        let messages: Vec<_> = errors.iter().map(|e| e.message()).collect();
+        panic!("expected `{src}` to parse, got: {messages:#?}");
+    })
+}
+
+#[track_caller]
 fn parse_tree(src: &str) -> Node {
-    let mut parser = parser(src);
-    match parser.parse() {
-        Ok(file) => file_node(&file),
-        Err(errors) => {
-            let messages: Vec<_> = errors.iter().map(|e| e.message()).collect();
-            panic!("expected `{src}` to parse, got: {messages:#?}");
-        }
-    }
+    file_node(&parse_file(src))
 }
 
 fn render_children(node: &Node, spans: bool) -> String {

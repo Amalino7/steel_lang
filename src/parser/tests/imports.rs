@@ -29,7 +29,7 @@ fn test_imports_are_returned_separately_from_body() {
     let mut parser = Parser::new(Scanner::new("import a/b; let x = 1; let y = 2;", FileId(0)));
     let file = parser.parse().expect("valid file");
     assert_eq!(file.imports.len(), 1);
-    assert_eq!(file.body.len(), 2);
+    assert_eq!(file.stmts.len(), 2);
 }
 
 #[test]
