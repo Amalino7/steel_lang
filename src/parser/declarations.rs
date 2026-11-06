@@ -119,7 +119,7 @@ impl<'src> Parser<'src> {
             (1, None) => ParseErrorKind::OneElementTuple(context),
             _ => return,
         };
-        self.errors.push(ParseError::new(kind, list.span()));
+        self.report(kind, list.span());
     }
 
     /// `: T` if present (`let`, parameters, lambda parameters, return types).
@@ -167,10 +167,7 @@ impl<'src> Parser<'src> {
     /// Reports `public` on a construct that doesn't allow it. Parsing continues as if it weren't there.
     pub(super) fn forbid_visibility(&mut self, vis: Visibility, reason: &'static str) {
         if let Visibility::Public(span) = vis {
-            self.errors.push(ParseError::new(
-                ParseErrorKind::VisibilityNotAllowed { reason },
-                span,
-            ));
+            self.report(ParseErrorKind::VisibilityNotAllowed { reason }, span);
         }
     }
 
@@ -258,7 +255,7 @@ impl<'src> Parser<'src> {
             } else {
                 continue;
             };
-            self.errors.push(ParseError::new(kind, *span));
+            self.report(kind, *span);
         }
     }
 
@@ -417,10 +414,10 @@ impl<'src> Parser<'src> {
                 let types =
                     self.delimited(ListSpec::paren("payload type", TYPE_START), Self::type_ast);
                 if types.items.is_empty() && !types.failed {
-                    self.errors.push(ParseError::new(
+                    self.report(
                         ParseErrorKind::EmptyParens(ParenContext::VariantPayload),
                         types.span(),
-                    ));
+                    );
                 }
                 VariantPayload::Tuple(types.items)
             }

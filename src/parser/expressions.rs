@@ -5,7 +5,7 @@ use crate::parser::ast::{
     BinaryOp, CallArg, Expr, ExprKind, Ident, LambdaParam, Literal, LogicalOp, MapEntry, Member,
     Spanned, StringPart, UnaryOp,
 };
-use crate::parser::error::{Expected, ParenContext, ParseError, ParseErrorKind};
+use crate::parser::error::{Expected, NumberError, ParenContext, ParseErrorKind};
 use crate::parser::lists::{Delim, ListSpec};
 use crate::parser::literals::{parse_number, process_escapes, process_raw_string};
 use crate::parser::{PResult, Parser, TokT};
@@ -37,58 +37,6 @@ pub(super) const EXPR_START: &[TokT] = &[
     TokT::Return,
 ];
 
-/// The binary operator a compound assignment applies (`+=` → `+`), or `None` if `kind` isn't one.
-fn compound_operator(kind: TokT) -> Option<BinaryOp> {
-    match kind {
-        TokT::PlusEqual => Some(BinaryOp::Add),
-        TokT::MinusEqual => Some(BinaryOp::Subtract),
-        TokT::StarEqual => Some(BinaryOp::Multiply),
-        TokT::SlashEqual => Some(BinaryOp::Divide),
-        TokT::PercentEqual => Some(BinaryOp::Modulo),
-        _ => None,
-    }
-}
-
-/// The operator of a binary token. Only called on the tokens of a binary precedence level.
-fn binary_operator(kind: TokT) -> BinaryOp {
-    match kind {
-        TokT::Plus => BinaryOp::Add,
-        TokT::Minus => BinaryOp::Subtract,
-        TokT::Star => BinaryOp::Multiply,
-        TokT::Slash => BinaryOp::Divide,
-        TokT::Percent => BinaryOp::Modulo,
-        TokT::StarStar => BinaryOp::Power,
-        TokT::EqualEqual => BinaryOp::Equal,
-        TokT::BangEqual => BinaryOp::NotEqual,
-        TokT::Less => BinaryOp::Less,
-        TokT::LessEqual => BinaryOp::LessEqual,
-        TokT::Greater => BinaryOp::Greater,
-        TokT::GreaterEqual => BinaryOp::GreaterEqual,
-        other => unreachable!("not a binary operator: {other:?}"),
-    }
-}
-
-fn binary<'src>(left: Expr<'src>, op: Spanned<BinaryOp>, right: Expr<'src>) -> Expr<'src> {
-    let span = left.span.merge(right.span);
-    Expr::new(
-        ExprKind::Binary {
-            left: left.boxed(),
-            op,
-            right: right.boxed(),
-        },
-        span,
-    )
-}
-
-/// The span of `range` (byte offsets into the lexeme) inside `token`.
-fn sub_span(token: Token, range: Range<usize>) -> Span {
-    Span {
-        start: token.span.start + range.start,
-        end: token.span.start + range.end,
-        ..token.span
-    }
-}
-
 impl<'src> Parser<'src> {
     pub(crate) fn expression(&mut self) -> PResult<Expr<'src>> {
         self.assignment()
@@ -101,7 +49,17 @@ impl<'src> Parser<'src> {
             let value = self.assignment()?;
             return Ok(self.assignment_target(expr, value));
         }
-        if let Some(op) = compound_operator(self.current.kind) {
+
+        let compound_kind = match self.current.kind {
+            TokT::PlusEqual => Some(BinaryOp::Add),
+            TokT::MinusEqual => Some(BinaryOp::Subtract),
+            TokT::StarEqual => Some(BinaryOp::Multiply),
+            TokT::SlashEqual => Some(BinaryOp::Divide),
+            TokT::PercentEqual => Some(BinaryOp::Modulo),
+            _ => None,
+        };
+
+        if let Some(op) = compound_kind {
             let op = Spanned {
                 node: op,
                 span: self.advance().span,
@@ -143,10 +101,7 @@ impl<'src> Parser<'src> {
                 value,
             },
             _ => {
-                self.errors.push(ParseError::new(
-                    ParseErrorKind::InvalidAssignmentTarget,
-                    target.span,
-                ));
+                self.report(ParseErrorKind::InvalidAssignmentTarget, target.span);
                 ExprKind::Error
             }
         };
@@ -184,7 +139,7 @@ impl<'src> Parser<'src> {
         &mut self,
         kind: TokT,
         op: LogicalOp,
-        next: fn(&mut Self) -> PResult<Expr<'src>>,
+        next: impl Fn(&mut Self) -> PResult<Expr<'src>>,
     ) -> PResult<Expr<'src>> {
         let mut expr = next(self)?;
         while self.try_consume(kind) {
@@ -210,7 +165,7 @@ impl<'src> Parser<'src> {
     fn binary_level(
         &mut self,
         ops: &[TokT],
-        next: fn(&mut Self) -> PResult<Expr<'src>>,
+        next: impl Fn(&mut Self) -> PResult<Expr<'src>>,
     ) -> PResult<Expr<'src>> {
         let mut expr = next(self)?;
         while self.try_consume_any(ops) {
@@ -223,8 +178,24 @@ impl<'src> Parser<'src> {
 
     /// The binary operator just consumed.
     fn binary_op(&self) -> Spanned<BinaryOp> {
+        let operation = match self.previous.kind {
+            TokT::Plus => BinaryOp::Add,
+            TokT::Minus => BinaryOp::Subtract,
+            TokT::Star => BinaryOp::Multiply,
+            TokT::Slash => BinaryOp::Divide,
+            TokT::Percent => BinaryOp::Modulo,
+            TokT::StarStar => BinaryOp::Power,
+            TokT::EqualEqual => BinaryOp::Equal,
+            TokT::BangEqual => BinaryOp::NotEqual,
+            TokT::Less => BinaryOp::Less,
+            TokT::LessEqual => BinaryOp::LessEqual,
+            TokT::Greater => BinaryOp::Greater,
+            TokT::GreaterEqual => BinaryOp::GreaterEqual,
+            other => unreachable!("not a binary operator: {other:?}"),
+        };
+
         Spanned {
-            node: binary_operator(self.previous.kind),
+            node: operation,
             span: self.previous.span,
         }
     }
@@ -354,13 +325,17 @@ impl<'src> Parser<'src> {
                     let dot = self.advance();
                     let safe = (dot.kind == TokT::QuestionDot).then_some(dot.span);
                     let member = if self.check(TokT::Number) {
-                        Member::Index(self.tuple_index()?)
+                        Member::Index(self.tuple_index())
+                    } else if self.try_consume(TokT::InvalidNumber) {
+                        let index = self.previous.span;
+                        self.report(
+                            ParseErrorKind::InvalidNumber(NumberError::InvalidCharacter),
+                            index,
+                        );
+                        expr = Expr::new(ExprKind::Error, start.merge(index));
+                        continue;
                     } else {
-                        Member::Named(self.expect_ident(if safe.is_some() {
-                            "`?.`"
-                        } else {
-                            "`.`"
-                        })?)
+                        Member::Named(self.expect_ident("member access")?)
                     };
                     let kind = ExprKind::Field {
                         object: expr.boxed(),
@@ -409,24 +384,26 @@ impl<'src> Parser<'src> {
         Ok(CallArg { label, value })
     }
 
-    /// A tuple index. The scanner guarantees it is decimal digits; a leading zero (`t.01`) is reported but the
-    /// access is still built, since the intended index is clear. An index beyond `usize` fails.
-    fn tuple_index(&mut self) -> PResult<Spanned<usize>> {
+    /// A tuple index. The scanner guarantees it is decimal digits; a leading zero (`t.01`) and underscores are
+    /// reported but the access is still built, since the intended index is clear.
+    /// An index beyond `usize` fails and an approximation is given.
+    fn tuple_index(&mut self) -> Spanned<usize> {
         let idx = self.advance_kind(TokT::Number);
         if idx.lexeme.len() > 1 && idx.lexeme.starts_with('0') {
-            self.errors.push(ParseError::new(
-                ParseErrorKind::TupleIndexLeadingZero,
-                idx.span,
-            ));
+            self.report(ParseErrorKind::TupleIndexLeadingZero, idx.span);
         }
-        let node = idx
-            .lexeme
-            .parse()
-            .map_err(|_| ParseError::new(ParseErrorKind::TupleIndexTooLarge, idx.span))?;
-        Ok(Spanned {
+        if idx.lexeme.contains("_") {
+            self.report(ParseErrorKind::TupleIndexContainsUnderscore, idx.span);
+        }
+        let node = idx.lexeme.parse().unwrap_or_else(|_| {
+            // Scanner validated the shape, but not the size
+            self.report(ParseErrorKind::TupleIndexTooLarge, idx.span);
+            usize::MAX
+        });
+        Spanned {
             node,
             span: idx.span,
-        })
+        }
     }
 
     fn primary(&mut self) -> PResult<Expr<'src>> {
@@ -434,15 +411,22 @@ impl<'src> Parser<'src> {
             TokT::True => Ok(self.literal(Literal::Boolean(true))),
             TokT::False => Ok(self.literal(Literal::Boolean(false))),
             TokT::Nil => Ok(self.literal(Literal::Nil)),
+            TokT::InvalidNumber => {
+                let span = self.start_span();
+                self.report(
+                    ParseErrorKind::InvalidNumber(NumberError::InvalidCharacter),
+                    span,
+                );
+                self.advance();
+                Ok(Expr::new(ExprKind::Error, span))
+            }
             TokT::Number => {
                 let token = self.advance();
+
                 let kind = match parse_number(token.lexeme) {
                     Ok(num) => ExprKind::Literal(Literal::Number(num)),
                     Err(error) => {
-                        self.errors.push(ParseError::new(
-                            ParseErrorKind::InvalidNumber(error),
-                            token.span,
-                        ));
+                        self.report(ParseErrorKind::InvalidNumber(error), token.span);
                         ExprKind::Error
                     }
                 };
@@ -494,9 +478,11 @@ impl<'src> Parser<'src> {
     fn escaped(&mut self, token: Token<'src>, range: Range<usize>) -> String {
         let raw = &token.lexeme[range.clone()];
         process_escapes(raw).unwrap_or_else(|(error, at)| {
-            let span = sub_span(token, range.start + at.start..range.start + at.end);
-            self.errors
-                .push(ParseError::new(ParseErrorKind::InvalidEscape(error), span));
+            let span = token
+                .span
+                .sub_span(range.start + at.start..range.start + at.end);
+
+            self.report(ParseErrorKind::InvalidEscape(error), span);
             raw.to_string()
         })
     }
@@ -508,10 +494,7 @@ impl<'src> Parser<'src> {
         let kind = match (list.items.len(), list.trailing) {
             (0, _) => {
                 if !list.failed {
-                    self.errors.push(ParseError::new(
-                        ParseErrorKind::EmptyParens(ParenContext::Expression),
-                        span,
-                    ));
+                    self.report(ParseErrorKind::EmptyParens(ParenContext::Expression), span);
                 }
                 ExprKind::Error
             }
@@ -554,14 +537,13 @@ impl<'src> Parser<'src> {
             match (is_map, value) {
                 (true, Some(value)) => entries.push(MapEntry { key, value }),
                 (false, None) => elements.push(key),
-                (true, None) => self.errors.push(ParseError::new(
-                    ParseErrorKind::MixedCollection { first, is_map },
-                    key.span,
-                )),
-                (false, Some(value)) => self.errors.push(ParseError::new(
+                (true, None) => {
+                    self.report(ParseErrorKind::MixedCollection { first, is_map }, key.span)
+                }
+                (false, Some(value)) => self.report(
                     ParseErrorKind::MixedCollection { first, is_map },
                     key.span.merge(value.span),
-                )),
+                ),
             }
         }
         let kind = if is_map {
@@ -600,7 +582,6 @@ impl<'src> Parser<'src> {
         let mut parts: Vec<StringPart<'src>> = Vec::new();
         // PartialString lexeme: `"<content>` (opening quote, then raw content up to `${`).
         self.string_part(&mut parts, first, 1..first.lexeme.len());
-
         loop {
             parts.push(StringPart::Expr(self.expression()?));
 
@@ -635,8 +616,20 @@ impl<'src> Parser<'src> {
         if !value.is_empty() {
             parts.push(StringPart::Literal {
                 value,
-                span: sub_span(token, range),
+                span: token.span.sub_span(range),
             });
         }
     }
+}
+
+fn binary<'src>(left: Expr<'src>, op: Spanned<BinaryOp>, right: Expr<'src>) -> Expr<'src> {
+    let span = left.span.merge(right.span);
+    Expr::new(
+        ExprKind::Binary {
+            left: left.boxed(),
+            op,
+            right: right.boxed(),
+        },
+        span,
+    )
 }

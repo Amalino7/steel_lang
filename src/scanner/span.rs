@@ -42,15 +42,11 @@ impl Span {
             self.file_id, other.file_id,
             "merging spans from different files"
         );
-        let first = if other.start < self.start {
-            other
-        } else {
-            self
-        };
         Self {
-            start: first.start,
+            file_id: self.file_id,
+            start: self.start.min(other.start),
             end: self.end.max(other.end),
-            ..first
+            line: self.line.min(other.line),
         }
     }
 
@@ -69,6 +65,14 @@ impl Span {
     pub fn point_after(self) -> Self {
         Self {
             start: self.end,
+            ..self
+        }
+    }
+
+    pub fn sub_span(self, range: Range<usize>) -> Self {
+        Self {
+            start: self.start + range.start,
+            end: self.start + range.end,
             ..self
         }
     }

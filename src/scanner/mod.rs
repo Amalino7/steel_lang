@@ -54,7 +54,7 @@ impl<'src> Scanner<'src> {
         self.start = self.current;
         if self.is_at_end() {
             let span = Span::new(self.current, self.current, self.line, self.file_id);
-            return Token::new(TokenType::EOF, span, "end");
+            return Token::new(TokenType::EoF, span, "end");
         }
         let char = self.advance();
 
@@ -299,65 +299,57 @@ impl<'src> Scanner<'src> {
     /// A tuple index (`t.0`) is decimal digits only, so `t.0.1` lexes as `t . 0 . 1` rather than `t . 0.1`.
     /// Leading zeros are rejected by the parser.
     fn tuple_index(&mut self) -> Token<'src> {
-        while self.peek_char().is_ascii_digit() {
-            self.advance();
-        }
+        self.consume_digits(10);
         self.make_token(TokenType::Number)
     }
 
     fn number(&mut self, first: char) -> Token<'src> {
         // Base prefixes
         if first == '0' {
-            match self.peek_char() {
-                'b' | 'B' => {
-                    self.advance();
-                    while matches!(self.peek_char(), '0' | '1' | '_') {
-                        self.advance();
-                    }
-                    return self.make_token(TokenType::Number);
-                }
-                'o' | 'O' => {
-                    self.advance();
-                    while matches!(self.peek_char(), '0'..='7' | '_') {
-                        self.advance();
-                    }
-                    return self.make_token(TokenType::Number);
-                }
-                'x' | 'X' => {
-                    self.advance();
-                    while self.peek_char().is_ascii_hexdigit() || self.peek_char() == '_' {
-                        self.advance();
-                    }
-                    return self.make_token(TokenType::Number);
-                }
-                _ => {}
-            }
-        }
-
-        // Decimal part
-        while is_valid_digit(self.peek_char()) {
-            self.advance();
-        }
-
-        // Fractional part
-        if self.peek_char() == '.' && self.peek_next_char().is_ascii_digit() {
-            self.advance(); // consume '.'
-            while is_valid_digit(self.peek_char()) {
+            let radix = match self.peek_char() {
+                'b' | 'B' => Some(2),
+                'o' | 'O' => Some(8),
+                'x' | 'X' => Some(16),
+                _ => None,
+            };
+            if let Some(radix) = radix {
                 self.advance();
+                self.consume_digits(radix);
+                return self.finish_number();
             }
         }
 
-        // Exponent part: `e` or `E`, optional sign, digits.
+        self.consume_digits(10);
+
+        if self.peek_char() == '.' && self.peek_next_char().is_ascii_digit() {
+            self.advance();
+            self.consume_digits(10);
+        }
+
         if matches!(self.peek_char(), 'e' | 'E') {
             self.advance();
             if matches!(self.peek_char(), '+' | '-') {
                 self.advance();
             }
-            while is_valid_digit(self.peek_char()) {
-                self.advance();
-            }
+            self.consume_digits(10);
         }
 
+        self.finish_number()
+    }
+
+    fn consume_digits(&mut self, radix: u32) {
+        while is_valid_digit(self.peek_char(), radix) {
+            self.advance();
+        }
+    }
+
+    fn finish_number(&mut self) -> Token<'src> {
+        if is_valid_identifier(self.peek_char()) {
+            while is_valid_identifier(self.peek_char()) {
+                self.advance();
+            }
+            return self.make_token(TokenType::InvalidNumber);
+        }
         self.make_token(TokenType::Number)
     }
 
@@ -378,8 +370,8 @@ fn is_valid_identifier(identifier_char: char) -> bool {
     identifier_char.is_alphabetic() || identifier_char == '_'
 }
 
-fn is_valid_digit(digit_char: char) -> bool {
-    digit_char.is_ascii_digit() || digit_char == '_'
+fn is_valid_digit(digit_char: char, radix: u32) -> bool {
+    digit_char.is_digit(radix) || digit_char == '_'
 }
 
 fn keywords() -> HashMap<&'static str, TokenType> {
@@ -395,7 +387,7 @@ mod tests {
         let mut types = vec![];
         loop {
             let token = scanner.next_token();
-            if token.kind == TokenType::EOF {
+            if token.kind == TokenType::EoF {
                 return types;
             }
             types.push(token.kind);
@@ -407,7 +399,7 @@ mod tests {
         let mut lexemes = vec![];
         loop {
             let token = scanner.next_token();
-            if token.kind == TokenType::EOF {
+            if token.kind == TokenType::EoF {
                 return lexemes;
             }
             lexemes.push(token.lexeme);
@@ -425,7 +417,7 @@ mod tests {
     #[test]
     fn test_tuple_index_has_no_prefix_separator_or_exponent() {
         assert_eq!(lexemes("t.0x1"), ["t", ".", "0", "x1"]);
-        assert_eq!(lexemes("t.1_0"), ["t", ".", "1", "_0"]);
+        assert_eq!(lexemes("t.1_0"), ["t", ".", "1_0"]);
         assert_eq!(lexemes("t.1e2"), ["t", ".", "1", "e2"]);
     }
 

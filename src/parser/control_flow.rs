@@ -2,7 +2,7 @@
 
 use crate::parser::ast::{Binding, BindingKind, Expr, ExprKind, MatchArm, Pattern, PatternKind};
 use crate::parser::declarations::{BINDING_START, STRUCT_DESTRUCTURE, WILDCARD};
-use crate::parser::error::{ParenContext, ParseError, ParseErrorKind};
+use crate::parser::error::{ParenContext, ParseErrorKind};
 use crate::parser::expressions::EXPR_START;
 use crate::parser::lists::{Delim, ListSpec};
 use crate::parser::recovery::RECOVERY_STOP;
@@ -142,10 +142,10 @@ impl<'src> Parser<'src> {
                 match bindings.items.len() {
                     0 => {
                         if !bindings.failed {
-                            self.errors.push(ParseError::new(
+                            self.report(
                                 ParseErrorKind::EmptyParens(ParenContext::PatternPayload),
                                 bindings.span(),
-                            ));
+                            );
                         }
                         None
                     }

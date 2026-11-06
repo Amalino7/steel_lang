@@ -96,6 +96,7 @@ pub enum ParseErrorKind {
     ImportNotAtTop,
     EmptyImportGroup,
     NonAsciiImportPath,
+    TupleIndexContainsUnderscore,
 }
 
 /// What an [`ParseErrorKind::Expected`] error wanted.
@@ -129,10 +130,14 @@ pub enum ParenContext {
 /// Why a number literal has no value.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum NumberError {
+    /// A number mixed with characters (`123xf`)
+    InvalidCharacter,
     /// A prefix or exponent without digits (`0x`, `1e`).
-    Malformed,
+    MissingDigits,
     /// A prefixed literal beyond `i64` (`0xFFFFFFFFFFFFFFFFFF`).
     OutOfRange,
+    /// A whole number that doesn't fit in `f64`
+    ImpreciseInt,
 }
 
 /// A bad escape sequence in a string literal.
@@ -163,6 +168,7 @@ impl ParseError {
             K::InvalidNumber(_) => "E1003",
             K::TupleIndexLeadingZero => "E1004",
             K::TupleIndexTooLarge => "E1005",
+            K::TupleIndexContainsUnderscore => "E1006",
 
             K::Expected { .. } => "E1010",
             K::KeywordAsName { .. } => "E1011",
@@ -192,12 +198,17 @@ impl ParseError {
             K::InvalidCharacter => "invalid character".to_string(),
             K::Unterminated(what) => format!("unterminated {}", unterminated_noun(*what)),
             K::InvalidEscape(e) => escape_message(*e),
-            K::InvalidNumber(NumberError::Malformed) => "malformed number literal".to_string(),
+            K::InvalidNumber(NumberError::InvalidCharacter) => {
+                "number literal contains invalid characters".to_string()
+            }
+            K::InvalidNumber(NumberError::ImpreciseInt) => "imprecise integer literal".to_string(),
+            K::InvalidNumber(NumberError::MissingDigits) => "missing digits in literal".to_string(),
             K::InvalidNumber(NumberError::OutOfRange) => {
                 "number literal is out of range".to_string()
             }
             K::TupleIndexLeadingZero => "tuple index has a leading zero".to_string(),
             K::TupleIndexTooLarge => "tuple index is too large".to_string(),
+            K::TupleIndexContainsUnderscore => "tuple index contains underscores".to_string(),
 
             K::Expected {
                 expected,
@@ -291,12 +302,14 @@ impl IntoDiagnostic for ParseError {
             K::InvalidEscape(_) => error("invalid escape").with_note(
                 r#"valid escapes are `\n`, `\t`, `\r`, `\\`, `\"`, `\0`, `\$` and `\u{…}`"#,
             ),
-            K::InvalidNumber(NumberError::Malformed) => error("missing digits"),
+            K::InvalidNumber(NumberError::MissingDigits) => error("missing digits"),
+            K::InvalidNumber(NumberError::ImpreciseInt) => error("cannot be stored precisely"),
+            K::InvalidNumber(NumberError::InvalidCharacter) => error("invalid characters"),
             K::InvalidNumber(NumberError::OutOfRange) => error("too large")
                 .with_note("binary, octal and hex literals must fit in a 64-bit integer"),
             K::TupleIndexLeadingZero => error("leading zero").with_help("remove the leading zeros"),
             K::TupleIndexTooLarge => error("too large"),
-
+            K::TupleIndexContainsUnderscore => error("contains `_`"),
             K::Expected {
                 expected, found, ..
             } => with_found(
@@ -382,7 +395,7 @@ fn describe(kind: TokenType) -> String {
         | TokenType::String
         | TokenType::RawString
         | TokenType::PartialString
-        | TokenType::EOF
+        | TokenType::EoF
         | TokenType::Unterminated(_)
         | TokenType::UnexpectedSymbolError => kind.to_string(),
         _ => format!("`{kind}`"),

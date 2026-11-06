@@ -63,7 +63,7 @@ fn test_b6_invalid_number_is_reported_on_the_literal() {
         "let z = 0x; let y = 1e;",
         &[("E1003", "1:9"), ("E1003", "1:21")],
     );
-    assert_error_contains("let z = 0x;", "malformed");
+    assert_error_contains("let z = 0x;", "missing digits");
 }
 
 #[test]

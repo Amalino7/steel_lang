@@ -50,7 +50,7 @@ pub struct Parser<'src> {
 
 impl<'src> Parser<'src> {
     pub fn new(scanner: Scanner<'src>) -> Self {
-        let placeholder = Token::new(TokT::EOF, Span::default(), "");
+        let placeholder = Token::new(TokT::EoF, Span::default(), "");
         let mut parser = Parser {
             scanner,
             previous: placeholder,
@@ -69,7 +69,7 @@ impl<'src> Parser<'src> {
 
     pub fn parse(&mut self) -> Result<ParsedFile<'src>, Vec<ParseError>> {
         let imports = self.parse_imports();
-        let stmts = self.sequence(&[TokT::EOF], Self::recover_top_level, |p| {
+        let stmts = self.sequence(&[TokT::EoF], Self::recover_top_level, |p| {
             p.top_level_item()
         });
         let errors = self.take_errors();
@@ -200,7 +200,7 @@ impl<'src> Parser<'src> {
 
     #[must_use]
     fn at_eof(&self) -> bool {
-        self.check(TokT::EOF)
+        self.check(TokT::EoF)
     }
 
     /// The current token is the first one on its line.
@@ -227,6 +227,11 @@ impl<'src> Parser<'src> {
         } else {
             false
         }
+    }
+
+    /// Reports a specific parser error `kind` at `span`
+    fn report(&mut self, kind: ParseErrorKind, span: Span) {
+        self.errors.push(ParseError::new(kind, span));
     }
 
     /// Consumes a required `kind`. The `after` argument names what precedes it.
