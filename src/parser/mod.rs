@@ -1,13 +1,13 @@
-//! Recursive-descent parser: tokens → untyped AST (`ast.rs`).
+//! Recursive-descent parser: tokens -> untyped AST (`ast.rs`).
 //!
 //! Runs after the scanner, per file, and feeds the resolver (imports) and the typechecker (body). This file
 //! owns the token cursor; `lists.rs` and `recovery.rs` hold the shared list and recovery helpers, and the
 //! remaining files parse one area of the grammar each.
 //!
-//! Conventions every sub-parser follows (see `docs/features/parser-improvements/phase2-infrastructure.md`):
+//! Conventions every sub-parser follows:
 //! - A parser is called with `current` on its own first token and consumes it itself (`advance_kind` when the
 //!   caller dispatched on it). Dispatchers `match` on `current` without consuming.
-//! - A function that can recover is infallible; one that can't returns `Err` to the nearest recovery point
+//! - A function that can recover is infallible, one that can't returns `Err` to the nearest recovery point
 //!   (`sequence`, `list_items`, the match-arm loop). Only those call `skip_to`/`recover_*`.
 //! - Lexer error tokens never reach the grammar: `scan_next` reports and drops them.
 
@@ -18,6 +18,7 @@ pub mod error;
 mod expressions;
 mod lists;
 mod literals;
+mod patterns;
 pub mod printer;
 mod recovery;
 mod statements;
@@ -250,6 +251,10 @@ impl<'src> Parser<'src> {
         } else {
             Err(self.err_name(after))
         }
+    }
+
+    fn try_ident(&mut self) -> Option<Ident<'src>> {
+        self.check(TokT::Identifier).then(|| self.advance_ident())
     }
 
     /// Advances over an identifier the caller has already checked.

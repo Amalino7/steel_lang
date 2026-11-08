@@ -1,28 +1,17 @@
 //! Declarations (`let`, `func`, `extern func`, `struct`, `enum`, `impl`, `interface`), their shared pieces
-//! (bindings, signatures, generics, annotations) and type syntax.
+//! (signatures, generics, annotations) and type syntax.
 
 use crate::parser::ast::{
-    Binding, BindingKind, EnumDecl, FieldBinding, FieldDecl, FnDecl, FnSig, Generics, Ident,
-    ImplDecl, InterfaceDecl, LetDecl, MethodSig, NamedType, Param, StructDecl, TypeAst,
-    TypeAstKind, Variant, VariantPayload, Visibility,
+    EnumDecl, FieldDecl, FnDecl, FnSig, Generics, ImplDecl, InterfaceDecl, LetDecl, MethodSig,
+    NamedType, Param, StructDecl, TypeAst, TypeAstKind, Variant, VariantPayload, Visibility,
 };
-use crate::parser::error::{Expected, ParenContext, ParseError, ParseErrorKind};
+use crate::parser::error::{Expected, ParenContext, ParseErrorKind};
 use crate::parser::lists::{Delim, ListSpec, ParsedList};
 use crate::parser::{PResult, Parser, TokT};
 use crate::scanner::Span;
 
 /// FIRST set of a type: the tokens `type_ast` dispatches on.
 pub(super) const TYPE_START: &[TokT] = &[TokT::Identifier, TokT::LeftParen, TokT::Func];
-
-/// FIRST set of a binding: the tokens `binding` accepts.
-pub(super) const BINDING_START: &[TokT] = &[TokT::Identifier, TokT::LeftParen];
-
-/// `(key: binding, :name)` after a struct or variant name. Shared by `let` destructuring and match patterns.
-pub(super) const STRUCT_DESTRUCTURE: ListSpec =
-    ListSpec::paren("field binding", &[TokT::Identifier, TokT::Colon]);
-
-/// The name that matches anything and binds nothing.
-pub(super) const WILDCARD: &str = "_";
 
 /// Where a function declaration appears, which decides whether `self` parameters are allowed.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -51,75 +40,6 @@ impl<'src> Parser<'src> {
             value,
             span: self.span_from(start),
         })
-    }
-
-    /// `after` names what precedes the binding, for the "expected a name" error.
-    pub(super) fn binding(&mut self, after: &'static str) -> PResult<Binding<'src>> {
-        let start = self.start_span();
-        let kind = match self.current.kind {
-            TokT::LeftParen => {
-                let fields = self.delimited(ListSpec::paren("binding", BINDING_START), |p| {
-                    p.binding("`(`")
-                });
-                self.validate_tuple(&fields, ParenContext::TuplePattern);
-                BindingKind::Tuple(fields.items)
-            }
-            TokT::Identifier => {
-                let name = self.advance_ident();
-                if self.check(TokT::LeftParen) {
-                    let fields = self.delimited(STRUCT_DESTRUCTURE, Self::field_binding);
-                    BindingKind::Struct {
-                        name,
-                        fields: fields.items,
-                    }
-                } else {
-                    name_binding(name)
-                }
-            }
-            // Always an error here; reports keywords used as names specifically.
-            _ => return Err(self.err_name(after)),
-        };
-        Ok(Binding {
-            kind,
-            span: self.span_from(start),
-        })
-    }
-
-    /// `field: binding`, or `: name` as shorthand for `name: name`.
-    pub(super) fn field_binding(&mut self) -> PResult<FieldBinding<'src>> {
-        let start = self.start_span();
-        let field = self.check(TokT::Identifier).then(|| self.advance_ident());
-        self.expect(TokT::Colon, "field name")?;
-        let binding = self.binding("`:`")?;
-        let field = match (field, &binding.kind) {
-            (Some(field), _) => field,
-            (None, BindingKind::Name(name)) => *name,
-            (None, _) => {
-                return Err(ParseError::new(
-                    ParseErrorKind::FieldPatternWithoutName,
-                    binding.span,
-                ));
-            }
-        };
-        Ok(FieldBinding {
-            field,
-            binding,
-            span: self.span_from(start),
-        })
-    }
-
-    /// Parenthesised lists that are tuples: `()` is an error, and one item needs a trailing comma (`(x,)`), since
-    /// `(x)` would be a grouping.
-    pub(super) fn validate_tuple<T>(&mut self, list: &ParsedList<T>, context: ParenContext) {
-        if list.failed {
-            return;
-        }
-        let kind = match (list.items.len(), list.trailing) {
-            (0, _) => ParseErrorKind::EmptyParens(context),
-            (1, None) => ParseErrorKind::OneElementTuple(context),
-            _ => return,
-        };
-        self.report(kind, list.span());
     }
 
     /// `: T` if present (`let`, parameters, lambda parameters, return types).
@@ -524,14 +444,5 @@ impl<'src> Parser<'src> {
             sig,
             span: self.span_from(start),
         })
-    }
-}
-
-/// `x`, or the wildcard for `_`.
-fn name_binding(name: Ident<'_>) -> BindingKind<'_> {
-    if name.name == WILDCARD {
-        BindingKind::Wildcard
-    } else {
-        BindingKind::Name(name)
     }
 }

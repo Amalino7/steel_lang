@@ -1,9 +1,7 @@
 //! Statements: declaration/statement dispatch, the import header, `while`, and the one block parser shared by
 //! function bodies, `while`, `if`/`else`, match arms and block expressions.
 
-use crate::parser::ast::{
-    self, Expr, ExprKind, Import, ImportKind, ImportTree, Stmt, Visibility, While,
-};
+use crate::parser::ast::{self, Expr, ExprKind, Import, ImportKind, ImportTree, Stmt, Visibility};
 use crate::parser::declarations::FnContext;
 use crate::parser::error::{ParseError, ParseErrorKind};
 use crate::parser::lists::{Delim, ListSpec};
@@ -171,17 +169,6 @@ impl<'src> Parser<'src> {
         self.block(true, "block").map(Block::into_expr)
     }
 
-    fn while_statement(&mut self) -> PResult<Stmt<'src>> {
-        let start = self.advance_kind(TokT::While).span;
-        let condition = self.expression()?;
-        let body = self.block(false, "while condition")?.into_body();
-        Ok(Stmt::While(Box::new(While {
-            condition,
-            body,
-            span: self.span_from(start),
-        })))
-    }
-
     /// Parses the import header: every leading `import`. A malformed import is reported and skipped, so the
     /// well-formed ones around it are still returned.
     pub fn parse_imports(&mut self) -> Vec<Import<'src>> {
@@ -272,10 +259,7 @@ impl<'src> Parser<'src> {
 
         for segment in &path {
             if !segment.name.is_ascii() {
-                self.errors.push(ParseError::new(
-                    ParseErrorKind::NonAsciiImportPath,
-                    segment.span,
-                ))
+                self.report(ParseErrorKind::NonAsciiImportPath, segment.span)
             }
         }
 
