@@ -105,10 +105,9 @@ pub enum TokenType {
     // Reports errors.
     /// A string or comment that runs to the end of the file. The span starts at its opener.
     Unterminated(Unterminated),
-    InvalidNumber,
     UnexpectedSymbolError,
 
-    EoF,
+    Eof,
 }
 
 /// Every reserved word and its token kind: the scanner's keyword table and the source of [`TokenType::is_keyword`].
@@ -190,7 +189,7 @@ impl Display for TokenType {
             TokenType::MinusEqual => f.write_str("-="),
             TokenType::StarEqual => f.write_str("*="),
             TokenType::SlashEqual => f.write_str("/="),
-            TokenType::EoF => f.write_str("end of file"),
+            TokenType::Eof => f.write_str("end of file"),
             TokenType::Struct => f.write_str("struct"),
             TokenType::Impl => f.write_str("impl"),
             TokenType::Self_ => f.write_str("self"),
@@ -213,7 +212,6 @@ impl Display for TokenType {
             TokenType::Public => f.write_str("public"),
             TokenType::Import => f.write_str("import"),
             TokenType::As => f.write_str("as"),
-            TokenType::InvalidNumber => f.write_str("invalid number"),
         }
     }
 }

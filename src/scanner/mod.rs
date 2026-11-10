@@ -54,7 +54,7 @@ impl<'src> Scanner<'src> {
         self.start = self.current;
         if self.is_at_end() {
             let span = Span::new(self.current, self.current, self.line, self.file_id);
-            return Token::new(TokenType::EoF, span, "end");
+            return Token::new(TokenType::Eof, span, "end");
         }
         let char = self.advance();
 
@@ -297,10 +297,11 @@ impl<'src> Scanner<'src> {
     }
 
     /// A tuple index (`t.0`) is decimal digits only, so `t.0.1` lexes as `t . 0 . 1` rather than `t . 0.1`.
-    /// Leading zeros are rejected by the parser.
+    /// Letters glued on (`t.0x1`, `t.1e2`) stay part of the token; the parser rejects them, along with leading
+    /// zeros and underscores.
     fn tuple_index(&mut self) -> Token<'src> {
         self.consume_digits(10);
-        self.make_token(TokenType::Number)
+        self.finish_number()
     }
 
     fn number(&mut self, first: char) -> Token<'src> {
@@ -343,18 +344,17 @@ impl<'src> Scanner<'src> {
         }
     }
 
+    /// Ends a number. Letters or digits glued onto it (`123abc`, `0b12`, `0o79`) stay part of the token, so the
+    /// parser reports one invalid number rather than a number followed by a stray token.
     fn finish_number(&mut self) -> Token<'src> {
-        if is_valid_identifier(self.peek_char()) {
-            while is_valid_identifier(self.peek_char()) {
-                self.advance();
-            }
-            return self.make_token(TokenType::InvalidNumber);
+        while is_identifier_char(self.peek_char()) {
+            self.advance();
         }
         self.make_token(TokenType::Number)
     }
 
     fn identifier(&mut self) -> Token<'src> {
-        while self.peek_char().is_alphanumeric() || self.peek_char() == '_' {
+        while is_identifier_char(self.peek_char()) {
             self.advance();
         }
         let token_type = self
@@ -368,6 +368,11 @@ impl<'src> Scanner<'src> {
 
 fn is_valid_identifier(identifier_char: char) -> bool {
     identifier_char.is_alphabetic() || identifier_char == '_'
+}
+
+/// A character that can continue an identifier.
+fn is_identifier_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
 }
 
 fn is_valid_digit(digit_char: char, radix: u32) -> bool {
@@ -387,7 +392,7 @@ mod tests {
         let mut types = vec![];
         loop {
             let token = scanner.next_token();
-            if token.kind == TokenType::EoF {
+            if token.kind == TokenType::Eof {
                 return types;
             }
             types.push(token.kind);
@@ -399,7 +404,7 @@ mod tests {
         let mut lexemes = vec![];
         loop {
             let token = scanner.next_token();
-            if token.kind == TokenType::EoF {
+            if token.kind == TokenType::Eof {
                 return lexemes;
             }
             lexemes.push(token.lexeme);
@@ -415,10 +420,24 @@ mod tests {
     }
 
     #[test]
-    fn test_tuple_index_has_no_prefix_separator_or_exponent() {
-        assert_eq!(lexemes("t.0x1"), ["t", ".", "0", "x1"]);
+    fn test_tuple_index_has_no_prefix_or_exponent() {
+        assert_eq!(lexemes("t.0x1"), ["t", ".", "0x1"]);
         assert_eq!(lexemes("t.1_0"), ["t", ".", "1_0"]);
-        assert_eq!(lexemes("t.1e2"), ["t", ".", "1", "e2"]);
+        assert_eq!(lexemes("t.1e2"), ["t", ".", "1e2"]);
+        assert_eq!(
+            token_types("t.0abc"),
+            [TokenType::Identifier, TokenType::Dot, TokenType::Number]
+        );
+    }
+
+    #[test]
+    fn test_number_with_trailing_letters_or_digits_is_one_token() {
+        for src in ["123abc", "0b12", "0o79", "0x1g", "1e5x", "1.5_f"] {
+            assert_eq!(token_types(src), [TokenType::Number], "source: {src}");
+            assert_eq!(lexemes(src), [src]);
+        }
+        assert_eq!(token_types("0b1_0"), [TokenType::Number]);
+        assert_eq!(token_types("0xFF"), [TokenType::Number]);
     }
 
     #[test]

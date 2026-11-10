@@ -233,8 +233,7 @@ impl<'src> Parser<'src> {
                     item: noun,
                     found: self.found(),
                 };
-                self.errors
-                    .push(ParseError::new(kind, self.previous.span.point_after()));
+                self.report(kind, self.previous.span.point_after());
                 continue;
             }
             break;

@@ -34,8 +34,11 @@ pub enum ParseErrorKind {
     /// Reported on the escape sequence itself.
     InvalidEscape(EscapeError),
     InvalidNumber(NumberError),
-    /// `t.01`; the access is still built.
-    TupleIndexLeadingZero,
+    /// `t.01`, `t.1_0`: a tuple index names a field, so it has one spelling. The access is still built; `index`
+    /// is the value it means.
+    TupleIndexNotPlain {
+        index: usize,
+    },
     /// `t.99999999999999999999`: more than any tuple could hold.
     TupleIndexTooLarge,
 
@@ -96,7 +99,6 @@ pub enum ParseErrorKind {
     ImportNotAtTop,
     EmptyImportGroup,
     NonAsciiImportPath,
-    TupleIndexContainsUnderscore,
 }
 
 /// What an [`ParseErrorKind::Expected`] error wanted.
@@ -130,13 +132,13 @@ pub enum ParenContext {
 /// Why a number literal has no value.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum NumberError {
-    /// A number mixed with characters (`123xf`)
+    /// A number with letters or out-of-base digits glued on (`123xf`, `0b12`).
     InvalidCharacter,
     /// A prefix or exponent without digits (`0x`, `1e`).
     MissingDigits,
-    /// A prefixed literal beyond `i64` (`0xFFFFFFFFFFFFFFFFFF`).
+    /// An integer literal beyond `u64` (`0xFFFFFFFFFFFFFFFFFF`), or a float literal beyond `f64` (`1e400`).
     OutOfRange,
-    /// A whole number that doesn't fit in `f64`
+    /// An integer literal that `f64` can't represent exactly (`9007199254740993`, just past 2^53).
     ImpreciseInt,
 }
 
@@ -166,9 +168,8 @@ impl ParseError {
             K::Unterminated(_) => "E1001",
             K::InvalidEscape(_) => "E1002",
             K::InvalidNumber(_) => "E1003",
-            K::TupleIndexLeadingZero => "E1004",
+            K::TupleIndexNotPlain { .. } => "E1004",
             K::TupleIndexTooLarge => "E1005",
-            K::TupleIndexContainsUnderscore => "E1006",
 
             K::Expected { .. } => "E1010",
             K::KeywordAsName { .. } => "E1011",
@@ -206,9 +207,10 @@ impl ParseError {
             K::InvalidNumber(NumberError::OutOfRange) => {
                 "number literal is out of range".to_string()
             }
-            K::TupleIndexLeadingZero => "tuple index has a leading zero".to_string(),
+            K::TupleIndexNotPlain { .. } => {
+                "tuple index must be written without leading zeros or `_`".to_string()
+            }
             K::TupleIndexTooLarge => "tuple index is too large".to_string(),
-            K::TupleIndexContainsUnderscore => "tuple index contains underscores".to_string(),
 
             K::Expected {
                 expected,
@@ -303,13 +305,23 @@ impl IntoDiagnostic for ParseError {
                 r#"valid escapes are `\n`, `\t`, `\r`, `\\`, `\"`, `\0`, `\$` and `\u{…}`"#,
             ),
             K::InvalidNumber(NumberError::MissingDigits) => error("missing digits"),
-            K::InvalidNumber(NumberError::ImpreciseInt) => error("cannot be stored precisely"),
-            K::InvalidNumber(NumberError::InvalidCharacter) => error("invalid characters"),
-            K::InvalidNumber(NumberError::OutOfRange) => error("too large")
-                .with_note("binary, octal and hex literals must fit in a 64-bit integer"),
-            K::TupleIndexLeadingZero => error("leading zero").with_help("remove the leading zeros"),
+            K::InvalidNumber(NumberError::ImpreciseInt) => error("cannot be stored exactly")
+                .with_note(
+                    "numbers are 64-bit floats: every integer up to 2^53 (9_007_199_254_740_992) is exact, \
+                     beyond that only some are",
+                )
+                .with_help("write it as a decimal float (e.g. with `.0`) to accept the nearest representable value"),
+            K::InvalidNumber(NumberError::InvalidCharacter) => error("invalid characters")
+                .with_note("digits must be valid for the literal's base, and a name can't follow a number directly"),
+            K::InvalidNumber(NumberError::OutOfRange) => error("too large").with_note(
+                "integer literals must fit in 64 bits (at most 18_446_744_073_709_551_615) and float literals \
+                 in an f64 (at most about 1.8e308)",
+            )
+            .with_help("for a larger, approximate integer, use a float literal such as `1e20`"),
+            K::TupleIndexNotPlain { index } => {
+                error("not a plain index").with_help(format!("write it as `.{index}`"))
+            }
             K::TupleIndexTooLarge => error("too large"),
-            K::TupleIndexContainsUnderscore => error("contains `_`"),
             K::Expected {
                 expected, found, ..
             } => with_found(
@@ -395,7 +407,7 @@ fn describe(kind: TokenType) -> String {
         | TokenType::String
         | TokenType::RawString
         | TokenType::PartialString
-        | TokenType::EoF
+        | TokenType::Eof
         | TokenType::Unterminated(_)
         | TokenType::UnexpectedSymbolError => kind.to_string(),
         _ => format!("`{kind}`"),

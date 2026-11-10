@@ -16,16 +16,18 @@ mod control_flow;
 mod declarations;
 pub mod error;
 mod expressions;
+mod imports;
 mod lists;
 mod literals;
 mod patterns;
 pub mod printer;
 mod recovery;
 mod statements;
+mod types;
 
 use crate::parser::error::{Expected, Found, ParseError, ParseErrorKind};
 use crate::scanner::TokenType as TokT;
-use crate::scanner::{Scanner, Span, Token, TokenType};
+use crate::scanner::{Scanner, Span, Token};
 use ast::{Ident, ParsedFile};
 use std::cell::Cell;
 use std::mem;
@@ -51,7 +53,7 @@ pub struct Parser<'src> {
 
 impl<'src> Parser<'src> {
     pub fn new(scanner: Scanner<'src>) -> Self {
-        let placeholder = Token::new(TokT::EoF, Span::default(), "");
+        let placeholder = Token::new(TokT::Eof, Span::default(), "");
         let mut parser = Parser {
             scanner,
             previous: placeholder,
@@ -70,7 +72,7 @@ impl<'src> Parser<'src> {
 
     pub fn parse(&mut self) -> Result<ParsedFile<'src>, Vec<ParseError>> {
         let imports = self.parse_imports();
-        let stmts = self.sequence(&[TokT::EoF], Self::recover_top_level, |p| {
+        let stmts = self.sequence(&[TokT::Eof], Self::recover_top_level, |p| {
             p.top_level_item()
         });
         let errors = self.take_errors();
@@ -133,7 +135,7 @@ impl<'src> Parser<'src> {
 
     /// Consumes the first character of the current token as a `first` token and leaves the rest as the current
     /// token, of kind `rest`. For a closer the scanner glued to what follows it (see `lists::glued_rest`).
-    fn split_current(&mut self, first: TokenType, rest: TokenType) -> Token<'src> {
+    fn split_current(&mut self, first: TokT, rest: TokT) -> Token<'src> {
         let token = self.current;
         let mid = token.span.start + 1;
         let head = Token::new(
@@ -165,7 +167,7 @@ impl<'src> Parser<'src> {
     }
 
     /// Advances over a token the caller has already checked. A different kind is a parser bug.
-    fn advance_kind(&mut self, k: TokenType) -> Token<'src> {
+    fn advance_kind(&mut self, k: TokT) -> Token<'src> {
         debug_assert_eq!(
             self.current.kind, k,
             "parser dispatched on the wrong token: {:?}",
@@ -183,25 +185,25 @@ impl<'src> Parser<'src> {
     }
 
     #[must_use]
-    fn check(&self, k: TokenType) -> bool {
+    fn check(&self, k: TokT) -> bool {
         self.burn_fuel();
         self.current.kind == k
     }
 
     #[must_use]
-    fn check_any(&self, ks: &[TokenType]) -> bool {
+    fn check_any(&self, ks: &[TokT]) -> bool {
         self.burn_fuel();
         ks.contains(&self.current.kind)
     }
 
     #[must_use]
-    fn check_next(&self, k: TokenType) -> bool {
+    fn check_next(&self, k: TokT) -> bool {
         self.next.kind == k
     }
 
     #[must_use]
     fn at_eof(&self) -> bool {
-        self.check(TokT::EoF)
+        self.check(TokT::Eof)
     }
 
     /// The current token is the first one on its line.
@@ -211,7 +213,7 @@ impl<'src> Parser<'src> {
     }
 
     /// Consumes the current token if it is `kind`.
-    fn try_consume(&mut self, kind: TokenType) -> bool {
+    fn try_consume(&mut self, kind: TokT) -> bool {
         if self.check(kind) {
             self.advance();
             true
@@ -221,7 +223,7 @@ impl<'src> Parser<'src> {
     }
 
     /// Consumes the current token if it is in `kinds`.
-    fn try_consume_any(&mut self, kinds: &[TokenType]) -> bool {
+    fn try_consume_any(&mut self, kinds: &[TokT]) -> bool {
         if self.check_any(kinds) {
             self.advance();
             true
@@ -237,7 +239,7 @@ impl<'src> Parser<'src> {
 
     /// Consumes a required `kind`. The `after` argument names what precedes it.
     /// Used for "missing `kind` after <after>" errors.
-    fn expect(&mut self, kind: TokenType, after: &'static str) -> PResult<Token<'src>> {
+    fn expect(&mut self, kind: TokT, after: &'static str) -> PResult<Token<'src>> {
         if self.check(kind) {
             Ok(self.advance())
         } else {
@@ -253,6 +255,7 @@ impl<'src> Parser<'src> {
         }
     }
 
+    /// Consumes an identifier if there is one.
     fn try_ident(&mut self) -> Option<Ident<'src>> {
         self.check(TokT::Identifier).then(|| self.advance_ident())
     }
@@ -298,7 +301,7 @@ impl<'src> Parser<'src> {
 
     /// The token `expected` (a name for `Identifier`) is missing after `after`. Reported where it belongs: at the
     /// current token, or just after the previous token when the current one starts a new line.
-    fn err_expected(&self, expected: TokenType, after: &'static str) -> ParseError {
+    fn err_expected(&self, expected: TokT, after: &'static str) -> ParseError {
         let expected = match expected {
             TokT::Identifier => Expected::Name,
             kind => Expected::Token(kind),

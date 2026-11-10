@@ -144,3 +144,47 @@ fn test_e1041_empty_import_group() {
 fn test_e1042_non_ascii_import_path() {
     assert_parse_errors("import a/œ/b;", &[("E1042", "1:10")]);
 }
+
+#[test]
+fn test_e1003_number_with_trailing_characters_is_one_error() {
+    assert_parse_errors("let a = 123abc; let b = 1;", &[("E1003", "1:9")]);
+    assert_parse_errors("let a = 0b12;", &[("E1003", "1:9")]);
+    assert_parse_errors("let a = 0o79;", &[("E1003", "1:9")]);
+    assert_parse_errors("let a = 0x1g;", &[("E1003", "1:9")]);
+    assert_span_of_error("let a = 0b12;", "0b12");
+    assert_error_contains("let a = 0b12;", "invalid characters");
+}
+
+#[test]
+fn test_e1003_tuple_index_with_trailing_characters_is_one_error() {
+    assert_parse_errors("let y = t.0abc; let z = 1;", &[("E1003", "1:11")]);
+    assert_parse_errors("let y = t?.0x1;", &[("E1003", "1:12")]);
+    assert_parse_errors("let y = t.1e2.x;", &[("E1003", "1:11")]);
+    assert_span_of_error("let y = t.0abc;", "0abc");
+}
+
+#[test]
+fn test_e1003_imprecise_integer() {
+    assert_parses_ok("let a = 9007199254740992;");
+    assert_parses_ok("let a = 9007199254740993.0;");
+    assert_parses_ok("let a = 0x8000_0000_0000_0000;");
+    assert_parse_errors("let a = 9007199254740993;", &[("E1003", "1:9")]);
+    assert_parse_errors("let a = 0xFFFFFFFFFFFFFFFF;", &[("E1003", "1:9")]);
+    assert_error_contains("let a = 9007199254740993;", "imprecise");
+}
+
+#[test]
+fn test_e1003_out_of_range() {
+    assert_parse_errors("let a = 99999999999999999999;", &[("E1003", "1:9")]);
+    assert_parse_errors("let a = 1e400;", &[("E1003", "1:9")]);
+    assert_error_contains("let a = 1e400;", "out of range");
+    assert_parses_ok("let a = 1e20;");
+}
+
+#[test]
+fn test_e1004_tuple_index_not_plain_is_one_error() {
+    assert_parse_errors("let y = t.1_0;", &[("E1004", "1:11")]);
+    assert_parse_errors("let y = t.0_1;", &[("E1004", "1:11")]);
+    assert_parse_errors("let y = t.0_0;", &[("E1004", "1:11")]);
+    assert_parses_ok("let y = t.0; let z = t.10;");
+}

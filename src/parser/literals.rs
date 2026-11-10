@@ -1,4 +1,5 @@
 use crate::parser::error::{EscapeError, NumberError};
+use std::borrow::Cow;
 use std::iter::Peekable;
 use std::num::IntErrorKind;
 use std::ops::Range;
@@ -78,8 +79,10 @@ fn parse_unicode_escape(chars: &mut CharIter<'_>) -> Result<char, EscapeError> {
 /// - Hexadecimal prefix: `0xFF`, `0XFF`
 /// - Scientific notation: `1.5e10`, `2.0E-3`
 ///
-/// The scanner only guarantees the characters, so a prefix or exponent without digits (`0x`, `1e`) is
-/// [`NumberError::Malformed`]. Prefixed literals must fit in an `i64`.
+/// The scanner only finds where the literal ends, so everything else is checked here: characters that don't
+/// fit the shape (`123abc`, `0b12`) are [`NumberError::InvalidCharacter`], and a prefix or exponent without
+/// digits (`0x`, `1e`) is [`NumberError::MissingDigits`]. Integer literals must fit in a `u64` and be exact as an `f64`
+/// ([`NumberError::ImpreciseInt`] otherwise); float literals are rounded and only fail when infinite.
 pub(super) fn parse_number(lexeme: &str) -> Result<f64, NumberError> {
     let prefix = lexeme.get(0..2);
     let radix = match prefix {
@@ -90,7 +93,7 @@ pub(super) fn parse_number(lexeme: &str) -> Result<f64, NumberError> {
     };
 
     if radix == 10 {
-        if lexeme.contains(['e', 'E', '.']) {
+        if is_float_shape(lexeme)? {
             parse_float(lexeme)
         } else {
             parse_int(lexeme, 10)
@@ -101,9 +104,38 @@ pub(super) fn parse_number(lexeme: &str) -> Result<f64, NumberError> {
     }
 }
 
+/// Checks that a decimal literal is `digits[.digits][(e|E)[+|-]digits]` and returns whether it is a float.
+fn is_float_shape(lexeme: &str) -> Result<bool, NumberError> {
+    fn skip_digits(s: &str) -> &str {
+        s.trim_start_matches(|c: char| c.is_ascii_digit() || c == '_')
+    }
+
+    let rest = skip_digits(lexeme);
+    let (fraction, rest) = match rest.strip_prefix('.') {
+        Some(fraction) => (true, skip_digits(fraction)),
+        None => (false, rest),
+    };
+    let Some(exponent) = rest.strip_prefix(['e', 'E']) else {
+        return if rest.is_empty() {
+            Ok(fraction)
+        } else {
+            Err(NumberError::InvalidCharacter)
+        };
+    };
+
+    let exponent = exponent.strip_prefix(['+', '-']).unwrap_or(exponent);
+    let rest = skip_digits(exponent);
+    if !rest.is_empty() {
+        Err(NumberError::InvalidCharacter)
+    } else if exponent.is_empty() {
+        Err(NumberError::MissingDigits)
+    } else {
+        Ok(true)
+    }
+}
+
 fn parse_float(digits: &str) -> Result<f64, NumberError> {
-    let value = digits
-        .replace("_", "")
+    let value = strip_underscores(digits)
         .parse::<f64>()
         .map_err(|_| NumberError::MissingDigits)?;
 
@@ -115,7 +147,7 @@ fn parse_float(digits: &str) -> Result<f64, NumberError> {
 }
 
 fn parse_int(digits: &str, radix: u32) -> Result<f64, NumberError> {
-    let n = u64::from_str_radix(&digits.replace("_", ""), radix).map_err(|e| match e.kind() {
+    let n = u64::from_str_radix(&strip_underscores(digits), radix).map_err(|e| match e.kind() {
         IntErrorKind::PosOverflow => NumberError::OutOfRange,
         IntErrorKind::Empty => NumberError::MissingDigits,
         _ => NumberError::InvalidCharacter,
@@ -125,6 +157,15 @@ fn parse_int(digits: &str, radix: u32) -> Result<f64, NumberError> {
         return Err(NumberError::ImpreciseInt);
     }
     Ok(value)
+}
+
+/// `digits` without its `_` separators, borrowed when it has none.
+pub(super) fn strip_underscores(digits: &str) -> Cow<'_, str> {
+    if digits.contains('_') {
+        Cow::Owned(digits.replace('_', ""))
+    } else {
+        Cow::Borrowed(digits)
+    }
 }
 
 /// Strips `"""` delimiters and applies Swift-style indentation normalisation.
@@ -166,4 +207,44 @@ pub(super) fn process_raw_string(lexeme: &str) -> String {
     }
 
     inner.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_number_values() {
+        assert_eq!(parse_number("1_000"), Ok(1000.0));
+        assert_eq!(parse_number("1.5e3"), Ok(1500.0));
+        assert_eq!(parse_number("2E-1"), Ok(0.2));
+        assert_eq!(parse_number("1e+2"), Ok(100.0));
+        assert_eq!(parse_number("0b1_01"), Ok(5.0));
+        assert_eq!(parse_number("0o17"), Ok(15.0));
+        assert_eq!(parse_number("0xFf"), Ok(255.0));
+    }
+
+    #[test]
+    fn test_parse_number_missing_digits() {
+        for lexeme in ["0x", "0b_", "1e", "1E+", "1.5e-", "1e_"] {
+            assert_eq!(
+                parse_number(lexeme),
+                Err(NumberError::MissingDigits),
+                "{lexeme}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_number_invalid_characters() {
+        for lexeme in [
+            "123abc", "0b12", "0o79", "0x1g", "0bz", "1e5x", "1ex", "1e+x", "1.5_f", "0z",
+        ] {
+            assert_eq!(
+                parse_number(lexeme),
+                Err(NumberError::InvalidCharacter),
+                "{lexeme}"
+            );
+        }
+    }
 }

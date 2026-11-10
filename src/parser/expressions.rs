@@ -7,7 +7,9 @@ use crate::parser::ast::{
 };
 use crate::parser::error::{Expected, NumberError, ParenContext, ParseErrorKind};
 use crate::parser::lists::{Delim, ListSpec};
-use crate::parser::literals::{parse_number, process_escapes, process_raw_string};
+use crate::parser::literals::{
+    parse_number, process_escapes, process_raw_string, strip_underscores,
+};
 use crate::parser::{PResult, Parser, TokT};
 use crate::scanner::Span;
 use crate::scanner::token::Token;
@@ -325,15 +327,13 @@ impl<'src> Parser<'src> {
                     let dot = self.advance();
                     let safe = (dot.kind == TokT::QuestionDot).then_some(dot.span);
                     let member = if self.check(TokT::Number) {
-                        Member::Index(self.tuple_index())
-                    } else if self.try_consume(TokT::InvalidNumber) {
-                        let index = self.previous.span;
-                        self.report(
-                            ParseErrorKind::InvalidNumber(NumberError::InvalidCharacter),
-                            index,
-                        );
-                        expr = Expr::new(ExprKind::Error, start.merge(index));
-                        continue;
+                        match self.tuple_index() {
+                            Some(index) => Member::Index(index),
+                            None => {
+                                expr = Expr::new(ExprKind::Error, start.merge(self.previous.span));
+                                continue;
+                            }
+                        }
                     } else {
                         Member::Named(self.expect_ident("member access")?)
                     };
@@ -384,26 +384,35 @@ impl<'src> Parser<'src> {
         Ok(CallArg { label, value })
     }
 
-    /// A tuple index. The scanner guarantees it is decimal digits; a leading zero (`t.01`) and underscores are
-    /// reported but the access is still built, since the intended index is clear.
-    /// An index beyond `usize` fails and an approximation is given.
-    fn tuple_index(&mut self) -> Spanned<usize> {
+    /// A tuple index. Anything but decimal digits and `_` (`t.0x1`, `t.1e2`) is an invalid number and gives
+    /// `None`. A leading zero (`t.01`) and underscores are reported but the access is still built, since the
+    /// intended index is clear. An index beyond `usize` is reported and approximated.
+    fn tuple_index(&mut self) -> Option<Spanned<usize>> {
         let idx = self.advance_kind(TokT::Number);
-        if idx.lexeme.len() > 1 && idx.lexeme.starts_with('0') {
-            self.report(ParseErrorKind::TupleIndexLeadingZero, idx.span);
+        if !idx.lexeme.chars().all(|c| c.is_ascii_digit() || c == '_') {
+            self.report(
+                ParseErrorKind::InvalidNumber(NumberError::InvalidCharacter),
+                idx.span,
+            );
+            return None;
         }
-        if idx.lexeme.contains("_") {
-            self.report(ParseErrorKind::TupleIndexContainsUnderscore, idx.span);
-        }
-        let node = idx.lexeme.parse().unwrap_or_else(|_| {
-            // Scanner validated the shape, but not the size
-            self.report(ParseErrorKind::TupleIndexTooLarge, idx.span);
-            usize::MAX
-        });
-        Spanned {
+        let node = match strip_underscores(idx.lexeme).parse::<usize>() {
+            Ok(index) => {
+                if idx.lexeme != index.to_string() {
+                    self.report(ParseErrorKind::TupleIndexNotPlain { index }, idx.span);
+                }
+                index
+            }
+            // The shape is checked above, but not the size.
+            Err(_) => {
+                self.report(ParseErrorKind::TupleIndexTooLarge, idx.span);
+                usize::MAX
+            }
+        };
+        Some(Spanned {
             node,
             span: idx.span,
-        }
+        })
     }
 
     fn primary(&mut self) -> PResult<Expr<'src>> {
@@ -411,15 +420,6 @@ impl<'src> Parser<'src> {
             TokT::True => Ok(self.literal(Literal::Boolean(true))),
             TokT::False => Ok(self.literal(Literal::Boolean(false))),
             TokT::Nil => Ok(self.literal(Literal::Nil)),
-            TokT::InvalidNumber => {
-                let span = self.start_span();
-                self.report(
-                    ParseErrorKind::InvalidNumber(NumberError::InvalidCharacter),
-                    span,
-                );
-                self.advance();
-                Ok(Expr::new(ExprKind::Error, span))
-            }
             TokT::Number => {
                 let token = self.advance();
 

@@ -4,19 +4,20 @@ use crate::parser::ast::{Expr, ExprKind, MatchArm, Stmt, While};
 use crate::parser::expressions::EXPR_START;
 use crate::parser::lists::Delim;
 use crate::parser::recovery::RECOVERY_STOP;
+use crate::parser::statements::StmtCtx;
 use crate::parser::{PResult, Parser, TokT};
 
 impl<'src> Parser<'src> {
     pub(super) fn if_expr(&mut self) -> PResult<Expr<'src>> {
         let start = self.advance_kind(TokT::If).span;
         let condition = self.expression()?;
-        let then_branch = self.block(true, "if condition")?.into_expr();
+        let then_branch = self.block(StmtCtx::Value, "if condition")?.into_expr();
 
         let else_branch = if self.try_consume(TokT::Else) {
             if self.check(TokT::If) {
                 Some(self.if_expr()?.boxed())
             } else {
-                Some(self.block(true, "`else`")?.into_expr().boxed())
+                Some(self.block(StmtCtx::Value, "`else`")?.into_expr().boxed())
             }
         } else {
             None
@@ -35,7 +36,7 @@ impl<'src> Parser<'src> {
     pub(super) fn while_statement(&mut self) -> PResult<Stmt<'src>> {
         let start = self.advance_kind(TokT::While).span;
         let condition = self.expression()?;
-        let body = self.block(false, "while condition")?.into_body();
+        let body = self.block(StmtCtx::Body, "while condition")?.into_body();
         Ok(Stmt::While(Box::new(While {
             condition,
             body,

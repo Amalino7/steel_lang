@@ -49,7 +49,6 @@ impl<'src> TypeChecker<'src> {
     ) -> TypedExpr {
         let cond_typed =
             self.coerce_expression(condition, &Type::Boolean, MismatchContext::Condition, None);
-
         let refinements = self.analyze_condition(&cond_typed);
         let mut typed_refinements = TypedRefinements {
             true_path: vec![],

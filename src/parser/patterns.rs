@@ -1,4 +1,4 @@
-//! Patterns and bindings
+//! Match patterns and the bindings they share with `let` destructuring.
 
 use crate::parser::{
     PResult, Parser, TokT,
@@ -28,7 +28,6 @@ impl<'src> Parser<'src> {
         let variant = self.expect_ident("`.`")?;
 
         let payload = self.variant_payload(variant);
-
         Ok(Pattern {
             kind: PatternKind::Variant {
                 enum_name,
@@ -150,23 +149,24 @@ impl<'src> Parser<'src> {
         self.report(kind, list.span());
     }
 
-    /// Checks if it as field binding  `:a` or `a:`
+    /// Whether the next tokens start a field binding: `:a` or `a:`.
     fn at_field_binding(&self) -> bool {
         self.check(TokT::Colon) || (self.check(TokT::Identifier) && self.check_next(TokT::Colon))
     }
 }
 
 /// FIRST set of a binding: the tokens `binding` accepts.
-pub(super) const BINDING_START: &[TokT] = &[TokT::Identifier, TokT::LeftParen];
+pub const BINDING_START: &[TokT] = &[TokT::Identifier, TokT::LeftParen];
 
 /// `(key: binding, :name)` after a struct or variant name. Shared by `let` destructuring and match patterns.
-pub(super) const STRUCT_DESTRUCTURE: ListSpec =
+pub const STRUCT_DESTRUCTURE: ListSpec =
     ListSpec::paren("field binding", &[TokT::Identifier, TokT::Colon]);
 
-pub(super) const TUPLE_DESTRUCTURE: ListSpec = ListSpec::paren("binding", BINDING_START);
+/// `(a, b)`: a parenthesised list of bindings. Shared by tuple `let` destructuring and variant payloads.
+pub const TUPLE_DESTRUCTURE: ListSpec = ListSpec::paren("binding", BINDING_START);
 
 /// The name that matches anything and binds nothing.
-pub(super) const WILDCARD: &str = "_";
+pub const WILDCARD: &str = "_";
 
 /// `x`, or the wildcard for `_`.
 fn name_binding(name: Ident<'_>) -> BindingKind<'_> {
